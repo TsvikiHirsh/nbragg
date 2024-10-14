@@ -13,14 +13,15 @@ class CrossSection:
     non-oriented materials.
 
     Attributes:
-        materials (Dict[str, Dict]): Materials and their properties.
+        materials (Dict[str, Union[Dict, 'CrossSection', float]]): Materials and their properties, CrossSection objects, or weights.
         name (str): Name of the combined cross-section.
         weights (pd.Series): Normalized weights for the materials.
         total_weight (float): Total weight of the cross-section.
         oriented (bool): Whether the materials are oriented or not.
+        table (pd.DataFrame): Cross-section data with wavelength as index.
     """
 
-    def __init__(self, materials: Dict[str, Dict] = None, 
+    def __init__(self, materials: Dict[str, Union[Dict, 'CrossSection', float]] = None, 
                  name: str = "", 
                  total_weight: float = 1.,
                  oriented: bool = False):
@@ -28,7 +29,7 @@ class CrossSection:
         Initialize the CrossSection class.
 
         Args:
-            materials: Dictionary of material names and their properties.
+            materials: Dictionary of material names and their properties, CrossSection objects, or weights.
             name: Name of the combined cross-section.
             total_weight: Total weight of the cross-section.
             oriented: Whether the materials are oriented or not.
@@ -38,17 +39,26 @@ class CrossSection:
         self.total_weight = total_weight if self.materials else 0.
         self.oriented = oriented
 
+        self.nc_materials = {}
         self._load_materials()
         self._set_weights()
+        self._generate_table()
 
     def _load_materials(self):
-        """Load the materials using NCrystal."""
-        self.nc_materials = {}
+        """Load the materials using NCrystal or store CrossSection objects."""
         for mat_name, props in self.materials.items():
-            cfg = f"{props['file']};temp={props.get('temperature', 300)}K"
-            if self.oriented:
-                cfg += f";mos={props.get('mosaicity', 0)}deg"
-            self.nc_materials[mat_name] = nc.load(cfg)
+            if isinstance(props, CrossSection):
+                self.nc_materials[mat_name] = props
+            elif isinstance(props, (float, int)):
+                # If props is a number, assume it's a weight for an existing CrossSection
+                self.nc_materials[mat_name] = mat_name  # We'll handle this in __call__
+            elif isinstance(props, dict):
+                cfg = f"{props['file']};temp={props.get('temperature', 300)}K"
+                if self.oriented:
+                    cfg += f";mos={props.get('mosaicity', 0)}deg"
+                self.nc_materials[mat_name] = nc.load(cfg)
+            else:
+                raise ValueError(f"Unsupported material type for {mat_name}")
 
     def _set_weights(self, weights: Optional[List[float]] = None):
         """
@@ -63,7 +73,8 @@ class CrossSection:
             
             self.weights = pd.Series(weights, index=self.materials.keys())
         else:
-            self.weights = pd.Series({mat: props.get('weight', 1) for mat, props in self.materials.items()})
+            self.weights = pd.Series({mat: props if isinstance(props, (float, int)) else props.get('weight', 1) 
+                                      for mat, props in self.materials.items()})
 
         # Remove materials with zero weight
         self.weights = self.weights[self.weights > 0]
@@ -71,46 +82,37 @@ class CrossSection:
         # Normalize weights
         self.weights /= self.weights.sum()
 
-    def __add__(self, other: 'CrossSection') -> 'CrossSection':
+    def _generate_table(self, wavelengths: np.ndarray = None):
         """
-        Add two CrossSection objects.
-
+        Generate a pandas DataFrame with cross-section data.
         Args:
-            other: Another CrossSection object to add to the current one.
-
-        Returns:
-            A new CrossSection object representing the sum of the two.
+        wavelengths: Array of wavelength values. If None, a default range is used.
         """
-        if self.oriented != other.oriented:
-            raise ValueError("Cannot add oriented and non-oriented CrossSections")
-
-        new_materials = {**self.materials, **other.materials}
-        new_weights = (self.weights * self.total_weight).add(
-            other.weights * other.total_weight, fill_value=0
-        )
-        new_weights /= new_weights.sum()
-
-        new_self = deepcopy(self)
-        new_self.materials = new_materials
-        new_self.weights = new_weights
-        new_self.total_weight = 1.
-        new_self._load_materials()
-
-        return new_self
-
-    def __mul__(self, total_weight: float = 1.) -> 'CrossSection':
-        """
-        Multiply the CrossSection by a total weight.
-
-        Args:
-            total_weight: The weight to multiply by.
-
-        Returns:
-            A new CrossSection object with updated total_weight.
-        """
-        new_self = deepcopy(self)
-        new_self.total_weight = total_weight
-        return new_self
+        if wavelengths is None:
+            wavelengths = np.logspace(-2, 1, 1000)  # Default range from 0.01 to 10 Angstroms
+        energies = nc.wl2ekin(wavelengths)  # Convert wavelengths to energies
+        total_xs = self(energies)
+        data = {'total': total_xs}
+        
+        for mat_name, weight in self.weights.items():
+            mat = self.nc_materials[mat_name]
+            column_name = mat_name  # Use the material name as the column name
+            
+            if isinstance(mat, CrossSection):
+                data[column_name] = mat(energies) * weight
+            elif isinstance(mat, str):  # This is the case where we stored the material name
+                data[column_name] = self.materials[mat](energies) * weight
+            else:
+                if self.oriented:
+                    absorption = mat.absorption.crossSection(energies)
+                    scatter = mat.scatter.crossSection(energies)
+                else:
+                    absorption = mat.absorption.crossSectionNonOriented(energies)
+                    scatter = mat.scatter.crossSectionNonOriented(energies)
+                data[column_name] = (absorption + scatter) * weight
+        
+        self.table = pd.DataFrame(data, index=wavelengths)
+        self.table.index.name = 'wavelength'
 
     def __call__(self, E: np.ndarray, weights: Optional[np.ndarray] = None) -> np.ndarray:
         """
@@ -129,52 +131,80 @@ class CrossSection:
         total_xs = np.zeros_like(E)
         for mat_name, weight in self.weights.items():
             mat = self.nc_materials[mat_name]
-            if self.oriented:
-                absorption = mat.absorption.crossSection(E)
-                scatter = mat.scatter.crossSection(E)
+            if isinstance(mat, CrossSection):
+                total_xs += weight * mat(E)
+            elif isinstance(mat, str):  # This is the case where we stored the material name
+                total_xs += weight * self.materials[mat](E)
             else:
-                absorption = mat.absorption.crossSectionNonOriented(E)
-                scatter = mat.scatter.crossSectionNonOriented(E)
-            total_xs += weight * (absorption + scatter)
+                if self.oriented:
+                    absorption = mat.absorption.crossSection(E)
+                    scatter = mat.scatter.crossSection(E)
+                else:
+                    absorption = mat.absorption.crossSectionNonOriented(E)
+                    scatter = mat.scatter.crossSectionNonOriented(E)
+                total_xs += weight * (absorption + scatter)
 
         return total_xs
+    
+    def __add__(self, other: 'CrossSection') -> 'CrossSection':
+        """
+        Add two CrossSection objects.
+        Args:
+        other: Another CrossSection object to add to the current one.
+        Returns:
+        A new CrossSection object representing the sum of the two.
+        """
+        if self.oriented != other.oriented:
+            raise ValueError("Cannot add oriented and non-oriented CrossSections")
 
-    def plot(self, E: np.ndarray, **kwargs):
+        new_self = CrossSection()  # Create a new CrossSection object
+        
+        # Combine materials
+        new_self.materials = {**self.materials, **other.materials}
+        
+        # Combine weights
+        self_weights = pd.Series(self.weights, name='weight')
+        other_weights = pd.Series(other.weights, name='weight')
+        new_weights = (self_weights * self.total_weight).add(
+            other_weights * other.total_weight, fill_value=0
+        )
+        new_self.weights = new_weights / new_weights.sum()
+        
+        new_self.total_weight = 1.
+        new_self.oriented = self.oriented
+        
+        # Copy other necessary attributes (add any that are missing)
+        new_self.nc_materials = {**self.nc_materials, **other.nc_materials}
+        
+        new_self._load_materials()
+        new_self._generate_table()
+        return new_self
+
+    def plot(self, wavelengths: np.ndarray = None, **kwargs):
         """
         Plot the cross-section data.
 
         Args:
-            E: Array of energy values.
+            wavelengths: Array of wavelength values. If None, uses the table's index.
             **kwargs: Optional plotting parameters.
         """
         import matplotlib.pyplot as plt
 
+        if wavelengths is not None:
+            self._generate_table(wavelengths)
+
         title = kwargs.pop("title", self.name)
         ylabel = kwargs.pop("ylabel", "$\sigma$ [barn]")
-        xlabel = kwargs.pop("xlabel", "Energy [eV]")
+        xlabel = kwargs.pop("xlabel", "Wavelength [Å]")
         lw = kwargs.pop("lw", 1.)
 
         fig, ax = plt.subplots()
-        total_xs = self(E)
-        ax.plot(E, total_xs, label="Total", linewidth=1.5, color="0.2", zorder=100)
-
-        for mat_name, weight in self.weights.items():
-            mat = self.nc_materials[mat_name]
-            if self.oriented:
-                absorption = mat.absorption.crossSection(E)
-                scatter = mat.scatter.crossSection(E)
-            else:
-                absorption = mat.absorption.crossSectionNonOriented(E)
-                scatter = mat.scatter.crossSectionNonOriented(E)
-            xs = weight * (absorption + scatter)
-            ax.plot(E, xs, label=f"{mat_name}: {weight*100:>6.2f}%", linewidth=lw)
-
+        self.table.plot(ax=ax, logy=True, logx=True)
+        
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.legend()
-        ax.set_xscale('log')
-        ax.set_yscale('log')
         return ax
 
     @classmethod
@@ -206,3 +236,83 @@ class CrossSection:
             materials[name]["mosaicity"] = mosaicity
 
         return cls(materials, name=name, total_weight=total_weight, oriented=oriented)
+
+    def update_weights(self, new_weights: Dict[str, float]):
+        """
+        Update the weights of the materials.
+
+        Args:
+            new_weights: Dictionary of material names and their new weights.
+        """
+        for mat, weight in new_weights.items():
+            if mat not in self.weights.index:
+                raise ValueError(f"Material {mat} not found in the CrossSection")
+            self.weights[mat] = weight
+        
+        self._set_weights()
+        self._generate_table()
+
+    def add_material(self, material: Union[Dict, 'CrossSection'], name: str, weight: float):
+        """
+        Add a new material to the CrossSection.
+
+        Args:
+            material: Material properties dictionary or CrossSection object.
+            name: Name of the new material.
+            weight: Weight of the new material.
+        """
+        self.materials[name] = material
+        self._load_materials()
+        self.weights[name] = weight
+        self._set_weights()
+        self._generate_table()
+
+    def remove_material(self, name: str):
+        """
+        Remove a material from the CrossSection.
+
+        Args:
+            name: Name of the material to remove.
+        """
+        if name not in self.materials:
+            raise ValueError(f"Material {name} not found in the CrossSection")
+        
+        del self.materials[name]
+        del self.nc_materials[name]
+        self.weights = self.weights.drop(name)
+        self._set_weights()
+        self._generate_table()
+
+    def get_material_xs(self, material_name: str, wavelengths: np.ndarray = None) -> np.ndarray:
+        """
+        Get the cross-section for a specific material.
+
+        Args:
+            material_name: Name of the material.
+            wavelengths: Array of wavelength values. If None, uses the table's index.
+
+        Returns:
+            Array of cross-section values for the specified material.
+        """
+        if material_name not in self.materials:
+            raise ValueError(f"Material {material_name} not found in the CrossSection")
+
+        if wavelengths is not None:
+            self._generate_table(wavelengths)
+
+        return self.table[material_name].values
+
+    def get_total_xs(self, wavelengths: np.ndarray = None) -> np.ndarray:
+        """
+        Get the total cross-section.
+
+        Args:
+            wavelengths: Array of wavelength values. If None, uses the table's index.
+
+        Returns:
+            Array of total cross-section values.
+        """
+        if wavelengths is not None:
+            self._generate_table(wavelengths)
+
+        return self.table['total'].values
