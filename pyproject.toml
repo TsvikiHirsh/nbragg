@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel", "pybind11"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -29,8 +29,7 @@ dependencies = [
   "numpy",
   "materials-compendium",
   "lmfit",
-  "pybind11",
-  "Requests",
+  "requests",  # fixed capitalization to lowercase
   "setuptools",
   "tqdm",
   "mendeleev",

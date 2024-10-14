@@ -1,9 +1,9 @@
 import lmfit
 import numpy as np
-import nres.utils as utils
-from nres.response import Response, Background
-from nres.cross_section import CrossSection
-from nres.data import Data
+import nbragg.utils as utils
+from nbragg.response import Response, Background
+from nbragg.cross_section import CrossSection
+from nbragg.data import Data
 import pandas
 import matplotlib.pyplot as plt
 from copy import deepcopy 
@@ -125,7 +125,7 @@ class TransmissionModel(lmfit.Model):
 
         Parameters
         ----------
-        data : pandas.DataFrame or nres.data.Data
+        data : pandas.DataFrame or nbragg.data.Data
             The data to fit the model to.
         params : lmfit.Parameters, optional
             Initial parameter values for the fit. If None, the current model parameters will be used.

@@ -210,7 +210,7 @@ def get_cache_path():
     # Get the user's site-packages directory
     user_site = site.getusersitepackages()
     # Create a subdirectory for our cache
-    cache_dir = Path(user_site) / "nres"
+    cache_dir = Path(user_site) / "nbragg"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 

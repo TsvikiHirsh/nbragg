@@ -7,8 +7,8 @@ full_name: Tsviki Y. Hirsh
 license: MIT
 min_python_version: '3.10'
 org: TsvikiHirsh
-project_name: nres
+project_name: nbragg
 project_short_description: Simple yet powerful package for neutron resonance fitting
-python_name: nres
+python_name: nbragg
 typing: loose
-url: https://github.com/TsvikiHirsh/nres
+url: https://github.com/TsvikiHirsh/nbragg

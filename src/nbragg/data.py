@@ -1,4 +1,4 @@
-from nres import utils
+from nbragg import utils
 import pandas as pd
 import numpy as np
 
