@@ -1,0 +1,14 @@
+# Changes here will be overwritten by Copier
+_commit: v0.2.0
+_src_path: gh:alan-turing-institute/python-project-template
+coc: our_coc
+email: tsviki.hirsh@gmail.com
+full_name: Tsviki Y. Hirsh
+license: MIT
+min_python_version: '3.10'
+org: TsvikiHirsh
+project_name: nres
+project_short_description: Simple yet powerful package for neutron resonance fitting
+python_name: nres
+typing: loose
+url: https://github.com/TsvikiHirsh/nres

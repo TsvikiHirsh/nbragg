@@ -1,0 +1,122 @@
+[build-system]
+requires = ["setuptools>=61", "wheel", "pybind11"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nbragg"
+version = "0.1.0"
+authors = [
+  { name = "Tsviki Y. Hirsh", email = "tsviki.hirsh@gmail.com" },
+]
+description = "Simple yet powerful package for neutron resonance fitting"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+]
+dependencies = [
+  "scipy",
+  "pandas",
+  "numpy",
+  "materials-compendium",
+  "lmfit",
+  "pybind11",
+  "Requests",
+  "setuptools",
+  "tqdm",
+  "mendeleev",
+  "ncrystal"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest >=6",
+  "pytest-cov >=3",
+  "pre-commit",
+]
+
+[project.urls]
+Homepage = "https://github.com/TsvikiHirsh/nbragg"
+"Bug Tracker" = "https://github.com/TsvikiHirsh/nbragg/issues"
+Discussions = "https://github.com/TsvikiHirsh/nbragg/discussions"
+Changelog = "https://github.com/TsvikiHirsh/nbragg/releases"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config"]
+xfail_strict = true
+filterwarnings = [
+  "error",
+]
+log_cli_level = "INFO"
+testpaths = [
+  "tests",
+]
+
+[tool.coverage]
+run.source = ["nbragg"]
+port.exclude_lines = [
+  'pragma: no cover',
+  '\.\.\.',
+  'if typing.TYPE_CHECKING:',
+]
+
+[tool.mypy]
+files = ["src", "tests"]
+python_version = "3.8"
+show_error_codes = true
+warn_unreachable = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+strict = false
+
+[tool.ruff]
+src = ["src"]
+exclude = []
+line-length = 88
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W", 
+  "B",           
+  "I",           
+  "ARG",         
+  "C4",          
+  "EM",          
+  "ICN",         
+  "ISC",         
+  "G",           
+  "PGH",         
+  "PIE",         
+  "PL",          
+  "PT",          
+  "RET",         
+  "RUF",         
+  "SIM",         
+  "UP",          
+  "YTT",         
+  "EXE",         
+]
+ignore = [
+  "PLR",    
+  "ISC001",
+]
+unfixable = [
+  "F401",   
+  "F841",   
+]
+flake8-unused-arguments.ignore-variadic-names = true
+isort.required-imports = ["from __future__ import annotations"]
