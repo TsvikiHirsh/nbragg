@@ -136,6 +136,8 @@ class CrossSection:
         self.table = pd.DataFrame(data, index=wavelengths)
         self.table.index.name = 'wavelength'
 
+
+
     def __call__(self, E: np.ndarray, weights: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Calculate the weighted cross-section for a given set of energies.
@@ -378,55 +380,80 @@ import NCrystal as nc
 from typing import Dict, Union, Optional
 from copy import deepcopy
 
-import numpy as np
-import pandas as pd
-import NCrystal as nc
-
 class CrystalCrossSection:
     """
     Represents a combination of cross-sections for crystal materials.
     """
 
     def __init__(self, materials: Dict[Union[str, 'CrystalCrossSection'], float] = None,
-                 name: str = "",
-                 total_weight: float = 1.0,
-                 temp: float = 300.0,
-                 mos: Union[float, Dict[str, float], List[float]] = None,
-                 k: Union[float, Dict[str, float], List[float]] = None,
-                 l: Union[float, Dict[str, float], List[float]] = None):
+                name: str = "",
+                total_weight: float = 1.0,
+                temp: float = 300.0,
+                mos: Union[float, Dict[str, float], None] = None,
+                k: Union[float, Dict[str, float], None] = None,
+                l: Union[float, Dict[str, float], None] = None):
         """
         Initialize the CrystalCrossSection class.
-
-        Args:
-            materials: A dictionary mapping material names to their respective weights.
-            name: Name of the cross-section.
-            total_weight: Total weight of the materials.
-            temp: Temperature of the material (in K).
-            mos: Mosaicity of the material. Can be a single value, a dictionary, or a list.
-            k, l: Indices for material orientation. Can be a single value, a dictionary, or a list.
         """
         self.materials = materials or {}
         self.name = name
         self.total_weight = total_weight if self.materials else 0.
         self.temp = temp
-        self.mos = mos
-        self.k = k
-        self.l = l
+        self.mos = self._process_parameter(mos)
+        self.k = self._process_parameter(k)
+        self.l = self._process_parameter(l)
+        
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.__matdata__ = {}  # Loaded material data
         self.cfg_string = {}  # Configuration strings for each material
 
+        self._set_weights()
         self._generate_cfg_strings()  # Generate configuration strings
         self._load_material_data()  # Load material data
         self._populate_material_data()  # Initialize cross-section data
-        self._set_weights()
+        
+
+    def _process_parameter(self, param):
+        if isinstance(param, (int, float)):
+            return {m: param for m in self.materials}
+        elif isinstance(param, (list, np.ndarray)):
+            return {m: param[i] if i < len(param) else None for i, m in enumerate(self.materials)}
+        elif isinstance(param, dict):
+            return param
+        else:
+            return {m: None for m in self.materials}
 
     def _generate_cfg_strings(self):
-        """Generate the configuration strings for all materials."""
         for material in self.materials:
             if isinstance(material, str):
                 cfg_string = self._generate_cfg_string(material)
                 self.cfg_string[material] = cfg_string
+
+    def _generate_cfg_string(self, material):
+        mat_info = self._get_material_info(material)
+        if not mat_info:
+            return ""
+
+        filename = mat_info.get('filename')
+        cfg = f"{filename};dcutoff=0.5"
+
+        if self.temp is not None:
+            cfg += f";temp={self.temp}K"
+
+        mos = self.mos.get(material)
+        k = self.k.get(material)
+        l = self.l.get(material)
+
+        if any(param is not None for param in (mos, k, l)):
+            mos = mos if mos is not None else 0.001
+            k = k if k is not None else 0
+            l = l if l is not None else 1
+
+            cfg += f";mos={mos}deg"
+            cfg += f";dir1=@crys_hkl:0,{k},{l}@lab:0,0,1"
+            cfg += f";dir2=@crys_hkl:0,-1,1@lab:0,1,0"
+
+        return cfg
 
     def _load_material_data(self):
         """Load the material data from .ncmat files using NCrystal."""
@@ -436,83 +463,77 @@ class CrystalCrossSection:
                 if cfg_string:
                     self.__matdata__[material] = nc.createScatter(cfg_string)
 
-    def _generate_cfg_string(self, material, mos=None, temp=None, k=None, l=None):
-        """Generate the configuration string for NCrystal based on material type and parameters."""
-        mat_info = self._get_material_info(material)
-        if not mat_info:
-            return ""
-
-        filename = mat_info.get('filename')
-        cfg = f"{filename};dcutoff=0.5"
-
-        # Add temperature if provided
-        if temp is not None:
-            cfg += f";temp={temp}K"
-
-        # Handle single-crystal (oriented) material configuration
-        space_group = mat_info.get('space_group', None)
-        if space_group is not None and mos is not None:
-            cfg += f";mos={mos}deg"
-            if k is not None and l is not None:
-                cfg += f";dir1=@crys_hkl:{0},{k},{l}@lab:0,0,1;dir2=@crys_hkl:0,-1,1@lab:0,1,0"
-
-        return cfg
-
     def _get_material_info(self, material_name: str):
         """Retrieve material information from the material dictionary."""
         return materials_dict.get(material_name)
 
+    def _set_weights(self):
+        self.weights = pd.Series(self.materials)
+        self.weights = self.weights[self.weights > 0]
+        self.weights /= self.weights.sum()
+
     def _populate_material_data(self):
-        """Populate cross-section data for the materials and compute weighted total."""
         xs = {}
         for material, weight in self.materials.items():
             if isinstance(material, str):
                 mat_data = self.__matdata__.get(material)
                 if mat_data:
-                    xs[material] = self._calculate_cross_section(mat_data, self.lambda_grid)
+                    xs[material] = self._calculate_cross_section(self.lambda_grid, mat_data, material)
             elif isinstance(material, CrystalCrossSection):
                 xs[material.name] = material.table["total"].rename(material.name)
 
-        # Set actual wavelength as index
         self.table = pd.DataFrame(xs, index=self.lambda_grid)
         self.table.index.name = "wavelength"
-
-    def _calculate_cross_section(self, mat_data, lambda_grid):
-        """Calculate the cross-section for a material over a wavelength grid."""
-        return np.array([mat_data.xsect(wl=λ) for λ in lambda_grid])
-
-    def _set_weights(self):
-        """Set and normalize the weights for the materials."""
-        self.weights = pd.Series(self.materials)
-        self.weights = self.weights[self.weights > 0]
-        self.weights /= self.weights.sum()
-
         self.table["total"] = (self.table * self.weights).sum(axis=1).astype(float)
+
+
+    def _calculate_cross_section(self, λ, mat_data, material):
+        ekin = nc.wl2ekin(λ)
+        mos = self.mos.get(material)
+        k = self.k.get(material)
+        l = self.l.get(material)
+
+        if all(param is not None for param in (mos, k, l)):
+            # Use the oriented cross-section
+            return np.array([
+                mat_data.crossSection(ekin_val, direction=(0, 0, 1))
+                for ekin_val in ekin
+            ])
+        else:
+            # Use the non-oriented cross-section
+            return mat_data.crossSectionNonOriented(ekin)
+        
 
     def __call__(self, λ: np.ndarray, mos=None, temp=None, k=None, l=None):
         """
-        Update material configuration and reload if parameters change.
-        Calculate weighted cross-section for a given lambda (λ) array.
-
+        Update material configuration if parameters change and return fast calculation of
+        the weighted cross-section for a given lambda (λ) array.
+        
         Args:
             λ (np.ndarray): Array of wavelength values (in Ångströms).
+            
         Returns:
             np.ndarray: Weighted cross-section for the given λ values.
         """
         updated = False
 
-        # Check and update material configurations if needed
-        for material in self.materials:
-            if isinstance(material, str):
-                cfg = self.cfg_string.get(material, "")
-                new_cfg = self._generate_cfg_string(material, mos, temp, k, l)
+        # Update parameters if provided
+        if mos is not None:
+            self.mos = self._process_parameter(mos)
+            updated = True
+        if temp is not None:
+            self.temp = temp
+            updated = True
+        if k is not None:
+            self.k = self._process_parameter(k)
+            updated = True
+        if l is not None:
+            self.l = self._process_parameter(l)
+            updated = True
 
-                if cfg != new_cfg:
-                    self.cfg_string[material] = new_cfg
-                    updated = True
-
-        # Reload materials if updated
+        # Regenerate cfg strings and reload material data if updated
         if updated:
+            self._generate_cfg_strings()
             self._load_material_data()
 
         # Calculate and return weighted cross-section for the input λ array
@@ -520,15 +541,16 @@ class CrystalCrossSection:
         for material, weight in self.materials.items():
             mat_data = self.__matdata__.get(material)
             if mat_data:
-                cross_sections[material] = np.array([mat_data.xsect(wl=λ_value) for λ_value in λ])
+                cross_sections[material] = self._calculate_cross_section(λ, mat_data, material)
 
         # Convert to DataFrame for easy manipulation
         cross_section_df = pd.DataFrame(cross_sections, index=λ)
-        cross_section_df["total"] = (cross_section_df * self.weights).sum(axis=1)
+        
+        # Multiply by weights and sum the cross-sections for all materials
+        total_cross_section = (cross_section_df * self.weights).sum(axis=1)
 
-        # Return weighted total cross-section as np.ndarray
-        return cross_section_df["total"].values
-
+        # Return the weighted total cross-section as np.ndarray
+        return total_cross_section.values
 
 
 
@@ -660,3 +682,27 @@ class CrystalCrossSection:
                     return info
 
         return material_info
+    
+    def plot(self, **kwargs):
+        """
+        Plot the cross-section data.
+
+        Args:
+            wavelengths: Array of wavelength values. If None, uses the table's index.
+            **kwargs: Optional plotting parameters.
+        """
+        import matplotlib.pyplot as plt
+
+        title = kwargs.pop("title", self.name)
+        ylabel = kwargs.pop("ylabel", "$\sigma$ [barn]")
+        xlabel = kwargs.pop("xlabel", "Wavelength [Å]")
+        lw = kwargs.pop("lw", 1.)
+
+        fig, ax = plt.subplots()
+        self.table.mul(np.r_[self.weights,1]).plot(ax=ax, logy=True, logx=True)
+        
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend()
+        return ax
