@@ -389,15 +389,29 @@ class CrystalCrossSection:
 
     def __init__(self, materials: Dict[Union[str, 'CrystalCrossSection'], float] = None,
                  name: str = "",
-                 total_weight: float = 1.,
-                 temp: float = 300.0):
+                 total_weight: float = 1.0,
+                 temp: float = 300.0,
+                 mos: Union[float, Dict[str, float], List[float]] = None,
+                 k: Union[float, Dict[str, float], List[float]] = None,
+                 l: Union[float, Dict[str, float], List[float]] = None):
         """
         Initialize the CrystalCrossSection class.
+
+        Args:
+            materials: A dictionary mapping material names to their respective weights.
+            name: Name of the cross-section.
+            total_weight: Total weight of the materials.
+            temp: Temperature of the material (in K).
+            mos: Mosaicity of the material. Can be a single value, a dictionary, or a list.
+            k, l: Indices for material orientation. Can be a single value, a dictionary, or a list.
         """
         self.materials = materials or {}
         self.name = name
         self.total_weight = total_weight if self.materials else 0.
         self.temp = temp
+        self.mos = mos
+        self.k = k
+        self.l = l
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.__matdata__ = {}  # Loaded material data
         self.cfg_string = {}  # Configuration strings for each material
@@ -527,45 +541,103 @@ class CrystalCrossSection:
 
     @classmethod
     def from_material(cls, mat: Union[str, Dict], short_name: str = "", 
-                      total_weight: float = 1.0, temp: float = 300.0, mos=None, k=None, l=None) -> 'CrystalCrossSection':
+                      total_weight: float = 1.0, temp: float = 300.0, 
+                      mos=None, k=None, l=None) -> 'CrystalCrossSection':
         """
-        Create a CrystalCrossSection instance from a material.
+        Create a CrystalCrossSection instance from a single material.
 
         Args:
-            mat: Either a material string (formula, short_name, or filename) or a dictionary with material information.
+            mat: Material name or dictionary with material info.
             short_name: Optional short name for the material.
-            total_weight: Total weight of the material (default is 1.0).
-            temp: Temperature of the material (default is 300.0 K).
-            mos: Mosaicity of the material (in degrees).
-            k, l: Indices for material orientation.
+            total_weight: Total weight for the material.
+            temp: Temperature (in K).
+            mos: Mosaicity of the material.
+            k, l: Orientation indices.
         
         Returns:
-            A CrystalCrossSection instance representing the material.
+            A CrystalCrossSection instance for the material.
         """
-        # If mat is a string, search for it in materials_dict
         if isinstance(mat, str):
             mat_info = cls._get_material_info(mat)
             if not mat_info:
                 raise ValueError(f"Material '{mat}' not found.")
-        # If mat is a dictionary, use it directly
         elif isinstance(mat, dict):
             mat_info = mat
         else:
-            raise TypeError("Argument 'mat' must be either a string or a dictionary.")
+            raise TypeError("Argument 'mat' must be a string or dictionary.")
 
-        # Extract material info
         short_name = mat_info.get('short_name', short_name)
         filename = mat_info.get('filename')
-        
-        # Use formula or filename to load the material via NCrystal
         if not filename:
             raise ValueError(f"Material '{mat}' does not contain a valid filename.")
 
-        # Create a dictionary to store the material with its weight
         materials = {filename: total_weight}
+        return cls(materials=materials, name=short_name, total_weight=total_weight, 
+                   temp=temp, mos=mos, k=k, l=l)
+
+    def __add__(self, other: 'CrystalCrossSection') -> 'CrystalCrossSection':
+        """
+        Add two CrystalCrossSection objects, combining their materials and weights.
+
+        Args:
+            other: Another CrystalCrossSection object.
         
-        # Instantiate the CrystalCrossSection class with the gathered data
-        return cls(materials=materials, name=short_name, total_weight=total_weight, temp=temp)
+        Returns:
+            A new CrystalCrossSection object representing the sum.
+        """
+        # Combine materials
+        new_materials = {**self.materials, **other.materials}
+        
+        # Get the weighted materials for self and other
+        self_weights = pd.Series(self.materials) * self.total_weight
+        other_weights = pd.Series(other.materials) * other.total_weight
+        
+        # Add the weights and normalize them to sum to 1
+        new_weights = self_weights.add(other_weights, fill_value=0)
+        new_weights_normalized = new_weights / new_weights.sum()
+        
+        # Combine mos, k, l values
+        new_mos = self._combine_dict_or_list(self.mos, other.mos)
+        new_k = self._combine_dict_or_list(self.k, other.k)
+        new_l = self._combine_dict_or_list(self.l, other.l)
+
+        # Create a new object with the combined attributes
+        return CrystalCrossSection(materials=new_weights_normalized.to_dict(), 
+                                total_weight=new_weights.sum(), 
+                                mos=new_mos, k=new_k, l=new_l, 
+                                temp=self.temp)
+
+    def __mul__(self, scalar: float) -> 'CrystalCrossSection':
+        """
+        Multiply the total weight of the CrystalCrossSection by a scalar.
+
+        Args:
+            scalar: The value to multiply the total weight by.
+
+        Returns:
+            A new CrystalCrossSection object with the updated material weights and total weight.
+        """
+        # Scale the material weights by the scalar
+        scaled_weights = pd.Series(self.materials) * scalar
+        
+        # No need to normalize here; the user may want to combine with other objects later.
+        return CrystalCrossSection(materials=scaled_weights.to_dict(), 
+                                total_weight=self.total_weight * scalar, 
+                                mos=self.mos, k=self.k, l=self.l, 
+                                temp=self.temp)
+
+
+    def _combine_dict_or_list(self, a, b):
+        """
+        Helper function to combine dictionaries or lists.
+        If both are dictionaries, keys will be merged.
+        If both are lists, values will be concatenated.
+        """
+        if isinstance(a, dict) and isinstance(b, dict):
+            return {**a, **b}
+        if isinstance(a, list) and isinstance(b, list):
+            return a + b
+        return a  # Default behavior if they are not both dicts or lists
 
     @classmethod
     def _get_material_info(cls, material_key: str) -> Dict:
