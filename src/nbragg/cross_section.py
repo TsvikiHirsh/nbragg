@@ -527,23 +527,64 @@ class CrystalCrossSection:
 
     @classmethod
     def from_material(cls, mat: Union[str, Dict], short_name: str = "", 
-                      total_weight: float = 1., temp: float = 300.0) -> 'CrystalCrossSection':
+                      total_weight: float = 1.0, temp: float = 300.0, mos=None, k=None, l=None) -> 'CrystalCrossSection':
         """
         Create a CrystalCrossSection instance from a material.
 
         Args:
-            mat: Material or dictionary containing material information.
-            short_name: Short name for the material (optional).
+            mat: Either a material string (formula, short_name, or filename) or a dictionary with material information.
+            short_name: Optional short name for the material.
             total_weight: Total weight of the material (default is 1.0).
-            temp: Temperature of the material (in Kelvin).
-
+            temp: Temperature of the material (default is 300.0 K).
+            mos: Mosaicity of the material (in degrees).
+            k, l: Indices for material orientation.
+        
         Returns:
-            CrystalCrossSection instance representing the material.
+            A CrystalCrossSection instance representing the material.
         """
+        # If mat is a string, search for it in materials_dict
         if isinstance(mat, str):
             mat_info = cls._get_material_info(mat)
             if not mat_info:
-                raise ValueError(f"Material {mat} not found.")
+                raise ValueError(f"Material '{mat}' not found.")
+        # If mat is a dictionary, use it directly
+        elif isinstance(mat, dict):
+            mat_info = mat
+        else:
+            raise TypeError("Argument 'mat' must be either a string or a dictionary.")
 
-        return cls(materials={mat: total_weight}, name=short_name, temp=temp)
+        # Extract material info
+        short_name = mat_info.get('short_name', short_name)
+        filename = mat_info.get('filename')
+        
+        # Use formula or filename to load the material via NCrystal
+        if not filename:
+            raise ValueError(f"Material '{mat}' does not contain a valid filename.")
 
+        # Create a dictionary to store the material with its weight
+        materials = {filename: total_weight}
+        
+        # Instantiate the CrystalCrossSection class with the gathered data
+        return cls(materials=materials, name=short_name, total_weight=total_weight, temp=temp)
+
+    @classmethod
+    def _get_material_info(cls, material_key: str) -> Dict:
+        """
+        Get material information by looking up the material by formula, short_name, or filename.
+
+        Args:
+            material_key: Either the formula, short name, or filename of the material.
+
+        Returns:
+            A dictionary containing the material information if found, otherwise None.
+        """
+        # Search by formula, short name, or filename in materials_dict
+        material_info = materials_dict.get(material_key)
+
+        if not material_info:
+            # If not found directly, search by matching values in the materials dictionary
+            for key, info in materials_dict.items():
+                if info['formula'] == material_key or info['short_name'] == material_key or info['filename'] == material_key:
+                    return info
+
+        return material_info
