@@ -8,7 +8,7 @@ from importlib.metadata import version
 __all__ = ("__version__",)
 __version__ = version(__name__)
 
-from nbragg.cross_section import CrossSection, CrystalCrossSection
+from nbragg.cross_section import CrossSection
 from nbragg.response import Response, Background
 from nbragg.models import TransmissionModel
 from nbragg.data import Data
