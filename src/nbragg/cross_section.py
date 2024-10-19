@@ -18,7 +18,8 @@ class CrossSection:
                 temp: float = 300.0,
                 mos: Union[float, Dict[str, float], None] = None,
                 k: Union[float, Dict[str, float], None] = None,
-                l: Union[float, Dict[str, float], None] = None):
+                l: Union[float, Dict[str, float], None] = None,
+                dirtol:float = 1.):
         """
         Initialize the CrossSection class.
         """
@@ -29,6 +30,7 @@ class CrossSection:
         self.mos = self._process_parameter(mos)
         self.k = self._process_parameter(k)
         self.l = self._process_parameter(l)
+        self.dirtol = dirtol
         
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.__matdata__ = {}  # Loaded material data
@@ -76,7 +78,7 @@ class CrossSection:
             k = k if k is not None else 0
             l = l if l is not None else 1
 
-            cfg += f";mos={mos}deg"
+            cfg += f";mos={mos}deg;dirtol={self.dirtol}deg"
             cfg += f";dir1=@crys_hkl:0,{k},{l}@lab:0,0,1"
             cfg += f";dir2=@crys_hkl:0,-1,1@lab:0,1,0"
 
@@ -191,7 +193,7 @@ class CrossSection:
     @classmethod
     def from_material(cls, mat: Union[str, Dict], short_name: str = "", 
                       total_weight: float = 1.0, temp: float = 300.0, 
-                      mos=None, k=None, l=None) -> 'CrossSection':
+                      mos=None, k=None, l=None,dirtol=None) -> 'CrossSection':
         """
         Create a CrossSection instance from a single material.
 
@@ -219,10 +221,12 @@ class CrossSection:
         filename = mat_info.get('filename')
         if not filename:
             raise ValueError(f"Material '{mat}' does not contain a valid filename.")
+        
+        dirtol = dirtol if dirtol else 1.
 
         materials = {filename: total_weight}
         return cls(materials=materials, name=short_name, total_weight=total_weight, 
-                   temp=temp, mos=mos, k=k, l=l)
+                   temp=temp, mos=mos, k=k, l=l, dirtol=dirtol)
 
     def __add__(self, other: 'CrossSection') -> 'CrossSection':
         """
