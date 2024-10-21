@@ -4,6 +4,7 @@ import nbragg.utils as utils
 from nbragg.response import Response, Background
 from nbragg.cross_section import CrossSection
 from nbragg.data import Data
+import NCrystal as NC
 import pandas
 import matplotlib.pyplot as plt
 from copy import deepcopy 
@@ -57,10 +58,10 @@ class TransmissionModel(lmfit.Model):
             self.params += self._make_tof_params(vary=vary_tof,**kwargs)
 
 
-        self.response = Response(kind=response,vary=vary_response,
-                                 tstep=self.cross_section.tstep)
-        if vary_response is not None:
-            self.params += self.response.params
+        # self.response = Response(kind=response,vary=vary_response,
+        #                          tstep=self.cross_section.tstep)
+        # if vary_response is not None:
+        #     self.params += self.response.params
 
 
         self.background = Background(kind=background,vary=vary_background)
@@ -74,14 +75,14 @@ class TransmissionModel(lmfit.Model):
 
         
 
-    def transmission(self, E: np.ndarray, thickness: float = 1, norm: float = 1., **kwargs):
+    def transmission(self, wl: np.ndarray, thickness: float = 1, norm: float = 1., **kwargs):
         """
         Transmission function model with background components.
 
         Parameters
         ----------
-        E : np.ndarray
-            The energy values at which to calculate the transmission.
+        wl : np.ndarray
+            The wavelength values at which to calculate the transmission.
         thickness : float, optional
             The thickness of the material (in cm), by default 1.
         norm : float, optional
@@ -99,27 +100,28 @@ class TransmissionModel(lmfit.Model):
         This function combines the cross-section with the response and background 
         models to compute the transmission, which is given by:
 
-        .. math:: T(E) = \text{norm} \cdot e^{- \sigma \cdot \text{thickness} \cdot n} \cdot (1 - \text{bg}) + \text{bg}
+        .. math:: T(\lambda) = \text{norm} \cdot e^{- \sigma \cdot \text{thickness} \cdot n} \cdot (1 - \text{bg}) + \text{bg}
         
         where `sigma` is the cross-section, `bg` is the background function, and `n` is the total atomic weight.
         """
+        E = NC.wl2ekin(wl)
         E = self._tof_correction(E,**kwargs)
+        wl = NC.ekin2wl(E)
 
-        response = self.response.function(**kwargs)
+        # response = self.response.function(**kwargs)
 
-        weights = [kwargs.pop(key.replace("_",""),val) for key,val in self.cross_section.weights.items()]
-
-        bg = self.background.function(E,**kwargs)
+        bg = self.background.function(wl,**kwargs)
 
         n = self.n
 
         # Transmission function
-        xs = self.cross_section(E,weights=weights,response=response)
+        
+        xs = self.cross_section(wl)
 
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + bg
         return T
 
-    def fit(self, data, params=None, emin=0.5e6, emax=20.e6, **kwargs):
+    def fit(self, data, params=None, wlmin=1., wlmax=6., **kwargs):
         """
         Fit the model to the data.
 
@@ -129,10 +131,10 @@ class TransmissionModel(lmfit.Model):
             The data to fit the model to.
         params : lmfit.Parameters, optional
             Initial parameter values for the fit. If None, the current model parameters will be used.
-        emin : float, optional
-            The minimum energy for fitting, by default 0.5e6.
-        emax : float, optional
-            The maximum energy for fitting, by default 20.e6.
+        wlmin : float, optional
+            The minimum wavelength for fitting, by default 0.5e6.
+        wlmax : float, optional
+            The maximum wavelength for fitting, by default 20.e6.
         kwargs : dict, optional
             Additional arguments passed to the lmfit.Model.fit method.
 
@@ -143,24 +145,24 @@ class TransmissionModel(lmfit.Model):
 
         Notes
         -----
-        This function applies energy filtering to the input data based on `emin` and `emax`,
+        This function applies wavelength filtering to the input data based on `wlmin` and `wlmax`,
         then fits the transmission model to the filtered data.
         """
-        # self.cross_section.set_energy_range(emin,emax)
+        # self.cross_section.set_wavelength_range(wlmin,wlmax)
         if isinstance(data,pandas.DataFrame):
-            data = data.query(f"{emin}<energy<{emax}")
+            data = data.query(f"{wlmin}<wavelength<{wlmax}")
             weights = kwargs.get("weights",1./data["err"].values)
-            fit_result = super().fit(data["trans"].values, params=params or self.params, weights=weights, E=data["energy"].values, **kwargs)
+            fit_result = super().fit(data["trans"].values, params=params or self.params, weights=weights, wl=data["wavelength"].values, **kwargs)
         elif isinstance(data,Data):
-            data = data.table.query(f"{emin}<energy<{emax}")
+            data = data.table.query(f"{wlmin}<wavelength<{wlmax}")
             weights = kwargs.get("weights",1./data["err"].values)
-            fit_result = super().fit(data["trans"].values, params=params or self.params, weights=weights, E=data["energy"].values, **kwargs)
+            fit_result = super().fit(data["trans"].values, params=params or self.params, weights=weights, wl=data["wavelength"].values, **kwargs)
         else:
             # Perform the fit using the parent class's fit method
             fit_result = super().fit(data, params=params or self.params, **kwargs)
         self.fit_result = fit_result
         # switch method names
-        fit_result.plot_results = deepcopy(fit_result.plot)
+        # fit_result.plot_results = deepcopy(fit_result.plot)
         fit_result.plot = self.plot
 
         # return TransmissionModelResult(fit_result, params or self.params)
@@ -188,7 +190,7 @@ class TransmissionModel(lmfit.Model):
         and residuals. If `plot_bg` is True, it will also plot the background function.
         """
         fig, ax = plt.subplots(2,1,sharex=True,height_ratios=[3.5,1],figsize=(6,5))
-        energy = self.fit_result.userkws["E"]
+        wavelength = self.fit_result.userkws["wl"]
         data = self.fit_result.data
         err = 1./self.fit_result.weights
         best_fit = self.fit_result.best_fit
@@ -196,15 +198,15 @@ class TransmissionModel(lmfit.Model):
         color = kwargs.pop("color","seagreen")
         ecolor = kwargs.pop("ecolor","0.8")
         ms = kwargs.pop("ms",2)
-        ax[0].errorbar(energy,data,err,marker="o",color=color,ms=ms,zorder=-1,ecolor=ecolor,label="Best fit")  
-        ax[0].plot(energy,best_fit,color="0.2",label="Data") 
+        ax[0].errorbar(wavelength,data,err,marker="o",color=color,ms=ms,zorder=-1,ecolor=ecolor,label="Best fit")  
+        ax[0].plot(wavelength,best_fit,color="0.2",label="Data") 
         ax[0].set_ylabel("Transmission")
         ax[0].set_title(self.cross_section.name)
-        ax[1].plot(energy,residual,color=color)
+        ax[1].plot(wavelength,residual,color=color)
         ax[1].set_ylabel("Residuals [1σ]")
-        ax[1].set_xlabel("Energy [eV]")
+        ax[1].set_xlabel("λ [Å]")
         if plot_bg and self.background.params:
-            self.background.plot(E=energy,ax=ax[0],params=self.fit_result.params,**kwargs)
+            self.background.plot(wl=wavelength,ax=ax[0],params=self.fit_result.params,**kwargs)
             ax[0].legend(["Best fit","Background","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
         else:
             ax[0].legend(["Best fit","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")

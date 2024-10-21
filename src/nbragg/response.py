@@ -162,60 +162,60 @@ class Background:
         else:
             raise NotImplementedError(f"Background kind '{kind}' is not supported. Use 'none', 'constant', 'polynomial3', or 'polynomial5'.")
 
-    def empty_background(self, E, **kwargs):
+    def empty_background(self, wl, **kwargs):
         """
         Returns a zero background array.
         """
-        return np.zeros_like(E)
+        return np.zeros_like(wl)
 
-    def constant_background(self, E, b0=0., **kwargs):
+    def constant_background(self, wl, b0=0., **kwargs):
         """
         Generates a constant background.
 
         Parameters:
-        E (np.ndarray): Energy values.
+        wl (np.ndarray): Wavelength values.
         b0 (float): Constant background value.
         """
-        return np.full_like(E, b0)
+        return np.full_like(wl, b0)
 
-    def polynomial3_background(self, E, b0=0., b1=1., b2=0., **kwargs):
+    def polynomial3_background(self, wl, b0=0., b1=1., b2=0., **kwargs):
         """
-        Computes a third-degree polynomial background.
+        Computwls a third-degree polynomial background.
 
         Parameters:
-        E (np.ndarray): Energy values.
+        wl (np.ndarray): Energy values.
         b0 (float): Constant term.
         b1 (float): Linear term.
         b2 (float): Quadratic term.
         """
-        return b0 + b1 * np.sqrt(E) + b2 / np.sqrt(E)
+        return b0 + b1 * np.sqrt(wl) + b2 / np.sqrt(wl)
 
-    def polynomial5_background(self, E, b0=0., b1=1., b2=0., b3=0., b4=0., **kwargs):
+    def polynomial5_background(self, wl, b0=0., b1=1., b2=0., b3=0., b4=0., **kwargs):
         """
         Computes a fifth-degree polynomial background.
 
         Parameters:
-        E (np.ndarray): Energy values.
+        wl (np.ndarray): Wavelegth values.
         b0 (float): Constant term.
         b1 (float): Linear term.
         b2 (float): Quadratic term.
         b3 (float): Cubic term.
         b4 (float): Quartic term.
         """
-        return b0 + b1 * np.sqrt(E) + b2 / np.sqrt(E) + b3 * E + b4 * E**2
+        return b0 + b1 * np.sqrt(wl) + b2 / np.sqrt(wl) + b3 * wl + b4 * wl**2
 
-    def plot(self, E, params=None, **kwargs):
+    def plot(self, wl, params=None, **kwargs):
         """
         Plots the background function.
 
         Parameters:
-        E (np.ndarray): Energy values.
+        wl (np.ndarray): Wavelength values.
         params (dict): Parameters for the background function.
         """
         ax = kwargs.pop("ax", plt.gca())
         ls = kwargs.pop("ls", "--")
         color = kwargs.pop("color", "0.5")
         params = params if params else self.params
-        y = self.function(E, **params.valuesdict())
-        df = pd.Series(y, index=E, name="Background")
+        y = self.function(wl, **params.valuesdict())
+        df = pd.Series(y, index=wl, name="Background")
         df.plot(ax=ax, color=color, ls=ls, **kwargs)

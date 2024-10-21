@@ -11,7 +11,7 @@ class Data:
     Attributes:
     -----------
     table : pandas.DataFrame or None
-        A dataframe containing λ (Angstroms), transmission, and error values.
+        A dataframe containing wavelength (Angstroms), transmission, and error values.
     tgrid : pandas.Series or None
         A time-of-flight grid corresponding to the time steps in the data.
     """
@@ -62,7 +62,7 @@ class Data:
                     tstep: float = 1.56255e-9, L: float = 10.59):
         """
         Creates a Data object from signal and open beam counts data, calculates transmission, 
-        and converts tof to λ using energy-λ conversion.
+        and converts tof to wavelength using energy-wavelength conversion.
         
         Parameters:
         -----------
@@ -82,7 +82,7 @@ class Data:
         Returns:
         --------
         Data
-            A Data object containing transmission and λ data.
+            A Data object containing transmission and wavelength data.
         """
         # Read signal and open beam counts
         signal = cls._read_counts(signal)
@@ -91,8 +91,8 @@ class Data:
         # Convert tof to energy using provided time step and distance
         signal["energy"] = utils.time2energy(signal["tof"] * tstep, L)
         
-        # Convert energy to λ (Angstroms)
-        signal["λ"] = signal["energy"].apply(NC.ekin2wl)
+        # Convert energy to wavelength (Angstroms)
+        signal["wavelength"] = signal["energy"].apply(NC.ekin2wl)
         
         # Calculate transmission and associated error
         transmission = signal["counts"] / openbeam["counts"]
@@ -112,9 +112,9 @@ class Data:
                 (empty_openbeam["err"] / empty_openbeam["counts"])**2
             )
         
-        # Construct a dataframe for λ, transmission, and error
+        # Construct a dataframe for wavelength, transmission, and error
         df = pd.DataFrame({
-            "λ": signal["λ"],
+            "wavelength": signal["wavelength"],
             "trans": transmission,
             "err": err
         })
@@ -124,7 +124,7 @@ class Data:
         
         # Create and return the Data object
         self_data = cls()
-        self_data.table = df#.set_index("λ")  # Set λ as the index
+        self_data.table = df#.set_index("wavelength")  # Set wavelength as the index
         self_data.tgrid = signal["tof"]
         
         return self_data
@@ -133,7 +133,7 @@ class Data:
     def from_transmission(cls, filename: str):
         """
         Creates a Data object directly from a transmission data file containing energy, transmission, and error values.
-        Converts energy to λ and sets λ as the index.
+        Converts energy to wavelength and sets wavelength as the index.
         
         Parameters:
         -----------
@@ -148,12 +148,12 @@ class Data:
         df = pd.read_csv(filename, names=["energy", "trans", "err"], header=None, 
                          skiprows=0, delim_whitespace=True)
         
-        # Convert energy to λ (Angstroms)
-        df["λ"] = df["energy"].apply(NC.ekin2wl)
+        # Convert energy to wavelength (Angstroms)
+        df["wavelength"] = df["energy"].apply(NC.ekin2wl)
         
-        # Create Data object and assign the dataframe with λ as index
+        # Create Data object and assign the dataframe with wavelength as index
         self_data = cls()
-        self_data.table = df#.set_index("λ")
+        self_data.table = df#.set_index("wavelength")
         
         return self_data
     
@@ -172,7 +172,7 @@ class Data:
             - ecolor : str, optional
               Error bar color (default: "0.8").
             - xlabel : str, optional
-              Label for the x-axis (default: "λ [Å]").
+              Label for the x-axis (default: "wavelength [Å]").
             - ylabel : str, optional
               Label for the y-axis (default: "Transmission").
             - logx : bool, optional
@@ -183,14 +183,14 @@ class Data:
         matplotlib.Axes
             The axes of the plot containing the transmission data.
         """
-        xlim = kwargs.pop("xlim", (0.5, 10))  # Default to λ range in Å
+        xlim = kwargs.pop("xlim", (0.5, 10))  # Default to wavelength range in Å
         ylim = kwargs.pop("ylim", (0., 1.))
         ecolor = kwargs.pop("ecolor", "0.8")
-        xlabel = kwargs.pop("xlabel", "λ [Å]")
+        xlabel = kwargs.pop("xlabel", "wavelength [Å]")
         ylabel = kwargs.pop("ylabel", "Transmission")
-        logx = kwargs.pop("logx", False)  # Default is linear scale for λ
+        logx = kwargs.pop("logx", False)  # Default is linear scale for wavelength
         
         # Plot the data with error bars
-        return self.table.dropna().plot(x="λ",y="trans", yerr="err",
+        return self.table.dropna().plot(x="wavelength",y="trans", yerr="err",
                                         xlim=xlim, ylim=ylim, logx=logx, ecolor=ecolor,
                                         xlabel=xlabel, ylabel=ylabel, **kwargs)

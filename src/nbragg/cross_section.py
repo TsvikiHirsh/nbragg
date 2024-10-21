@@ -116,8 +116,8 @@ class CrossSection:
         self.table["total"] = (self.table * self.weights).sum(axis=1).astype(float)
 
 
-    def _calculate_cross_section(self, λ, mat_data, material):
-        ekin = nc.wl2ekin(λ)
+    def _calculate_cross_section(self, wl, mat_data, material):
+        ekin = nc.wl2ekin(wl)
         mos = self.mos.get(material)
         k = self.k.get(material)
         l = self.l.get(material)
@@ -133,16 +133,16 @@ class CrossSection:
             return mat_data.crossSectionNonOriented(ekin)
         
 
-    def __call__(self, λ: np.ndarray, mos=None, temp=None, k=None, l=None):
+    def __call__(self, wl: np.ndarray, mos=None, temp=None, k=None, l=None):
         """
         Update material configuration if parameters change and return fast calculation of
-        the weighted cross-section for a given lambda (λ) array.
+        the weighted cross-section for a given lambda (wl) array.
         
         Args:
-            λ (np.ndarray): Array of wavelength values (in Ångströms).
+            wl (np.ndarray): Array of wavelength values (in Ångströms).
             
         Returns:
-            np.ndarray: Weighted cross-section for the given λ values.
+            np.ndarray: Weighted cross-section for the given wl values.
         """
         updated = False
 
@@ -165,15 +165,15 @@ class CrossSection:
             self._generate_cfg_strings()
             self._load_material_data()
 
-        # Calculate and return weighted cross-section for the input λ array
+        # Calculate and return weighted cross-section for the input wl array
         cross_sections = {}
         for material, weight in self.materials.items():
             mat_data = self.__matdata__.get(material)
             if mat_data:
-                cross_sections[material] = self._calculate_cross_section(λ, mat_data, material)
+                cross_sections[material] = self._calculate_cross_section(wl, mat_data, material)
 
         # Convert to DataFrame for easy manipulation
-        cross_section_df = pd.DataFrame(cross_sections, index=λ)
+        cross_section_df = pd.DataFrame(cross_sections, index=wl)
         
         # Multiply by weights and sum the cross-sections for all materials
         total_cross_section = (cross_section_df * self.weights).sum(axis=1)
@@ -183,11 +183,11 @@ class CrossSection:
 
 
 
-    def _lambda_to_energy(self, lambda_value: float) -> float:
+    def _wavelength_to_energy(self, wavelength: float) -> float:
         """Convert wavelength in Angstroms to energy in meV."""
         h = 4.135667696e-15  # Planck constant (eV·s)
         m_n = 1.674927471e-27  # Neutron mass (kg)
-        energy_meV = (h**2 / (2 * m_n)) * (1 / (lambda_value * 1e-10)**2) * 1e3  # Convert to meV
+        energy_meV = (h**2 / (2 * m_n)) * (1 / (wavelength * 1e-10)**2) * 1e3  # Convert to meV
         return energy_meV
 
     @classmethod
