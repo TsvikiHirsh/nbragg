@@ -2,6 +2,7 @@ import lmfit
 import numpy as np
 import nbragg.utils as utils
 from nbragg.response import Response, Background
+from scipy.ndimage import convolve1d
 from nbragg.cross_section import CrossSection
 from nbragg.data import Data
 import NCrystal as NC
@@ -13,8 +14,8 @@ from typing import List, Optional
 
 class TransmissionModel(lmfit.Model):
     def __init__(self, cross_section, 
-                        response: str = "expo_gauss",
-                        background: str = "polynomial3",
+                        response: str = "bem",
+                        background: str = "polynomial5",
                         vary_weights: bool = None, 
                         vary_background: bool = None, 
                         vary_tof: bool = None,
@@ -28,9 +29,9 @@ class TransmissionModel(lmfit.Model):
         cross_section : callable
             A function that takes energy (E) as input and returns the cross section.
         response : str, optional
-            The type of response function to use, by default "expo_gauss".
+            The type of response function to use, by default "jorgensen".
         background : str, optional
-            The type of background function to use, by default "polynomial3".
+            The type of background function to use, by default "polynomial5".
         vary_weights : bool, optional
             If True, allows the isotope weights to vary during fitting.
         vary_background : bool, optional
@@ -58,10 +59,9 @@ class TransmissionModel(lmfit.Model):
             self.params += self._make_tof_params(vary=vary_tof,**kwargs)
 
 
-        # self.response = Response(kind=response,vary=vary_response,
-        #                          tstep=self.cross_section.tstep)
-        # if vary_response is not None:
-        #     self.params += self.response.params
+        self.response = Response(kind=response,vary=vary_response)
+        if vary_response is not None:
+            self.params += self.response.params
 
 
         self.background = Background(kind=background,vary=vary_background)
@@ -70,7 +70,7 @@ class TransmissionModel(lmfit.Model):
 
 
         # set the total atomic weight n [atoms/barn-cm]
-        self.n = self.cross_section.n if self.cross_section else 0.01
+        self.n = self.cross_section.n if hasattr(self.cross_section,"n") else 0.05
 
 
         
@@ -108,7 +108,7 @@ class TransmissionModel(lmfit.Model):
         E = self._tof_correction(E,**kwargs)
         wl = NC.ekin2wl(E)
 
-        # response = self.response.function(**kwargs)
+        response = self.response.function(**kwargs)
 
         bg = self.background.function(wl,**kwargs)
 
@@ -117,6 +117,8 @@ class TransmissionModel(lmfit.Model):
         # Transmission function
         
         xs = self.cross_section(wl)
+
+        xs = convolve1d(xs,response,0)
 
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + bg
         return T

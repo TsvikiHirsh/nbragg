@@ -2,12 +2,13 @@ import numpy as np
 import pandas as pd
 from scipy.stats import exponnorm
 import matplotlib.pyplot as plt
+from scipy.special import erfc
 import lmfit
 import inspect
 
 class Response:
-    def __init__(self, kind="expo_gauss", vary: bool = False, eps: float = 1.0e-6,
-                 tstep=1.56255e-9, nbins=300):
+    def __init__(self, kind="jorgensen", vary: bool = False,
+                 wlstep=0.1):
         """
         Initializes the Response object with specified parameters.
 
@@ -18,25 +19,29 @@ class Response:
         tstep (float): The time step for the response function. Default is 1.56255e-9 seconds.
         nbins (int): The number of bins for the response function. Default is 300.
         """
-        self.tstep = tstep
-        self.grid = np.arange(-nbins, nbins + 1, 1)
-        self.tgrid = self.grid * self.tstep
-        self.eps = eps
+        self.wlstep = wlstep
         self.params = lmfit.Parameters()
+        self.Δλ = np.arange(-20, 20, self.wlstep)
 
         # Choose the response function
-        if kind == "expo_gauss":
-            self.function = self.expogauss_response
+        if kind == "jorgensen":
+            self.function = self.jorgensen_response
             self.params = lmfit.Parameters()
             self.params.add_many(
-                ('K', 1.0, True, 0.0001),  # Exponential shape parameter
-                ('x0', 1e-9, vary),         # Location parameter (Gaussian)
-                ('τ', 1e-9, True, 1e-10)    # Exponential scale parameter
+                ('α1', 3.67, vary),  
+                ('β1', 3.06, vary),
+            )
+        elif kind == "bem":
+            self.function = self.bem_response
+            self.params = lmfit.Parameters()
+            self.params.add_many(
+                ('α1', 3.67, vary),  
+                ('β1', 3.06, vary),
             )
         elif kind == "none":
             self.function = self.empty_response
         else:
-            raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'expo_gauss' or 'none'.")
+            raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'jorgensen' or 'none'.")
 
     def register_response(self, response_func, lmfit_params=None, **kwargs):
         """
@@ -93,22 +98,65 @@ class Response:
         Returns an empty response [0.0, 1.0, 0.0].
         """
         return np.array([0., 1., 0.])
+    
+    def bem_response(self, α1, β1, **kwargs):
+        from bem import peak_profile
+        Δλ = np.arange(-20, 20, 0.1)
+        j = peak_profile.Jorgensen(alpha=[α1, 0.], beta=[β1, 0], sigma=[0, 0, 0]).calc_profile(Δλ, 1.)
+        j = j/sum(j)
+        return np.nan_to_num(j,0)
 
-    def expogauss_response(self, K=0.01, x0=0., τ=1.0e-9, **kwargs):
+    def jorgensen_response(self, α1, β1, **kwargs):
         """
-        Computes the exponential-Gaussian response function.
+        Calculate the Jorgensen peak profile with a fixed self.Δλ range.
+
+        This function implements the Jorgensen peak profile based on the formulas
+        described in section 3.3.3 of Sven Vogel's thesis,
+        "A Rietveld-approach for the analysis of neutron time-of-flight transmission data".
 
         Parameters:
-        K (float): Shape parameter for the exponential.
-        x0 (float): Location parameter for the Gaussian.
-        τ (float): Scale parameter for the exponential.
+        -----------
+        α1 : float
+            The first alpha parameter. Units: 1/angstrom.
+        β1 : float
+            The first beta parameter. Units: 1/angstrom.
 
         Returns:
-        np.ndarray: Normalized response array.
+        --------
+        numpy.ndarray
+            The calculated Jorgensen profile, normalized so that its sum is 1.
         """
-        response = exponnorm.pdf(self.tgrid, K, loc=x0, scale=τ)
-        response /= np.sum(response)
-        return self.cut_array_symmetric(response, self.eps)
+
+        # Calculate parameters
+        alpha = α1
+        beta = β1
+        sigma = 1.0  # Fixed sigma value
+
+        # Calculate scale and other constants
+        scale = alpha * beta / (2 * (alpha + beta))
+        sigma2 = sigma * sigma
+        sqrt2 = np.sqrt(2)
+
+        # Calculate u, v, y, and z
+        u = alpha / 2 * (alpha * sigma2 + 2 * self.Δλ)
+        v = beta / 2 * (beta * sigma2 - 2 * self.Δλ)
+        y = (alpha * sigma2 + self.Δλ) / (sqrt2 * sigma)
+        z = (beta * sigma2 - self.Δλ) / (sqrt2 * sigma)
+
+        # Calculate the profile
+        term1 = np.exp(u) * erfc(y)
+        term2 = np.exp(v) * erfc(z)
+        
+        # Avoid division by zero warnings
+        term1 = np.where(np.isfinite(term1), term1, 0)
+        term2 = np.where(np.isfinite(term2), term2, 0)
+
+        profile = scale * (term1 + term2)
+
+        # Normalize the profile
+        normalized_profile = profile / np.sum(profile)
+
+        return np.nan_to_num(normalized_profile,0.)
 
     def plot(self, params=None, **kwargs):
         """
@@ -119,12 +167,11 @@ class Response:
         **kwargs: Additional arguments for plot customization.
         """
         ax = kwargs.pop("ax", plt.gca())
-        xlabel = kwargs.pop("xlabel", "t [sec]")
+        xlabel = kwargs.pop("xlabel", "wavelength [Angstrom]")
 
         params = params if params else self.params
         y = self.function(**params.valuesdict())
-        tof = np.arange(-len(y) // 2 + 1, len(y) // 2 + 1) * self.tstep
-        df = pd.Series(y, index=tof, name="Response")
+        df = pd.Series(y, index=self.Δλ, name="Response")
         df.plot(ax=ax, xlabel=xlabel, **kwargs)
 
 

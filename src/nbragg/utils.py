@@ -1372,6 +1372,12 @@ materials = {'AgBr_sg225_SilverBromide.ncmat': {'short_name': 'Silver Bromide',
   'name': 'ZirconiumOrthosilicate',
   'space_group': 141}}
 
+materials["Fe_sg225_Iron-gamma.ncmat"] = materials["Fe-gamma_sg225_GammaIron.ncmat"]
+materials["Fe_sg225_Iron-gamma.ncmat"]["filename"] = "Fe_sg225_Iron-gamma.ncmat"
+
+materials["Fe_sg229_Iron-alpha.ncmat"] = materials["Fe-alpha_sg229_AlphaIron.ncmat"]
+materials["Fe_sg229_Iron-alpha.ncmat"]["filename"] = "Fe_sg229_Iron-alpha.ncmat"
+
 
 # add short_name keys to dictionary
 new_keys = {}

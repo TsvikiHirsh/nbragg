@@ -31,6 +31,7 @@ class CrossSection:
         self.k = self._process_parameter(k)
         self.l = self._process_parameter(l)
         self.dirtol = dirtol
+        self.L = 9. # TODO: replace this hack
         
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.__matdata__ = {}  # Loaded material data
