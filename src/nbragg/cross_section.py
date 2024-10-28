@@ -97,10 +97,11 @@ class CrossSection:
         """Retrieve material information from the material dictionary."""
         return materials_dict.get(material_name)
 
-    def _set_weights(self):
+    def _set_weights(self, name:str = ""):
         # Create a dictionary to store names and weights
+        name = name if name else self.name
         materials_with_names = {
-            (self.name if isinstance(key, str) and key == self.materials.get(key) else key.name if isinstance(key, CrossSection) else key): value
+            (name if isinstance(key, str) and key == self.materials.get(key) else key.name if isinstance(key, CrossSection) else key): value
             for key, value in self.materials.items()
         }
 
@@ -201,7 +202,7 @@ class CrossSection:
     @classmethod
     def from_material(cls, mat: Union[str, Dict], short_name: str = "", 
                       total_weight: float = 1.0, temp: float = 300.0, 
-                      mos=None, k=None, l=None,dirtol=None) -> 'CrossSection':
+                      mos=None, k=None, l=None, dirtol=None) -> 'CrossSection':
         """
         Create a CrossSection instance from a single material.
 
@@ -225,7 +226,7 @@ class CrossSection:
         else:
             raise TypeError("Argument 'mat' must be a string or dictionary.")
 
-        short_name = short_name if short_name else mat_info.get('short_name', short_name)
+        short_name = short_name if short_name is not "" else mat_info.get('short_name', short_name)
         filename = mat_info.get('filename')
         if not filename:
             raise ValueError(f"Material '{mat}' does not contain a valid filename.")
@@ -233,8 +234,12 @@ class CrossSection:
         dirtol = dirtol if dirtol else 1.
 
         materials = {filename: total_weight}
-        return cls(materials=materials, name=short_name, total_weight=total_weight, 
+        instance = cls(materials=materials, name=short_name, total_weight=total_weight, 
                    temp=temp, mos=mos, k=k, l=l, dirtol=dirtol)
+        
+        instance.weights.index = [short_name]
+        instance.table.columns = [short_name, "total"]
+        return instance
 
     def __add__(self, other: 'CrossSection') -> 'CrossSection':
         """
@@ -263,10 +268,13 @@ class CrossSection:
         new_l = self._combine_dict_or_list(self.l, other.l)
 
         # Create a new object with the combined attributes
-        return CrossSection(materials=new_weights_normalized.to_dict(), 
+        instance = CrossSection(materials=new_weights_normalized.to_dict(), 
                                 total_weight=new_weights.sum(), 
                                 mos=new_mos, k=new_k, l=new_l, 
                                 temp=self.temp)
+        instance.weights.index = self_weights.index.values.tolist() + other_weights.index.values.tolist()
+        instance.table.columns = self_weights.index.values.tolist() + other_weights.index.values.tolist() + ["total"]
+        return instance
 
     def __mul__(self, scalar: float) -> 'CrossSection':
         """
