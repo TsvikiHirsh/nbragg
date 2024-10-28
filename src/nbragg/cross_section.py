@@ -98,7 +98,14 @@ class CrossSection:
         return materials_dict.get(material_name)
 
     def _set_weights(self):
-        self.weights = pd.Series(self.materials)
+        # Create a dictionary to store names and weights
+        materials_with_names = {
+            (self.name if isinstance(key, str) and key == self.materials.get(key) else key.name if isinstance(key, CrossSection) else key): value
+            for key, value in self.materials.items()
+        }
+
+        # Convert to Series, filter out zero or negative weights, and normalize
+        self.weights = pd.Series(materials_with_names)
         self.weights = self.weights[self.weights > 0]
         self.weights /= self.weights.sum()
 
@@ -218,7 +225,7 @@ class CrossSection:
         else:
             raise TypeError("Argument 'mat' must be a string or dictionary.")
 
-        short_name = mat_info.get('short_name', short_name)
+        short_name = short_name if short_name else mat_info.get('short_name', short_name)
         filename = mat_info.get('filename')
         if not filename:
             raise ValueError(f"Material '{mat}' does not contain a valid filename.")
@@ -320,21 +327,30 @@ class CrossSection:
         Plot the cross-section data.
 
         Args:
-            wavelengths: Array of wavelength values. If None, uses the table's index.
             **kwargs: Optional plotting parameters.
         """
         import matplotlib.pyplot as plt
-
+        
         title = kwargs.pop("title", self.name)
         ylabel = kwargs.pop("ylabel", "$\sigma$ [barn]")
         xlabel = kwargs.pop("xlabel", "Wavelength [Å]")
         lw = kwargs.pop("lw", 1.)
 
         fig, ax = plt.subplots()
-        self.table.mul(np.r_[self.weights,1]).plot(ax=ax, logy=True, logx=True)
-        
+
+        # Plot each material component with reduced line width
+        self.table.iloc[:, :-1].mul(self.weights).plot(ax=ax, lw=lw, **kwargs)
+
+        # Plot the total curve with a thicker line width and distinct color
+        self.table["total"].plot(ax=ax, color="0.2", lw=lw*1.2, label="Total")
+
+        # Set labels, title, and legend
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_title(title)
-        ax.legend()
+
+        # Legend with formatted names and weights for components plus 'total'
+        legend_labels = [f"{material}: {weight*100:.1f}%" for material, weight in self.weights.items()] + ["Total"]
+        ax.legend(legend_labels)
+
         return ax
