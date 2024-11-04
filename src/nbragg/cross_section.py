@@ -157,11 +157,9 @@ class CrossSection:
         xs = {}
 
         # Process each phase separately
-        for phase in self.phases:
+        for phase, phase_info in self.phases.items():
             # Calculate cross-section for this phase
-            xs[phase] = self._calculate_cross_section(self.lambda_grid, self.phases[phase]["mat"]) * self.phases[phase]["weight"]
-
-        self.weights = pd.Series({phase:self.phases[phase]["weight"] for phase in self.phases})
+            xs[phase] = self._calculate_cross_section(self.lambda_grid, phase_info["mat"])
 
         # calculate total
         xs["total"] = self._calculate_cross_section(self.lambda_grid, self.matdata) 
@@ -169,6 +167,12 @@ class CrossSection:
         # Create DataFrame with all phases
         self.table = pd.DataFrame(xs, index=self.lambda_grid)
         self.table.index.name = "wavelength"
+        if len(self.table.columns)>1:
+            self.table.columns = self.weights.index.to_list() + ["total"]
+        else:
+            self.table.columns = ["total"]
+
+        self.atomic_density = mat.info.factor_macroscopic_xs
 
 
     def _calculate_cross_section(self, wl, mat, direction = None):
@@ -300,10 +304,17 @@ class CrossSection:
     def __mul__(self, scalar: float) -> 'CrossSection':
         """Multiply CrossSection by a scalar."""
         new_materials = {m: w * scalar for m, w in self.materials.items()}
+        new_total_weight = self.total_weight * scalar
+        
+        # Normalize the new weights
+        new_weights = pd.Series(new_materials)
+        new_weights = new_weights[new_weights > 0]
+        if not new_weights.empty:
+            new_weights = new_weights / new_weights.sum()
         
         return CrossSection(
-            materials=new_materials,
-            total_weight=self.total_weight * scalar,
+            materials=new_weights.to_dict(),
+            total_weight=new_total_weight,
             mos=self.mos,
             k=self.k,
             l=self.l,
