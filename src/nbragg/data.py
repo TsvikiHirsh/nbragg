@@ -130,7 +130,7 @@ class Data:
         return self_data
     
     @classmethod
-    def from_transmission(cls, filename: str):
+    def from_transmission(cls, filename: str, index: str ="wavelength"):
         """
         Creates a Data object directly from a transmission data file containing energy, transmission, and error values.
         Converts energy to wavelength and sets wavelength as the index.
@@ -139,17 +139,21 @@ class Data:
         -----------
         filename : str
             Path to the file containing the transmission data (energy, transmission, error) separated by whitespace.
+        index : str 
+            Optional energy to wavelegth convertion: If the index is "energy" it will be converted to wavelength
         
         Returns:
         --------
         Data
             A Data object with the transmission data loaded into a dataframe.
         """
-        df = pd.read_csv(filename, names=["energy", "trans", "err"], header=None, 
-                         skiprows=0, delim_whitespace=True)
+        df = pd.read_csv(filename, delim_whitespace=True)
+        df.columns = [index, "trans", "err"]
         
+        if index=="energy":
         # Convert energy to wavelength (Angstroms)
-        df["wavelength"] = df["energy"].apply(NC.ekin2wl)
+            df["wavelength"] = df["energy"].apply(NC.ekin2wl)
+
         
         # Create Data object and assign the dataframe with wavelength as index
         self_data = cls()
