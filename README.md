@@ -49,7 +49,7 @@ result.plot()                                                                   
 
 ## Tutorials and Documentation
 
-For more detailed examples and advanced usage, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the [Jupyter notebook tutorial](https://github.com/TsvikiHirsh/nbragg/notebooks/nbragg_tutorial.ipynb).
+For more detailed examples and advanced usage, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the [Jupyter notebook tutorial](notebooks/nbragg_tutorial.ipynb).
 
 ## License
 
