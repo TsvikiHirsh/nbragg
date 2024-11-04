@@ -13,7 +13,6 @@ from nbragg.response import Response, Background
 from nbragg.models import TransmissionModel
 from nbragg.data import Data
 import nbragg.utils as utils
-from nbragg.utils import materials
-# materials, elements, isotopes = utils.load_or_create_materials_cache()
+from nbragg.utils import materials, register_material
 
 
