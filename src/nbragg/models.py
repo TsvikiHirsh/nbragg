@@ -15,7 +15,7 @@ from typing import List, Optional
 class TransmissionModel(lmfit.Model):
     def __init__(self, cross_section, 
                         response: str = "bem",
-                        background: str = "polynomial5",
+                        background: str = "polynomial3",
                         vary_weights: bool = None, 
                         vary_background: bool = None, 
                         vary_tof: bool = None,
@@ -31,7 +31,7 @@ class TransmissionModel(lmfit.Model):
         response : str, optional
             The type of response function to use, by default "jorgensen".
         background : str, optional
-            The type of background function to use, by default "polynomial5".
+            The type of background function to use, by default "polynomial3".
         vary_weights : bool, optional
             If True, allows the isotope weights to vary during fitting.
         vary_background : bool, optional
@@ -58,19 +58,19 @@ class TransmissionModel(lmfit.Model):
         if vary_tof is not None:
             self.params += self._make_tof_params(vary=vary_tof,**kwargs)
 
-
-        self.response = Response(kind=response,vary=vary_response)
+        self.response = None
         if vary_response is not None:
+            self.response = Response(kind=response,vary=vary_response)
             self.params += self.response.params
 
-
-        self.background = Background(kind=background,vary=vary_background)
+        self.background = None
         if vary_background is not None:
+            self.background = Background(kind=background,vary=vary_background)
             self.params += self.background.params
 
 
         # set the total atomic weight n [atoms/barn-cm]
-        self.n = self.cross_section.n if hasattr(self.cross_section,"n") else 0.05
+        self.atomic_density = self.cross_section.atomic_density
 
 
         
@@ -108,17 +108,20 @@ class TransmissionModel(lmfit.Model):
         E = self._tof_correction(E,**kwargs)
         wl = NC.ekin2wl(E)
 
-        response = self.response.function(**kwargs)
+        if self.background != None:
+            bg = self.background.function(wl,**kwargs)
+        else:
+            bg = 0.
 
-        bg = self.background.function(wl,**kwargs)
-
-        n = self.n
+        n = self.atomic_density
 
         # Transmission function
         
         xs = self.cross_section(wl)
 
-        xs = convolve1d(xs,response,0)
+        if self.response != None:
+            response = self.response.function(**kwargs)
+            xs = convolve1d(xs,response,0)
 
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + bg
         return T
