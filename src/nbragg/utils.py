@@ -80,5 +80,58 @@ def register_material(filename):
         NC.registerInMemoryFileData(filename.name, fid.read())
     initialize_materials()
 
+import nbragg
+
+def register_material_from_dict(material_dict):
+    """
+    Register one or more materials in the nbragg materials database from a dictionary.
+    
+    Parameters:
+    material_dict (dict): A dictionary containing the material information. The dictionary can have one of two structures:
+    
+    1. Flat structure:
+       {
+           'name': 'Iron-gamma',
+           'mat': 'Fe_sg225_Iron-gamma.ncmat',
+           'formula': 'Fe',
+           'space_group': 'sg225'
+       }
+    
+    2. Nested structure:
+       {
+           'gamma': {
+               'mat': 'ZrF4-beta_sg84.ncmat',
+               'temp': 300.0,
+               'mos': None,
+               'k': None,
+               'l': None,
+               'weight': 0.5
+           },
+           'beta': {
+               'mat': 'Fe_sg225_Iron-gamma.ncmat',
+               'temp': 300.0,
+               'mos': None,
+               'k': None,
+               'l': None,
+               'weight': 0.5
+           }
+       }
+    
+    Returns:
+    dict: The updated nbragg.materials dictionary.
+    """
+    updated_materials = {}
+    
+    if all(isinstance(v, dict) for v in material_dict.values()):
+        # Nested dictionary structure
+        for material_name, material_info in material_dict.items():
+            updated_materials[material_name] = material_info
+    else:
+        # Flat dictionary structure
+        updated_materials[material_dict['name']] = material_dict
+    
+    materials.update(updated_materials)
+    return updated_materials
+
 # Initialize the materials dictionary at module import
 initialize_materials()
