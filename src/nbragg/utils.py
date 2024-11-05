@@ -64,7 +64,7 @@ def make_materials_dict():
                 continue
             mat_dict[fullname] = {
                 "name": name,
-                "filename": fullname,
+                "mat": fullname,
                 "formula": formula,
                 "space_group": space_group
             }
