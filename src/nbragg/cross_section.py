@@ -42,7 +42,7 @@ class CrossSection:
         self.L = 9.  # TODO: replace this hack
         
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
-        self.matdata = None  # Single NCrystal scatter object
+        self.mat_data = None  # Single NCrystal scatter object
         
         # Combine materials from dict, CrossSection, and kwargs
         combined_materials = {}
@@ -167,46 +167,58 @@ class CrossSection:
         return CrossSection(new_materials, name=f"{scalar}*{self.name}")
 
     def _generate_cfg_string(self):
-        """Generate a single configuration string using NCrystal phase notation."""
+        """
+        Generate configuration strings using NCrystal phase notation.
+        Stores individual phase configurations in self.phases dictionary and
+        creates a combined configuration string in self.cfg_string.
+        """
         if not self.materials:
             self.cfg_string = ""
+            self.phases = {}
             return
-            
+
         phase_parts = []
-        
+        self.phases = {}
+
         for name, spec in self.materials.items():
             material = spec['mat']
             if not material:
                 continue
-                
+
+            # Build the base phase configuration
             phase = f"{spec['weight']}*{material}"
-            
-            # Add material-specific parameters
+            single_phase = f"{material}"
+
+            # Collect material-specific parameters
             params = []
-            
             if spec['temp'] is not None:
                 params.append(f"temp={spec['temp']}K")
-            
+
+            # Add crystallographic parameters if all required values are present
             if all(param is not None for param in (spec['mos'], spec['k'], spec['l'])):
                 params.append(f"mos={spec['mos']}deg")
                 params.append(f"dirtol={self.dirtol}deg")
                 params.append(f"dir1=@crys_hkl:0,{spec['k']},{spec['l']}@lab:0,0,1")
                 params.append(f"dir2=@crys_hkl:0,-1,1@lab:0,1,0")
-            
+
+            # Combine parameters with the phase if any exist
             if params:
                 phase += f";{';'.join(params)}"
+                single_phase += f";{';'.join(params)}"
+
+            # Store the individual phase configuration in the dictionary
+            self.phases[name] = single_phase
             
+            # Add to the list for the combined configuration string
             phase_parts.append(phase)
-        
+
+        # Generate the complete configuration string
         self.cfg_string = f"phases<{'&'.join(phase_parts)}>" if phase_parts else ""
-        self.phases = phase_parts
 
     def _load_material_data(self):
         """Load the material data using NCrystal with the phase configuration."""
         if self.cfg_string:
-            self.matdata = nc.load(self.cfg_string)
-            self.phases = {name:{"mat":nc.NCMATComposer.from_info(phase[1]).load(),"weight":phase[0]} 
-                         for name,phase in zip(self.materials,self.matdata.info.phases)}
+            self.mat_data = nc.load(self.cfg_string)
 
     def _populate_material_data(self):
         """Populate cross section data using NCrystal phases."""
@@ -220,11 +232,12 @@ class CrossSection:
 
 
         # Process each phase separately
+        self.phases_data = {name:nc.load(self.phases[name]) for name in self.phases} 
         for phase in self.phases:
-            xs[phase] = self._calculate_cross_section(self.lambda_grid, self.phases[phase]['mat'])
+            xs[phase] = self._calculate_cross_section(self.lambda_grid, self.phases_data[phase])
         
         # Calculate total
-        xs["total"] = self._calculate_cross_section(self.lambda_grid, self.matdata)
+        xs["total"] = self._calculate_cross_section(self.lambda_grid, self.mat_data)
         
         # Create DataFrame with all phases
         self.table = pd.DataFrame(xs, index=self.lambda_grid)
@@ -285,7 +298,7 @@ class CrossSection:
             self._load_material_data()
             
 
-        return self._calculate_cross_section(wl, self.matdata)
+        return self._calculate_cross_section(wl, self.mat_data)
     
     @staticmethod
     def _get_material_info(material_key: str) -> Dict:
