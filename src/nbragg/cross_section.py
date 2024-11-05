@@ -206,7 +206,7 @@ class CrossSection:
         if self.cfg_string:
             self.matdata = nc.load(self.cfg_string)
             self.phases = {name:{"mat":nc.NCMATComposer.from_info(phase[1]).load(),"weight":phase[0]} 
-                         for name,phase in zip(self.phases,self.matdata.info.phases)}
+                         for name,phase in zip(self.materials,self.matdata.info.phases)}
 
     def _populate_material_data(self):
         """Populate cross section data using NCrystal phases."""
@@ -214,30 +214,32 @@ class CrossSection:
             self.table = pd.DataFrame(index=self.lambda_grid)
             self.table.index.name = "wavelength"
             return
-
+        
         mat = nc.load(self.cfg_string)
         xs = {}
 
-        # Process each phase separately
-        for phase, phase_info in self.phases.items():
-            xs[phase] = self._calculate_cross_section(self.lambda_grid, phase_info["mat"])
 
+        # Process each phase separately
+        for phase in self.phases:
+            xs[phase] = self._calculate_cross_section(self.lambda_grid, self.phases[phase]['mat'])
+        
         # Calculate total
         xs["total"] = self._calculate_cross_section(self.lambda_grid, self.matdata)
-
+        
         # Create DataFrame with all phases
         self.table = pd.DataFrame(xs, index=self.lambda_grid)
         self.table.index.name = "wavelength"
+        
         if len(self.table.columns) > 1:
             self.table.columns = self.weights.index.to_list() + ["total"]
         else:
             self.table.columns = ["total"]
-
+        
         self.atomic_density = mat.info.factor_macroscopic_xs
 
-    def _calculate_cross_section(self, wl, mat, direction=None):
+    def _calculate_cross_section(self, wl, mat):
         """Calculate cross-section using NCrystal's xsect method."""
-        return mat.scatter.xsect(wl=wl, direction=direction) + mat.absorption.xsect(wl=wl, direction=direction)
+        return mat.scatter.xsect(wl=wl, direction=(0,0,1)) + mat.absorption.xsect(wl=wl, direction=(0,0,1))
 
     def __call__(self, wl: np.ndarray, **kwargs):
         """
@@ -281,9 +283,9 @@ class CrossSection:
         if updated:
             self._generate_cfg_string()
             self._load_material_data()
-            direction = (0,0,1)
+            
 
-        return self._calculate_cross_section(wl, self.matdata, direction=direction)
+        return self._calculate_cross_section(wl, self.matdata)
     
     @staticmethod
     def _get_material_info(material_key: str) -> Dict:
