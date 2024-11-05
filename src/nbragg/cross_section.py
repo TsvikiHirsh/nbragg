@@ -11,7 +11,7 @@ class CrossSection:
     """
     Represents a combination of cross-sections for crystal materials.
     """
-    def __init__(self, materials: Union[Dict[str, Union[Dict, dict]], None] = None,
+    def __init__(self, materials: Union[Dict[str, Union[Dict, dict]], 'CrossSection', None] = None,
                 name: str = "",
                 temp: float = 300.0,
                 mos: Union[float, Dict[str, float], None] = None,
@@ -26,6 +26,7 @@ class CrossSection:
             materials: Dictionary of material specifications in format:
                 {"name": {"mat": material_source, "temp": temp, "mos": mos, "k": k, "l": l, "weight": weight}}
                 OR {"name": material_dict_from_nbragg_materials}
+                OR an instance of the CrossSection class
             name: Name for this cross section combination
             temp: Default temperature if not specified per material
             mos, k, l: Default crystal orientation parameters if not specified per material
@@ -43,9 +44,11 @@ class CrossSection:
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.matdata = None  # Single NCrystal scatter object
         
-        # Combine materials from dict and kwargs
+        # Combine materials from dict, CrossSection, and kwargs
         combined_materials = {}
-        if materials:
+        if isinstance(materials, CrossSection):
+            combined_materials.update(materials.materials)
+        elif materials:
             if isinstance(materials, dict):
                 combined_materials.update(materials)
         combined_materials.update(kwargs)
@@ -78,6 +81,11 @@ class CrossSection:
                     'weight': spec.get('weight', 1.0)
                 }
                 total_weight += processed[name]['weight']
+            elif isinstance(spec, CrossSection):
+                # Handle CrossSection instance
+                for material_name, material_spec in spec.materials.items():
+                    processed[f"{name}_{material_name}"] = material_spec
+                total_weight += sum(material_spec['weight'] for material_spec in spec.materials.values())
             else:
                 if not isinstance(spec, dict):
                     raise ValueError(f"Material specification for {name} must be a dictionary")
@@ -85,7 +93,7 @@ class CrossSection:
                 material = spec.get('mat')
                 if isinstance(material, dict):
                     # Handle nbragg.materials object in 'mat' key
-                    material = material.get('filename')
+                    material = material.get('mat')
                 elif isinstance(material, str):
                     material = self._resolve_material(material)
                     
@@ -115,7 +123,7 @@ class CrossSection:
             
         mat_info = self._get_material_info(material)
         if mat_info:
-            return mat_info.get('filename')
+            return mat_info.get('mat')
         return material
 
     def _set_weights(self):
@@ -286,7 +294,7 @@ class CrossSection:
             for info in materials_dict.values():
                 if (info.get('formula') == material_key or 
                     info.get('name') == material_key or 
-                    info.get('filename') == material_key):
+                    info.get('mat') == material_key):
                     return info
         
         return material_info
