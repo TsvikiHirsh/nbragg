@@ -37,28 +37,7 @@ pip install git+https://github.com/TsvikiHirsh/nbragg.git
 Here's a quick example to get started:
 
 ```python
-# Import nbragg
 import nbragg
-
-# Load material from NCrystal
-Fe = nbragg.CrossSection.from_material("Fe_sg229_Iron-alpha")
-
-# Load transmission data
-data = nbragg.Data.from_transmission("iron_alpha.dat")
-
-# Define a Bragg edge model
-model = nbragg.TransmissionModel(Fe, vary_response=True, vary_background=True)
-
-# Fit data using lmfit
-result = model.fit(data, emin=0.4e6, emax=1.7e6)
-
-# Plot the fit results
-result.plot()
-```
-
-Here's another quick start example:
-
-```python
 data = nbragg.Data.from_transmission("iron_powder.csv")                         # read data
 xs = nbragg.CrossSection.from_material("Fe_sg229_Iron-alpha.ncmat")             # define sample
 model = nbragg.TransmissionModel(xs, vary_background=True, vary_response=True)  # define model
@@ -70,7 +49,7 @@ result.plot()                                                                   
 
 ## Tutorials and Documentation
 
-For more detailed examples and advanced usage, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the [Jupyter notebook tutorial](https://github.com/TsvikiHirsh/nbragg/notebooks/nbragg_tutorial.ipynb).
+For more detailed examples and advanced usage, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the [Jupyter notebook tutorial](notebooks/nbragg_tutorial.ipynb).
 
 ## License
 
