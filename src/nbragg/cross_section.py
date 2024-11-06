@@ -423,22 +423,13 @@ class CrossSection:
 
         return ax
 
-
-    def _normalize_vector(self,vec):
-        """Normalizes a vector."""
-        norm = np.linalg.norm(vec)
-        if norm == 0:
-            return vec
-        return [x / norm for x in vec]
-
-    def from_maud(self,maud_line=None):
-        """Parses a MAUD line or returns default vectors aligned with the beam.
+    def from_maud(self, maud_line: str = None,dirtol: float=None) -> Dict[str, Union[Dict, dict]]:
+        """Parses a MAUD line, updates the dir1 and dir2 vectors for all materials, and adjusts the total_weight.
         
         Args:
             maud_line (str, optional): MAUD string. Defaults to a crystal aligned with the beam.
-            
         Returns:
-            dict: A dictionary with normalized dir1 and dir2 vectors.
+            dict: A dictionary of updated material specifications.
         """
         default_maud = (
             "Vol:0.10, EA_ZXZ:(0.00 0.00 0.00), "
@@ -449,8 +440,12 @@ class CrossSection:
             maud_line = default_maud
         
         try:
-            # Extract the vectors from the MAUD line
+            # Extract the volume fraction (Vol) from the MAUD line
             parts = maud_line.split(',')
+            vol_str = parts[0].split(':')[1].strip()
+            vol = float(vol_str) / 100  # Convert from percentage to fraction
+            
+            # Extract the vectors from the MAUD line
             x_vector = [float(x) for x in parts[2].split('||')[1].strip('()').split()]
             z_vector = [float(x) for x in parts[4].split('||')[1].strip('()').split()]
             
@@ -458,13 +453,31 @@ class CrossSection:
             dir1 = self._normalize_vector(z_vector)
             dir2 = self._normalize_vector(x_vector)
             
-            return {'dir1': dir1, 'dir2': dir2}
+            # Update the dir1 and dir2 vectors for all materials
+            updated_materials = {}
+            for name, spec in self.materials.items():
+                updated_spec = spec.copy()
+                updated_spec['dir1'] = dir1
+                updated_spec['dir2'] = dir2
+                if dirtol!=None:
+                    updated_spec['dirtol'] = dirtol
+                updated_materials[name] = updated_spec
+
+            return CrossSection(updated_materials,total_weight=vol)
+            
         
         except (IndexError, ValueError):
             raise ValueError(
                 "Invalid MAUD line format. Expected format example: "
                 "'Vol:0.10, EA_ZXZ:(77.21 45.31 268.14), x||(1.9669 0.7061 2.0107), y||(-0.5429 2.8119 -0.4564), z||(-2.0607 -0.0669 2.0394)'"
             )
+
+    @staticmethod
+    def _normalize_vector(vector: list) -> list:
+        """Normalizes a vector to have a length of 1."""
+        magnitude = sum(x**2 for x in vector) ** 0.5
+        return [x / magnitude for x in vector]
+
 
     def _rotate_vector(self,vec, phi=0., theta=0.):
         """Rotates a vector by angles phi (around z-axis) and theta (around y-axis)."""
