@@ -62,15 +62,61 @@ class CrossSection:
 
 
 
-    def _process_materials(self, materials: Dict[str, Union[Dict, dict]]) -> Dict[str, Dict]:
-        """Process and normalize the materials dictionary."""
-        processed = {}
-        total_weight = 0
+from typing import Dict, Union
+import pandas as pd
+import numpy as np
+from copy import deepcopy
+
+class CrossSection:
+    """
+    Represents a combination of cross-sections for crystal materials.
+    """
+    def __init__(self, materials: Union[Dict[str, Union[Dict, dict]], 'CrossSection', None] = None,
+                 name: str = None,
+                 total_weight: float = 1.,
+                 **kwargs):
+        """
+        Initialize the CrossSection class.
+        """
+        self.name = name
+        self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
+        self.mat_data = None  # Single NCrystal scatter object
+        self.total_weight = total_weight
+
+        # Initialize materials by combining materials and kwargs
+        combined_materials = {}
         
-        # First pass: process specifications and sum weights
+        # Add materials from 'materials' if it is an instance of CrossSection or a dictionary
+        if isinstance(materials, CrossSection):
+            combined_materials.update(materials.materials)
+        elif isinstance(materials, dict):
+            combined_materials.update(materials)
+        
+        # Add materials from kwargs
+        for key, value in kwargs.items():
+            if isinstance(value, str) and value in materials_dict:
+                combined_materials[key] = materials_dict[value]
+            else:
+                combined_materials[key] = value
+
+        # Process the combined materials dictionary
+        self.materials = self._process_materials(combined_materials)
+        
+        # Initialize weights
+        self.weights = pd.Series(dtype=float)
+        self._set_weights()
+        self._generate_cfg_string()
+        self._load_material_data()
+        self._populate_material_data()
+
+    def _process_materials(self, materials: Dict[str, Union[Dict, dict]]) -> Dict[str, Dict]:
+        """Process materials dictionary while preserving relative weights."""
+        processed = {}
+        raw_total_weight = 0
+        
+        # First pass: process specifications without normalizing weights
         for name, spec in materials.items():
             if isinstance(spec, dict) and not spec.get('mat'):
-                # Handle direct nbragg.materials dictionary input
                 processed[name] = {
                     'mat': spec.get('mat'),
                     'temp': spec.get('temp', 300.),
@@ -82,25 +128,23 @@ class CrossSection:
                     'phi': spec.get('phi', None),
                     'weight': spec.get('weight', 1.0)
                 }
-                total_weight += processed[name]['weight']
+                raw_total_weight += processed[name]['weight']
             elif isinstance(spec, CrossSection):
-                # Handle CrossSection instance
                 for material_name, material_spec in spec.materials.items():
-                    processed[f"{name}_{material_name}"] = material_spec
-                total_weight += sum(material_spec['weight'] for material_spec in spec.materials.values())
+                    processed[f"{name}_{material_name}"] = material_spec.copy()
+                    raw_total_weight += material_spec['weight']
             else:
                 if not isinstance(spec, dict):
                     raise ValueError(f"Material specification for {name} must be a dictionary")
                 
                 material = spec.get('mat')
                 if isinstance(material, dict):
-                    # Handle nbragg.materials object in 'mat' key
                     material = material.get('mat')
                 elif isinstance(material, str):
                     material = self._resolve_material(material)
                     
                 weight = float(spec.get('weight', 1.0))
-                total_weight += weight
+                raw_total_weight += weight
                 
                 processed[name] = {
                     'mat': material,
@@ -114,10 +158,10 @@ class CrossSection:
                     'weight': weight
                 }
         
-        # Second pass: normalize weights
-        if total_weight > 0:
+        # Second pass: normalize weights while preserving relative proportions
+        if raw_total_weight > 0:
             for spec in processed.values():
-                spec['weight'] /= total_weight
+                spec['weight'] = (spec['weight'] / raw_total_weight)
                 
         return processed
 
@@ -137,8 +181,13 @@ class CrossSection:
             self.weights = pd.Series(dtype=float)
             return
             
-        self.weights = pd.Series({name: spec['weight']*self.total_weight
+        # Apply total_weight to all material weights
+        self.weights = pd.Series({name: spec['weight'] * self.total_weight
                                 for name, spec in self.materials.items()})
+        
+        # Update the material weights
+        for name, weight in self.weights.items():
+            self.materials[name]['weight'] = weight
 
     def __add__(self, other: 'CrossSection') -> 'CrossSection':
         """Add two CrossSection objects."""
@@ -157,13 +206,14 @@ class CrossSection:
                 counter += 1
             combined_materials[new_name] = deepcopy(spec)
         
-        # Create new instance with combined materials
         return CrossSection(combined_materials)
 
     def __mul__(self, scalar: float) -> 'CrossSection':
         """Multiply CrossSection by a scalar."""
-        return CrossSection(self.materials,total_weight=scalar)
-
+        new_materials = deepcopy(self.materials)
+        result = CrossSection(new_materials, total_weight=scalar)
+        return result
+    
     def _generate_cfg_string(self):
         """
         Generate configuration strings using NCrystal phase notation.
@@ -178,13 +228,19 @@ class CrossSection:
         phase_parts = []
         self.phases = {}
 
+        # Calculate the sum of weights for normalization
+        total = sum(spec['weight'] for spec in self.materials.values())
+
         for name, spec in self.materials.items():
             material = spec['mat']
             if not material:
                 continue
 
+            # Normalize the weight for NCrystal configuration
+            normalized_weight = spec['weight'] / total if total > 0 else spec['weight']
+
             # Build the base phase configuration
-            phase = f"{spec['weight']}*{material}"
+            phase = f"{normalized_weight}*{material}"
             single_phase = f"{material}"
 
             # Collect material-specific parameters
@@ -210,11 +266,9 @@ class CrossSection:
                 dirtol = dirtol if dirtol is not None else 1.
                 theta = theta if theta is not None else 0.
                 phi = phi if phi is not None else 0.
-                
-
 
                 # Format the orientations
-                orientation = self.format_orientations(dir1, dir2,theta=theta,phi=phi)
+                orientation = self.format_orientations(dir1, dir2, theta=theta, phi=phi)
                 dir1_str = orientation['dir1']
                 dir2_str = orientation['dir2']
                 params.append(f"mos={mos}deg")
