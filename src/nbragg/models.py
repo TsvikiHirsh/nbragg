@@ -16,10 +16,12 @@ class TransmissionModel(lmfit.Model):
     def __init__(self, cross_section, 
                         response: str = "bem",
                         background: str = "polynomial3",
+                        tof_length: float = 9,
                         vary_weights: bool = None, 
                         vary_background: bool = None, 
                         vary_tof: bool = None,
                         vary_response: bool = None,
+                        vary_orientation: bool = None,
                         **kwargs):
         """
         Initialize the TransmissionModel, a subclass of lmfit.Model.
@@ -32,6 +34,8 @@ class TransmissionModel(lmfit.Model):
             The type of response function to use, by default "jorgensen".
         background : str, optional
             The type of background function to use, by default "polynomial3".
+        tof_length : float, optional
+            The flight path length in [m]
         vary_weights : bool, optional
             If True, allows the isotope weights to vary during fitting.
         vary_background : bool, optional
@@ -40,6 +44,8 @@ class TransmissionModel(lmfit.Model):
             If True, allows the TOF (time-of-flight) parameters (L0, t0) to vary during fitting.
         vary_response : bool, optional
             If True, allows the response parameters to vary during fitting.
+        vary_orientation : bool, optional
+            If True, allows the orientation parameters (θ,ϕ,η) to vary during fitting.
         kwargs : dict, optional
             Additional keyword arguments for model and background parameters.
 
@@ -51,8 +57,10 @@ class TransmissionModel(lmfit.Model):
         super().__init__(self.transmission, **kwargs)
 
         self.cross_section = cross_section
+        self.tof_length = tof_length
 
-        self.params = self.make_params()
+        self.params = self._make_basic_params()
+        self.params += self._make_temperature_params() # add temperature params to fit
         if vary_weights is not None:
             self.params += self._make_weight_params(vary=vary_weights)
         if vary_tof is not None:
@@ -67,6 +75,10 @@ class TransmissionModel(lmfit.Model):
         if vary_background is not None:
             self.background = Background(kind=background,vary=vary_background)
             self.params += self.background.params
+
+        self.orientation = None
+        if vary_orientation is not None:
+            self.params += self._make_orientation_params(vary=vary_orientation)
 
 
         # set the total atomic weight n [atoms/barn-cm]
@@ -219,6 +231,71 @@ class TransmissionModel(lmfit.Model):
         
         return ax
     
+    def _make_orientation_params(self, vary: bool = False):
+        """
+        Create orientation for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The orientation-related parameters.
+        """
+        params = lmfit.Parameters()
+        for i,material in enumerate(self.cross_section.materials):
+            mos = self.cross_section.materials[material].get("mos",None)
+            if mos: 
+                params.add(f"η{i+1}", value=mos, min=0.001, max= 50, vary=vary)
+                theta = self.cross_section.materials[material].get("theta",0.)
+                params.add(f"θ{i+1}", value=theta, min=0., max= 180, vary=vary)
+                phi = self.cross_section.materials[material].get("phi",0.)
+                params.add(f"ϕ{i+1}", value=phi, min=0, max= 360, vary=vary)
+        return params
+    
+    def _make_temperature_params(self, vary: bool = False):
+        """
+        Create temperature for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The temperature-related parameters.
+        """
+        params = lmfit.Parameters()
+        for i,material in enumerate(self.cross_section.materials):
+            temp = self.cross_section.materials[material].get("temp",None)
+            if temp: 
+                params.add(f"temp", value=temp, min=77., max= 1000, vary=vary)
+        return params
+    
+    def _make_basic_params(self, vary: bool = True):
+        """
+        Create basic params for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The basic parameters of thickness and normalization.
+        """
+        params = lmfit.Parameters()
+        params.add(f"thickness", value=1., min=0., max= 5., vary=vary)
+        params.add(f"norm", value=1., min=0.1, max= 10., vary=vary)
+        return params
+    
     def _make_tof_params(self, vary: bool = False, t0: float = 0., L0: float = 1.):
         """
         Create time-of-flight (TOF) parameters for the model.
@@ -239,7 +316,7 @@ class TransmissionModel(lmfit.Model):
         """
         params = lmfit.Parameters()
         params.add("L0", value=L0, min=0.5, max= 1.5, vary=vary)
-        params.add("t0", value=t0, vary=vary)
+        params.add("t0", value=t0, min=-5e-6, max=5e6,vary=vary)
         return params
 
 
@@ -259,14 +336,19 @@ class TransmissionModel(lmfit.Model):
             The normalized weight parameters for the model.
         """
         params = lmfit.Parameters()
-        weight_series = deepcopy(self.cross_section.weights)
-        weight_series.index = weight_series.index.str.replace("-", "")
-        param_names = weight_series.index
-        N = len(weight_series)
+        # weight_series = deepcopy(self.cross_section.weights)
+        # weight_series.index = weight_series.index.str.replace("-", "")
+        # param_names = weight_series.index
+        # N = len(weight_series)
 
         # Normalize the input weights to sum to 1
-        weights = np.array(weight_series / weight_series.sum(), dtype=np.float64)
+        # weights = np.array(weight_series / weight_series.sum(), dtype=np.float64)
 
+
+        weights = np.array([self.cross_section.materials[phase]["weight"] for phase in self.cross_section.materials])
+        param_names = [phase.replace("-", "") for phase in self.cross_section.materials]
+
+        N = len(weights)
         if N == 1:
             # Special case: if N=1, the weight is always 1
             params.add(f'{param_names[0]}', value=1., vary=False)
@@ -384,8 +466,8 @@ class TransmissionModel(lmfit.Model):
         np.ndarray
             The corrected energy values.
         """
-        tof = utils.energy2time(E, self.cross_section.L)
+        tof = utils.energy2time(E, self.tof_length)
         dtof = (1.0 - L0) * tof + t0
-        E = utils.time2energy(tof + dtof, self.cross_section.L)
+        E = utils.time2energy(tof + dtof, self.tof_length)
         return E
 

@@ -27,17 +27,15 @@ class Response:
         if kind == "jorgensen":
             self.function = self.jorgensen_response
             self.params = lmfit.Parameters()
-            self.params.add_many(
-                ('α1', 3.67, vary),  
-                ('β1', 3.06, vary),
-            )
+            self.params.add(f"α1", value=3.67, min=0.001, max= 5, vary=vary)
+            self.params.add(f"β1", value=3.06, min=0.001, max= 5, vary=vary)
+
         elif kind == "bem":
             self.function = self.bem_response
             self.params = lmfit.Parameters()
-            self.params.add_many(
-                ('α1', 3.67, vary),  
-                ('β1', 3.06, vary),
-            )
+            self.params.add(f"α1", value=3.67, min=0.001, max= 5, vary=vary)
+            self.params.add(f"β1", value=3.06, min=0.001, max= 5, vary=vary)
+
         elif kind == "none":
             self.function = self.empty_response
         else:
@@ -101,8 +99,12 @@ class Response:
     
     def bem_response(self, α1, β1, **kwargs):
         from bem import peak_profile
+        import warnings
+
         Δλ = np.arange(-20, 20, 0.1)
-        j = peak_profile.Jorgensen(alpha=[α1, 0.], beta=[β1, 0], sigma=[0, 0, 0]).calc_profile(Δλ, 1.)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            j = peak_profile.Jorgensen(alpha=[α1, 0.], beta=[β1, 0], sigma=[0, 0, 0]).calc_profile(Δλ, 1.)
         j = j/sum(j)
         return np.nan_to_num(j,0)
 
@@ -187,23 +189,17 @@ class Background:
         self.params = lmfit.Parameters()
         if kind == "polynomial3":
             self.function = self.polynomial3_background
-            self.params.add_many(
-                ('b0', 0.0, vary),
-                ('b1', 0.0, vary),
-                ('b2', 0.0, vary)
-            )
+            for i in range(3):
+                self.params.add(f"b{i}", value=0., min=-1, max= 1, vary=vary)
+
         elif kind == "polynomial5":
             self.function = self.polynomial5_background
-            self.params.add_many(
-                ('b0', 0.0, vary),
-                ('b1', 0.0, vary),
-                ('b2', 0.0, vary),
-                ('b3', 0.0, vary),
-                ('b4', 0.0, vary)
-            )
+            for i in range(5):
+                self.params.add(f"b{i}", value=0., min=-1, max= 1, vary=vary)
+
         elif kind == "constant":
             self.function = self.constant_background
-            self.params.add('b0', 0.0, vary=vary)
+            self.params.add('b0', value=0.0, min=-1,max=1.,vary=vary)
         elif kind == "none":
             self.function = self.empty_background
         else:

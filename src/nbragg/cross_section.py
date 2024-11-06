@@ -12,45 +12,53 @@ class CrossSection:
     Represents a combination of cross-sections for crystal materials.
     """
     def __init__(self, materials: Union[Dict[str, Union[Dict, dict]], 'CrossSection', None] = None,
-                 name:str = None,
-                **kwargs):
+                 name: str = None,
+                 **kwargs):
         """
         Initialize the CrossSection class.
         
         Args:
             materials: Dictionary of material specifications in format:
-                {"name": {"mat": material_source, "temp": temp, "mos": mos, "k": k, "l": l, "weight": weight}}
+                {"name": {"mat": material_source, "temp": temp, "mos": mos, "dir1": dir1, "dir2": dir2, "weight": weight}}
                 OR {"name": material_dict_from_nbragg_materials}
                 OR an instance of the CrossSection class
-            name: Name for this cross section combination
-            temp: Default temperature if not specified per material
-            mos, dir1, dir2: Default crystal orientation parameters if not specified per material
-            dirtol: Direction tolerance in degrees
+            name: Name for this cross-section combination.
             **kwargs: Additional materials in format material_name=material_dict_from_nbragg_materials
+                      or material_name="material_name_in_nbragg_materials".
         """
-        self.L = 9.  # TODO: replace this hack
         self.name = name
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.mat_data = None  # Single NCrystal scatter object
-        
-        # Combine materials from dict, CrossSection, and kwargs
+
+        # Initialize materials by combining materials and kwargs
         combined_materials = {}
+        
+        # Add materials from 'materials' if it is an instance of CrossSection or a dictionary
         if isinstance(materials, CrossSection):
             combined_materials.update(materials.materials)
-        elif materials:
-            if isinstance(materials, dict):
-                combined_materials.update(materials)
-        combined_materials.update(kwargs)
+        elif isinstance(materials, dict):
+            combined_materials.update(materials)
         
-        # Process materials dictionary
-        self.materials = self._process_materials(combined_materials or {})
-        
+        # Add materials from kwargs
+        for key, value in kwargs.items():
+            if isinstance(value, str) and value in materials_dict:
+                # Replace the string with the actual material dictionary
+                combined_materials[key] = materials_dict[value]
+            else:
+                # Assume the provided value is already a valid material dictionary
+                combined_materials[key] = value
+
+        # Process the combined materials dictionary
+        self.materials = self._process_materials(combined_materials)
+
         # Initialize weights
         self.weights = pd.Series(dtype=float)
         self._set_weights()
         self._generate_cfg_string()
         self._load_material_data()
         self._populate_material_data()
+
+
 
     def _process_materials(self, materials: Dict[str, Union[Dict, dict]]) -> Dict[str, Dict]:
         """Process and normalize the materials dictionary."""
@@ -295,7 +303,7 @@ class CrossSection:
             spec = self.materials[name]
             
             # Check for material-specific parameters
-            temp_key = f"temp{i}"
+            temp_key = f"temp" # all phase temperatures are updated to the same value
             mos_key = f"η{i}"
             theta_key = f"θ{i}"
             phi_key = f"ϕ{i}"
@@ -311,6 +319,10 @@ class CrossSection:
                 updated = True
             if phi_key in kwargs and kwargs[phi] != spec['phi']:
                 spec['phi'] = kwargs[phi_key]
+                updated = True
+            phase_name = name.replace("-", "")
+            if phase_name in kwargs and kwargs[phase_name] != spec["weight"]:
+                spec['weight'] = kwargs[phase_name]
                 updated = True
 
         if updated:
