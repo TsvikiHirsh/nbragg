@@ -12,12 +12,7 @@ class CrossSection:
     Represents a combination of cross-sections for crystal materials.
     """
     def __init__(self, materials: Union[Dict[str, Union[Dict, dict]], 'CrossSection', None] = None,
-                name: str = "",
-                temp: float = 300.0,
-                mos: Union[float, Dict[str, float], None] = None,
-                k: Union[float, Dict[str, float], None] = None,
-                l: Union[float, Dict[str, float], None] = None,
-                dirtol: float = 1.,
+                 name:str = None,
                 **kwargs):
         """
         Initialize the CrossSection class.
@@ -29,18 +24,12 @@ class CrossSection:
                 OR an instance of the CrossSection class
             name: Name for this cross section combination
             temp: Default temperature if not specified per material
-            mos, k, l: Default crystal orientation parameters if not specified per material
+            mos, dir1, dir2: Default crystal orientation parameters if not specified per material
             dirtol: Direction tolerance in degrees
             **kwargs: Additional materials in format material_name=material_dict_from_nbragg_materials
         """
-        self.name = name
-        self.default_temp = temp
-        self.default_mos = mos
-        self.default_k = k
-        self.default_l = l
-        self.dirtol = dirtol
         self.L = 9.  # TODO: replace this hack
-        
+        self.name = name
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.mat_data = None  # Single NCrystal scatter object
         
@@ -74,10 +63,13 @@ class CrossSection:
                 # Handle direct nbragg.materials dictionary input
                 processed[name] = {
                     'mat': spec.get('mat'),
-                    'temp': spec.get('temp', self.default_temp),
-                    'mos': spec.get('mos', self.default_mos),
-                    'k': spec.get('k', self.default_k),
-                    'l': spec.get('l', self.default_l),
+                    'temp': spec.get('temp', 300.),
+                    'mos': spec.get('mos', None),
+                    'dir1': spec.get('dir1', None),
+                    'dir2': spec.get('dir2', None),
+                    'dirtol': spec.get('dirtol', None),
+                    'theta': spec.get('theta', None),
+                    'phi': spec.get('phi', None),
                     'weight': spec.get('weight', 1.0)
                 }
                 total_weight += processed[name]['weight']
@@ -102,10 +94,13 @@ class CrossSection:
                 
                 processed[name] = {
                     'mat': material,
-                    'temp': spec.get('temp', self.default_temp),
-                    'mos': spec.get('mos', self.default_mos),
-                    'k': spec.get('k', self.default_k),
-                    'l': spec.get('l', self.default_l),
+                    'temp': spec.get('temp', 300.),
+                    'mos': spec.get('mos', None),
+                    'dir1': spec.get('dir1', None),
+                    'dir2': spec.get('dir2', None),
+                    'dirtol': spec.get('dirtol', None),
+                    'theta': spec.get('theta', None),
+                    'phi': spec.get('phi', None),
                     'weight': weight
                 }
         
@@ -194,12 +189,35 @@ class CrossSection:
             if spec['temp'] is not None:
                 params.append(f"temp={spec['temp']}K")
 
-            # Add crystallographic parameters if all required values are present
-            if all(param is not None for param in (spec['mos'], spec['k'], spec['l'])):
-                params.append(f"mos={spec['mos']}deg")
-                params.append(f"dirtol={self.dirtol}deg")
-                params.append(f"dir1=@crys_hkl:0,{spec['k']},{spec['l']}@lab:0,0,1")
-                params.append(f"dir2=@crys_hkl:0,-1,1@lab:0,1,0")
+            # Determine if the material is oriented
+            mos = spec.get('mos', None)
+            dir1 = spec.get('dir1', None)
+            dir2 = spec.get('dir2', None)
+            dirtol = spec.get('dirtol', None)
+            theta = spec.get('theta', None)
+            phi = spec.get('phi', None)
+
+            is_oriented = mos is not None or dir1 is not None or dir2 is not None
+
+            if is_oriented:
+                # Apply default values if not provided
+                mos = mos if mos is not None else 0.001
+                dir1 = dir1 if dir1 is not None else (0, 0, 1)
+                dir2 = dir2 if dir2 is not None else (1, 0, 0)
+                dirtol = dirtol if dirtol is not None else 1.
+                theta = theta if theta is not None else 0.
+                phi = phi if phi is not None else 0.
+                
+
+
+                # Format the orientations
+                orientation = self.format_orientations(dir1, dir2,theta=theta,phi=phi)
+                dir1_str = orientation['dir1']
+                dir2_str = orientation['dir2']
+                params.append(f"mos={mos}deg")
+                params.append(f"dirtol={dirtol}deg")
+                params.append(f"dir1={dir1_str}")
+                params.append(f"dir2={dir2_str}")
 
             # Combine parameters with the phase if any exist
             if params:
@@ -208,12 +226,14 @@ class CrossSection:
 
             # Store the individual phase configuration in the dictionary
             self.phases[name] = single_phase
-            
+
             # Add to the list for the combined configuration string
             phase_parts.append(phase)
 
         # Generate the complete configuration string
         self.cfg_string = f"phases<{'&'.join(phase_parts)}>" if phase_parts else ""
+
+
 
     def _load_material_data(self):
         """Load the material data using NCrystal with the phase configuration."""
@@ -261,9 +281,9 @@ class CrossSection:
         Args:
             wl: Wavelength array
             **kwargs: Material-specific parameters in format:
-                     mos1, mos2, ... for mosaic spread of materials 1, 2, ...
-                     k1, k2, ... for k values of materials 1, 2, ...
-                     l1, l2, ... for l values of materials 1, 2, ...
+                     η1, η2, ... for mosaic spread of materials 1, 2, ...
+                     θ1, θ2, ... for theta values of materials 1, 2, ...
+                     ϕ1, ϕ2, ... for phi values of materials 1, 2, ...
                      temp1, temp2, ... for temperatures of materials 1, 2, ...
         """
         updated = False
@@ -276,9 +296,9 @@ class CrossSection:
             
             # Check for material-specific parameters
             temp_key = f"temp{i}"
-            mos_key = f"mos{i}"
-            k_key = f"k{i}"
-            l_key = f"l{i}"
+            mos_key = f"η{i}"
+            theta_key = f"θ{i}"
+            phi_key = f"ϕ{i}"
             
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
                 spec['temp'] = kwargs[temp_key]
@@ -286,11 +306,11 @@ class CrossSection:
             if mos_key in kwargs and kwargs[mos_key] != spec['mos']:
                 spec['mos'] = kwargs[mos_key]
                 updated = True
-            if k_key in kwargs and kwargs[k_key] != spec['k']:
-                spec['k'] = kwargs[k_key]
+            if theta_key in kwargs and kwargs[theta] != spec['theta']:
+                spec['theta'] = kwargs[theta_key]
                 updated = True
-            if l_key in kwargs and kwargs[l_key] != spec['l']:
-                spec['l'] = kwargs[l_key]
+            if phi_key in kwargs and kwargs[phi] != spec['phi']:
+                spec['phi'] = kwargs[phi_key]
                 updated = True
 
         if updated:
@@ -341,3 +361,100 @@ class CrossSection:
         ax.legend(legend_labels)
 
         return ax
+
+
+    def _normalize_vector(self,vec):
+        """Normalizes a vector."""
+        norm = np.linalg.norm(vec)
+        if norm == 0:
+            return vec
+        return [x / norm for x in vec]
+
+    def from_maud(self,maud_line=None):
+        """Parses a MAUD line or returns default vectors aligned with the beam.
+        
+        Args:
+            maud_line (str, optional): MAUD string. Defaults to a crystal aligned with the beam.
+            
+        Returns:
+            dict: A dictionary with normalized dir1 and dir2 vectors.
+        """
+        default_maud = (
+            "Vol:0.10, EA_ZXZ:(0.00 0.00 0.00), "
+            "x||(1.0000 0.0000 0.0000), y||(0.0000 1.0000 0.0000), z||(0.0000 0.0000 1.0000)"
+        )
+        
+        if maud_line is None:
+            maud_line = default_maud
+        
+        try:
+            # Extract the vectors from the MAUD line
+            parts = maud_line.split(',')
+            x_vector = [float(x) for x in parts[2].split('||')[1].strip('()').split()]
+            z_vector = [float(x) for x in parts[4].split('||')[1].strip('()').split()]
+            
+            # Normalize the vectors
+            dir1 = self._normalize_vector(z_vector)
+            dir2 = self._normalize_vector(x_vector)
+            
+            return {'dir1': dir1, 'dir2': dir2}
+        
+        except (IndexError, ValueError):
+            raise ValueError(
+                "Invalid MAUD line format. Expected format example: "
+                "'Vol:0.10, EA_ZXZ:(77.21 45.31 268.14), x||(1.9669 0.7061 2.0107), y||(-0.5429 2.8119 -0.4564), z||(-2.0607 -0.0669 2.0394)'"
+            )
+
+    def _rotate_vector(self,vec, phi=0., theta=0.):
+        """Rotates a vector by angles phi (around z-axis) and theta (around y-axis)."""
+        # Convert angles from degrees to radians
+        phi = np.radians(phi)
+        theta = np.radians(theta)
+        
+        # Rotation matrix around z-axis
+        Rz = np.array([
+            [np.cos(phi), -np.sin(phi), 0],
+            [np.sin(phi),  np.cos(phi), 0],
+            [0,            0,           1]
+        ])
+        
+        # Rotation matrix around y-axis
+        Ry = np.array([
+            [ np.cos(theta), 0, np.sin(theta)],
+            [ 0,             1, 0            ],
+            [-np.sin(theta), 0, np.cos(theta)]
+        ])
+        
+        # Apply rotations: first around z, then around y
+        rotated_vec = Ry @ (Rz @ np.array(vec))
+        return rotated_vec.tolist()
+
+    def format_orientations(self, dir1=None, dir2=None, phi=0, theta=0):
+        """Converts dir1 and dir2 vectors to NCrystal orientation format with optional rotation.
+        
+        Args:
+            dir1 (list of float, optional): Normalized vector for dir1. Defaults to z-axis aligned.
+            dir2 (list of float, optional): Normalized vector for dir2. Defaults to x-axis perpendicular.
+            phi (float, optional): Rotation around the z-axis in degrees. Defaults to 0.
+            theta (float, optional): Rotation around the y-axis in degrees. Defaults to 0.
+            
+        Returns:
+            dict: A dictionary with the NCrystal formatted dir1 and dir2 strings.
+        """
+        if dir1 is None:
+            dir1 = [0.0, 0.0, 1.0]
+        if dir2 is None:
+            dir2 = [1.0, 0.0, 0.0]
+        
+        # Rotate the vectors
+        dir1_rotated = self._rotate_vector(dir1, phi, theta)
+        dir2_rotated = self._rotate_vector(dir2, phi, theta)
+        
+        # Format the vectors
+        dir1_str = ",".join(f"{coord:.4f}" for coord in dir1_rotated)
+        dir2_str = ",".join(f"{coord:.4f}" for coord in dir2_rotated)
+        
+        return {
+            'dir1': f"@crys_hkl:{dir1_str}@lab:0,0,1",
+            'dir2': f"@crys_hkl:{dir2_str}@lab:0,1,0"
+        }
