@@ -13,6 +13,7 @@ class CrossSection:
     """
     def __init__(self, materials: Union[Dict[str, Union[Dict, dict]], 'CrossSection', None] = None,
                  name: str = None,
+                 total_weight: float = 1.,
                  **kwargs):
         """
         Initialize the CrossSection class.
@@ -29,6 +30,7 @@ class CrossSection:
         self.name = name
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.mat_data = None  # Single NCrystal scatter object
+        self.total_weight = total_weight
 
         # Initialize materials by combining materials and kwargs
         combined_materials = {}
@@ -135,7 +137,7 @@ class CrossSection:
             self.weights = pd.Series(dtype=float)
             return
             
-        self.weights = pd.Series({name: spec['weight'] 
+        self.weights = pd.Series({name: spec['weight']*self.total_weight
                                 for name, spec in self.materials.items()})
 
     def __add__(self, other: 'CrossSection') -> 'CrossSection':
@@ -156,18 +158,11 @@ class CrossSection:
             combined_materials[new_name] = deepcopy(spec)
         
         # Create new instance with combined materials
-        return CrossSection(combined_materials, name=f"{self.name}+{other.name}")
+        return CrossSection(combined_materials)
 
     def __mul__(self, scalar: float) -> 'CrossSection':
         """Multiply CrossSection by a scalar."""
-        new_materials = {}
-        
-        for name, spec in self.materials.items():
-            new_spec = deepcopy(spec)
-            new_spec['weight'] *= scalar
-            new_materials[name] = new_spec
-        
-        return CrossSection(new_materials, name=f"{scalar}*{self.name}")
+        return CrossSection(self.materials,total_weight=scalar)
 
     def _generate_cfg_string(self):
         """
