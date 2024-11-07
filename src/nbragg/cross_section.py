@@ -44,57 +44,6 @@ class CrossSection:
         # Add materials from kwargs
         for key, value in kwargs.items():
             if isinstance(value, str) and value in materials_dict:
-                # Replace the string with the actual material dictionary
-                combined_materials[key] = materials_dict[value]
-            else:
-                # Assume the provided value is already a valid material dictionary
-                combined_materials[key] = value
-
-        # Process the combined materials dictionary
-        self.materials = self._process_materials(combined_materials)
-
-        # Initialize weights
-        self.weights = pd.Series(dtype=float)
-        self._set_weights()
-        self._generate_cfg_string()
-        self._load_material_data()
-        self._populate_material_data()
-
-
-
-from typing import Dict, Union
-import pandas as pd
-import numpy as np
-from copy import deepcopy
-
-class CrossSection:
-    """
-    Represents a combination of cross-sections for crystal materials.
-    """
-    def __init__(self, materials: Union[Dict[str, Union[Dict, dict]], 'CrossSection', None] = None,
-                 name: str = None,
-                 total_weight: float = 1.,
-                 **kwargs):
-        """
-        Initialize the CrossSection class.
-        """
-        self.name = name
-        self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
-        self.mat_data = None  # Single NCrystal scatter object
-        self.total_weight = total_weight
-
-        # Initialize materials by combining materials and kwargs
-        combined_materials = {}
-        
-        # Add materials from 'materials' if it is an instance of CrossSection or a dictionary
-        if isinstance(materials, CrossSection):
-            combined_materials.update(materials.materials)
-        elif isinstance(materials, dict):
-            combined_materials.update(materials)
-        
-        # Add materials from kwargs
-        for key, value in kwargs.items():
-            if isinstance(value, str) and value in materials_dict:
                 combined_materials[key] = materials_dict[value]
             else:
                 combined_materials[key] = value
@@ -238,15 +187,13 @@ class CrossSection:
 
             # Normalize the weight for NCrystal configuration
             normalized_weight = spec['weight'] / total if total > 0 else spec['weight']
-
-            # Build the base phase configuration
             phase = f"{normalized_weight}*{material}"
             single_phase = f"{material}"
 
             # Collect material-specific parameters
             params = []
             if spec['temp'] is not None:
-                params.append(f"temp={spec['temp']}K")
+                params.append(f"temp={int(spec['temp'])}K")
 
             # Determine if the material is oriented
             mos = spec.get('mos', None)
@@ -267,10 +214,11 @@ class CrossSection:
                 theta = theta if theta is not None else 0.
                 phi = phi if phi is not None else 0.
 
-                # Format the orientations
+                # Format the orientation vectors with NCrystal-specific notation
                 orientation = self.format_orientations(dir1, dir2, theta=theta, phi=phi)
-                dir1_str = orientation['dir1']
-                dir2_str = orientation['dir2']
+                dir1_str = f"@crys_hkl:{orientation['dir1'][0]:.4f},{orientation['dir1'][1]:.4f},{orientation['dir1'][2]:.4f}@lab:0,0,1"
+                dir2_str = f"@crys_hkl:{orientation['dir2'][0]:.4f},{orientation['dir2'][1]:.4f},{orientation['dir2'][2]:.4f}@lab:0,1,0"
+
                 params.append(f"mos={mos}deg")
                 params.append(f"dirtol={dirtol}deg")
                 params.append(f"dir1={dir1_str}")
@@ -289,7 +237,6 @@ class CrossSection:
 
         # Generate the complete configuration string
         self.cfg_string = f"phases<{'&'.join(phase_parts)}>" if phase_parts else ""
-
 
 
     def _load_material_data(self):
@@ -423,67 +370,31 @@ class CrossSection:
 
         return ax
 
-    def from_maud(self, maud_line: str = None,dirtol: float=None) -> Dict[str, Union[Dict, dict]]:
-        """Parses a MAUD line, updates the dir1 and dir2 vectors for all materials, and adjusts the total_weight.
+    @staticmethod
+    def _normalize_vector(vector: Union[List[float], List[str]]) -> List[float]:
+        """Normalizes a vector to have a length of 1.
         
         Args:
-            maud_line (str, optional): MAUD string. Defaults to a crystal aligned with the beam.
+            vector: List of numbers (as floats or strings)
+            
         Returns:
-            dict: A dictionary of updated material specifications.
+            List[float]: Normalized vector
         """
-        default_maud = (
-            "Vol:0.10, EA_ZXZ:(0.00 0.00 0.00), "
-            "x||(1.0000 0.0000 0.0000), y||(0.0000 1.0000 0.0000), z||(0.0000 0.0000 1.0000)"
-        )
-        
-        if maud_line is None:
-            maud_line = default_maud
-        
-        try:
-            # Extract the volume fraction (Vol) from the MAUD line
-            parts = maud_line.split(',')
-            vol_str = parts[0].split(':')[1].strip()
-            vol = float(vol_str) / 100  # Convert from percentage to fraction
-            
-            # Extract the vectors from the MAUD line
-            x_vector = [float(x) for x in parts[2].split('||')[1].strip('()').split()]
-            z_vector = [float(x) for x in parts[4].split('||')[1].strip('()').split()]
-            
-            # Normalize the vectors
-            dir1 = self._normalize_vector(z_vector)
-            dir2 = self._normalize_vector(x_vector)
-            
-            # Update the dir1 and dir2 vectors for all materials
-            updated_materials = {}
-            for name, spec in self.materials.items():
-                updated_spec = spec.copy()
-                updated_spec['dir1'] = dir1
-                updated_spec['dir2'] = dir2
-                if dirtol!=None:
-                    updated_spec['dirtol'] = dirtol
-                updated_materials[name] = updated_spec
+        # Convert strings to floats if necessary
+        vec_float = [float(x) if isinstance(x, str) else x for x in vector]
+        magnitude = sum(x**2 for x in vec_float) ** 0.5
+        if magnitude == 0:
+            return [0.0, 0.0, 0.0]
+        return [x / magnitude for x in vec_float]
 
-            return CrossSection(updated_materials,total_weight=vol)
-            
-        
-        except (IndexError, ValueError):
-            raise ValueError(
-                "Invalid MAUD line format. Expected format example: "
-                "'Vol:0.10, EA_ZXZ:(77.21 45.31 268.14), x||(1.9669 0.7061 2.0107), y||(-0.5429 2.8119 -0.4564), z||(-2.0607 -0.0669 2.0394)'"
-            )
-
-    @staticmethod
-    def _normalize_vector(vector: list) -> list:
-        """Normalizes a vector to have a length of 1."""
-        magnitude = sum(x**2 for x in vector) ** 0.5
-        return [x / magnitude for x in vector]
-
-
-    def _rotate_vector(self,vec, phi=0., theta=0.):
+    def _rotate_vector(self, vec: List[float], phi: float = 0.0, theta: float = 0.0) -> List[float]:
         """Rotates a vector by angles phi (around z-axis) and theta (around y-axis)."""
+        # Ensure vector components are floats
+        vec = [float(x) if isinstance(x, str) else x for x in vec]
+        
         # Convert angles from degrees to radians
-        phi = np.radians(phi)
-        theta = np.radians(theta)
+        phi = np.radians(float(phi))
+        theta = np.radians(float(theta))
         
         # Rotation matrix around z-axis
         Rz = np.array([
@@ -500,35 +411,100 @@ class CrossSection:
         ])
         
         # Apply rotations: first around z, then around y
-        rotated_vec = Ry @ (Rz @ np.array(vec))
+        rotated_vec = Ry @ (Rz @ np.array(vec, dtype=float))
         return rotated_vec.tolist()
 
-    def format_orientations(self, dir1=None, dir2=None, phi=0, theta=0):
-        """Converts dir1 and dir2 vectors to NCrystal orientation format with optional rotation.
+    def _transform_lab_coordinates(self, vector: List[float]) -> List[float]:
+        """Transform from HIPPO lab coordinates to NCrystal lab coordinates."""
+        # Ensure vector components are floats
+        vector = [float(x) if isinstance(x, str) else x for x in vector]
         
-        Args:
-            dir1 (list of float, optional): Normalized vector for dir1. Defaults to z-axis aligned.
-            dir2 (list of float, optional): Normalized vector for dir2. Defaults to x-axis perpendicular.
-            phi (float, optional): Rotation around the z-axis in degrees. Defaults to 0.
-            theta (float, optional): Rotation around the y-axis in degrees. Defaults to 0.
-            
-        Returns:
-            dict: A dictionary with the NCrystal formatted dir1 and dir2 strings.
-        """
+        transform = np.array([
+            [0, 0, 1],  # HIPPO's z becomes NCrystal's x
+            [0, 1, 0],  # HIPPO's y stays as NCrystal's y
+            [1, 0, 0]   # HIPPO's x becomes NCrystal's z
+        ])
+        
+        return (transform @ np.array(vector, dtype=float)).tolist()
+
+    def format_orientations(self, dir1: Union[List[float], List[str]] = None, 
+                            dir2: Union[List[float], List[str]] = None,
+                            phi: Union[float, str] = 0.0, 
+                            theta: Union[float, str] = 0.0) -> Dict[str, List[float]]:
+        """Converts dir1 and dir2 vectors to NCrystal orientation format with optional rotation."""
         if dir1 is None:
             dir1 = [0.0, 0.0, 1.0]
         if dir2 is None:
             dir2 = [1.0, 0.0, 0.0]
-        
-        # Rotate the vectors
-        dir1_rotated = self._rotate_vector(dir1, phi, theta)
-        dir2_rotated = self._rotate_vector(dir2, phi, theta)
-        
-        # Format the vectors
-        dir1_str = ",".join(f"{coord:.4f}" for coord in dir1_rotated)
-        dir2_str = ",".join(f"{coord:.4f}" for coord in dir2_rotated)
-        
+
+        # Convert any string values to floats and normalize
+        dir1 = self._normalize_vector([float(x) if isinstance(x, str) else x for x in dir1])
+        dir2 = self._normalize_vector([float(x) if isinstance(x, str) else x for x in dir2])
+        phi = float(phi) if isinstance(phi, str) else phi
+        theta = float(theta) if isinstance(theta, str) else theta
+
+        # Apply rotations if specified
+        if phi != 0 or theta != 0:
+            dir1 = self._rotate_vector(dir1, phi, theta)
+            dir2 = self._rotate_vector(dir2, phi, theta)
+
+        # Transform to NCrystal lab coordinates
+        dir1_lab = self._transform_lab_coordinates(dir1)
+        dir2_lab = self._transform_lab_coordinates(dir2)
+
+        # Return vectors without any string formatting for easy processing
         return {
-            'dir1': f"@crys_hkl:{dir1_str}@lab:0,0,1",
-            'dir2': f"@crys_hkl:{dir2_str}@lab:0,1,0"
+            'dir1': dir1_lab,
+            'dir2': dir2_lab
         }
+
+
+    def from_maud(self, maud_line: str = None, dirtol: float = None, 
+                 mos: float = None, suffix: str = None) -> 'CrossSection':
+        """Parses a MAUD line and converts orientations from HIPPO to NCrystal convention."""
+        default_maud = (
+            "Vol:0.10, EA_ZXZ:(0.00 0.00 0.00), "
+            "x||(1.0000 0.0000 0.0000), y||(0.0000 1.0000 0.0000), z||(0.0000 0.0000 1.0000)"
+        )
+        
+        if maud_line is None:
+            maud_line = default_maud
+        
+        try:
+            # Extract volume fraction
+            parts = maud_line.split(',')
+            vol_str = parts[0].split(':')[1].strip()
+            vol = float(vol_str)
+            
+            # Extract vectors from MAUD line and convert to floats
+            x_vector = [float(x) for x in parts[2].split('||')[1].strip('()').split()]
+            y_vector = [float(x) for x in parts[3].split('||')[1].strip('()').split()]
+            
+            # Get orientation strings
+            orientations = self.format_orientations(
+                dir1=x_vector,  # HIPPO x (beam) direction
+                dir2=y_vector   # HIPPO y (vertical) direction
+            )
+            
+            # Update materials
+            updated_materials = {}
+            for name, spec in self.materials.items():
+                updated_spec = spec.copy()
+                updated_spec['dir1'] = orientations['dir1']
+                updated_spec['dir2'] = orientations['dir2']
+                if dirtol is not None:
+                    updated_spec['dirtol'] = float(dirtol)
+                if mos is not None:
+                    updated_spec['mos'] = float(mos)
+                
+                new_name = f"{name}{suffix}" if suffix else name
+                updated_materials[new_name] = updated_spec
+            
+            return CrossSection(updated_materials, total_weight=vol)
+            
+        except (IndexError, ValueError) as e:
+            raise ValueError(
+                f"Invalid MAUD line format: {str(e)}. Expected format example: "
+                "'Vol:0.10, EA_ZXZ:(77.21 45.31 268.14), x||(1.9669 0.7061 2.0107), "
+                "y||(-0.5429 2.8119 -0.4564), z||(-2.0607 -0.0669 2.0394)'"
+            )
