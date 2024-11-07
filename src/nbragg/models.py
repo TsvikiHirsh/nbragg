@@ -58,6 +58,7 @@ class TransmissionModel(lmfit.Model):
         super().__init__(self.transmission, **kwargs)
 
         self.cross_section = cross_section
+        self._materials = self.cross_section.materials.copy()
         self.tof_length = tof_length
 
         if params!=None:
@@ -264,8 +265,8 @@ class TransmissionModel(lmfit.Model):
             The orientation-related parameters.
         """
         params = lmfit.Parameters()
-        for i, material in enumerate(self.cross_section.materials):
-            mos = self.cross_section.materials[material].get("mos", None)
+        for i, material in enumerate(self._materials):
+            mos = self._materials[material].get("mos", None)
             if mos: 
                 param_name = f"η{i+1}"
                 if param_name in self.params:
@@ -273,14 +274,14 @@ class TransmissionModel(lmfit.Model):
                 else:
                     params.add(param_name, value=mos, min=0.001, max=50, vary=vary)
                 
-                theta = self.cross_section.materials[material].get("theta", 0.)
+                theta = self._materials[material].get("theta", 0.)
                 param_name = f"θ{i+1}"
                 if param_name in self.params:
                     self.params[param_name].vary = vary
                 else:
                     params.add(param_name, value=theta, min=0., max=180, vary=vary)
                 
-                phi = self.cross_section.materials[material].get("phi", 0.)
+                phi = self._materials[material].get("phi", 0.)
                 param_name = f"ϕ{i+1}"
                 if param_name in self.params:
                     self.params[param_name].vary = vary
@@ -303,8 +304,8 @@ class TransmissionModel(lmfit.Model):
             The temperature-related parameters.
         """
         params = lmfit.Parameters()
-        for i, material in enumerate(self.cross_section.materials):
-            temp = self.cross_section.materials[material].get("temp", None)
+        for i, material in enumerate(self._materials):
+            temp = self._materials[material].get("temp", None)
             if temp: 
                 param_name = "temp"
                 if param_name in self.params:
@@ -388,8 +389,8 @@ class TransmissionModel(lmfit.Model):
             The normalized weight parameters for the model.
         """
         params = lmfit.Parameters()
-        weights = np.array([self.cross_section.materials[phase]["weight"] for phase in self.cross_section.materials])
-        param_names = [phase.replace("-", "") for phase in self.cross_section.materials]
+        weights = np.array([self._materials[phase]["weight"] for phase in self._materials])
+        param_names = [phase.replace("-", "") for phase in self._materials]
 
         N = len(weights)
         if N == 1:
