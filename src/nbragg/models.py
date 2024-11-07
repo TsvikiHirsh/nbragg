@@ -116,6 +116,9 @@ class TransmissionModel(lmfit.Model):
         
         where `sigma` is the cross-section, `bg` is the background function, and `n` is the total atomic weight.
         """
+        verbose = kwargs.get("verbose",None)
+        if verbose:
+            print(kwargs)
         E = NC.wl2ekin(wl)
         E = self._tof_correction(E,**kwargs)
         wl = NC.ekin2wl(E)
@@ -129,7 +132,7 @@ class TransmissionModel(lmfit.Model):
 
         # Transmission function
         
-        xs = self.cross_section(wl)
+        xs = self.cross_section(wl,**kwargs)
 
         if self.response != None:
             response = self.response.function(**kwargs)

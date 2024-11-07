@@ -276,7 +276,8 @@ class CrossSection:
 
     def _calculate_cross_section(self, wl, mat):
         """Calculate cross-section using NCrystal's xsect method."""
-        return mat.scatter.xsect(wl=wl, direction=(0,0,1)) + mat.absorption.xsect(wl=wl, direction=(0,0,1))
+        xs = mat.scatter.xsect(wl=wl, direction=(0,0,1)) + mat.absorption.xsect(wl=wl, direction=(0,0,1))
+        return np.nan_to_num(xs,0.)
 
     def __call__(self, wl: np.ndarray, **kwargs):
         """
@@ -292,7 +293,6 @@ class CrossSection:
         """
         updated = False
         direction = None
-        
         # Check for parameter updates
         material_names = list(self.materials.keys())
         for i, name in enumerate(material_names, 1):
