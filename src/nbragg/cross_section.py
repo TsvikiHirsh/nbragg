@@ -310,10 +310,10 @@ class CrossSection:
             if mos_key in kwargs and kwargs[mos_key] != spec['mos']:
                 spec['mos'] = kwargs[mos_key]
                 updated = True
-            if theta_key in kwargs and kwargs[theta] != spec['theta']:
+            if theta_key in kwargs and kwargs[theta_key] != spec['theta']:
                 spec['theta'] = kwargs[theta_key]
                 updated = True
-            if phi_key in kwargs and kwargs[phi] != spec['phi']:
+            if phi_key in kwargs and kwargs[phi_key] != spec['phi']:
                 spec['phi'] = kwargs[phi_key]
                 updated = True
             phase_name = name.replace("-", "")

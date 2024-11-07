@@ -190,16 +190,16 @@ class Background:
         if kind == "polynomial3":
             self.function = self.polynomial3_background
             for i in range(3):
-                self.params.add(f"b{i}", value=0., min=-1, max= 1, vary=vary)
+                self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
 
         elif kind == "polynomial5":
             self.function = self.polynomial5_background
             for i in range(5):
-                self.params.add(f"b{i}", value=0., min=-1, max= 1, vary=vary)
+                self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
 
         elif kind == "constant":
             self.function = self.constant_background
-            self.params.add('b0', value=0.0, min=-1,max=1.,vary=vary)
+            self.params.add('b0', value=0.0, min=-1e6,max=1e6,vary=vary)
         elif kind == "none":
             self.function = self.empty_background
         else:
@@ -219,7 +219,8 @@ class Background:
         wl (np.ndarray): Wavelength values.
         b0 (float): Constant background value.
         """
-        return np.full_like(wl, b0)
+        bg = np.full_like(wl, b0)
+        return np.where(bg>0,bg,0.)
 
     def polynomial3_background(self, wl, b0=0., b1=1., b2=0., **kwargs):
         """
@@ -231,7 +232,8 @@ class Background:
         b1 (float): Linear term.
         b2 (float): Quadratic term.
         """
-        return b0 + b1 * np.sqrt(wl) + b2 / np.sqrt(wl)
+        bg = b0 + b1 * np.sqrt(wl) + b2 / np.sqrt(wl)
+        return np.where(bg>0,bg,0.)
 
     def polynomial5_background(self, wl, b0=0., b1=1., b2=0., b3=0., b4=0., **kwargs):
         """
@@ -245,7 +247,8 @@ class Background:
         b3 (float): Cubic term.
         b4 (float): Quartic term.
         """
-        return b0 + b1 * np.sqrt(wl) + b2 / np.sqrt(wl) + b3 * wl + b4 * wl**2
+        bg = b0 + b1 * np.sqrt(wl) + b2 / np.sqrt(wl) + b3 * wl + b4 * wl**2
+        return np.where(bg>0,bg,0.)
 
     def plot(self, wl, params=None, **kwargs):
         """

@@ -14,6 +14,7 @@ from typing import List, Optional
 
 class TransmissionModel(lmfit.Model):
     def __init__(self, cross_section, 
+                        params: "lmfit.Parameters" = None,
                         response: str = "bem",
                         background: str = "polynomial3",
                         tof_length: float = 9,
@@ -59,7 +60,12 @@ class TransmissionModel(lmfit.Model):
         self.cross_section = cross_section
         self.tof_length = tof_length
 
-        self.params = self._make_basic_params()
+        if params!=None:
+            self.params = params.copy()
+        else:
+            self.params = lmfit.Parameters()
+        
+        self.params += self._make_basic_params()
         self.params += self._make_temperature_params() # add temperature params to fit
         if vary_weights is not None:
             self.params += self._make_weight_params(vary=vary_weights)
@@ -69,12 +75,21 @@ class TransmissionModel(lmfit.Model):
         self.response = None
         if vary_response is not None:
             self.response = Response(kind=response,vary=vary_response)
-            self.params += self.response.params
+            if list(self.response.params.keys())[0] in self.params:
+                for param_name in self.params.keys():
+                    self.params[param_name].vary = vary_response 
+            else:
+                self.params += self.response.params
+
 
         self.background = None
         if vary_background is not None:
             self.background = Background(kind=background,vary=vary_background)
-            self.params += self.background.params
+            if "b0" in self.params:
+                for param_name in self.background.params.keys():
+                    self.params[param_name].vary = vary_background 
+            else:
+                self.params += self.background.params
 
         self.orientation = None
         if vary_orientation is not None:
@@ -249,16 +264,30 @@ class TransmissionModel(lmfit.Model):
             The orientation-related parameters.
         """
         params = lmfit.Parameters()
-        for i,material in enumerate(self.cross_section.materials):
-            mos = self.cross_section.materials[material].get("mos",None)
+        for i, material in enumerate(self.cross_section.materials):
+            mos = self.cross_section.materials[material].get("mos", None)
             if mos: 
-                params.add(f"η{i+1}", value=mos, min=0.001, max= 50, vary=vary)
-                theta = self.cross_section.materials[material].get("theta",0.)
-                params.add(f"θ{i+1}", value=theta, min=0., max= 180, vary=vary)
-                phi = self.cross_section.materials[material].get("phi",0.)
-                params.add(f"ϕ{i+1}", value=phi, min=0, max= 360, vary=vary)
+                param_name = f"η{i+1}"
+                if param_name in self.params:
+                    self.params[param_name].vary = vary
+                else:
+                    params.add(param_name, value=mos, min=0.001, max=50, vary=vary)
+                
+                theta = self.cross_section.materials[material].get("theta", 0.)
+                param_name = f"θ{i+1}"
+                if param_name in self.params:
+                    self.params[param_name].vary = vary
+                else:
+                    params.add(param_name, value=theta, min=0., max=180, vary=vary)
+                
+                phi = self.cross_section.materials[material].get("phi", 0.)
+                param_name = f"ϕ{i+1}"
+                if param_name in self.params:
+                    self.params[param_name].vary = vary
+                else:
+                    params.add(param_name, value=phi, min=0, max=360, vary=vary)
         return params
-    
+
     def _make_temperature_params(self, vary: bool = False):
         """
         Create temperature for the model.
@@ -274,12 +303,16 @@ class TransmissionModel(lmfit.Model):
             The temperature-related parameters.
         """
         params = lmfit.Parameters()
-        for i,material in enumerate(self.cross_section.materials):
-            temp = self.cross_section.materials[material].get("temp",None)
+        for i, material in enumerate(self.cross_section.materials):
+            temp = self.cross_section.materials[material].get("temp", None)
             if temp: 
-                params.add(f"temp", value=temp, min=77., max= 1000, vary=vary)
+                param_name = "temp"
+                if param_name in self.params:
+                    self.params[param_name].vary = vary
+                else:
+                    params.add(param_name, value=temp, min=77., max=1000, vary=vary)
         return params
-    
+
     def _make_basic_params(self, vary: bool = True):
         """
         Create basic params for the model.
@@ -295,10 +328,19 @@ class TransmissionModel(lmfit.Model):
             The basic parameters of thickness and normalization.
         """
         params = lmfit.Parameters()
-        params.add(f"thickness", value=1., min=0., max= 5., vary=vary)
-        params.add(f"norm", value=1., min=0.1, max= 10., vary=vary)
+        param_name = "thickness"
+        if param_name in self.params:
+            self.params[param_name].vary = vary
+        else:
+            params.add(param_name, value=1., min=0., max=5., vary=vary)
+        
+        param_name = "norm"
+        if param_name in self.params:
+            self.params[param_name].vary = vary
+        else:
+            params.add(param_name, value=1., min=0.1, max=10., vary=vary)
         return params
-    
+
     def _make_tof_params(self, vary: bool = False, t0: float = 0., L0: float = 1.):
         """
         Create time-of-flight (TOF) parameters for the model.
@@ -318,11 +360,18 @@ class TransmissionModel(lmfit.Model):
             The TOF-related parameters.
         """
         params = lmfit.Parameters()
-        params.add("L0", value=L0, min=0.5, max= 1.5, vary=vary)
-        params.add("t0", value=t0, min=-5e-6, max=5e6,vary=vary)
+        param_name = "L0"
+        if param_name in self.params:
+            self.params[param_name].vary = vary
+        else:
+            params.add(param_name, value=L0, min=0.5, max=1.5, vary=vary)
+        
+        param_name = "t0"
+        if param_name in self.params:
+            self.params[param_name].vary = vary
+        else:
+            params.add(param_name, value=t0, min=-5e-6, max=5e6, vary=vary)
         return params
-
-
 
     def _make_weight_params(self, vary: bool = False):
         """
@@ -339,15 +388,6 @@ class TransmissionModel(lmfit.Model):
             The normalized weight parameters for the model.
         """
         params = lmfit.Parameters()
-        # weight_series = deepcopy(self.cross_section.weights)
-        # weight_series.index = weight_series.index.str.replace("-", "")
-        # param_names = weight_series.index
-        # N = len(weight_series)
-
-        # Normalize the input weights to sum to 1
-        # weights = np.array(weight_series / weight_series.sum(), dtype=np.float64)
-
-
         weights = np.array([self.cross_section.materials[phase]["weight"] for phase in self.cross_section.materials])
         param_names = [phase.replace("-", "") for phase in self.cross_section.materials]
 

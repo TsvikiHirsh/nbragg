@@ -59,7 +59,7 @@ class Data:
     @classmethod
     def from_counts(cls, signal: str, openbeam: str,
                     empty_signal: str = "", empty_openbeam: str = "",
-                    tstep: float = 1.56255e-9, L: float = 10.59):
+                    tstep: float = 1.56255e-9, L: float = 10.59, sys_err: float = 0.):
         """
         Creates a Data object from signal and open beam counts data, calculates transmission, 
         and converts tof to wavelength using energy-wavelength conversion.
@@ -78,6 +78,8 @@ class Data:
             Time step (seconds) for converting time-of-flight (tof) to energy. Default is 1.56255e-9.
         L : float, optional
             Distance (meters) used in the energy conversion from time-of-flight. Default is 10.59 m.
+        syserr: float, optional
+            Fractional systematical error to include to the transmission calculation (e.g. syserr=0.01 will include a 1% systematical error to the uncertainty)
         
         Returns:
         --------
@@ -97,7 +99,7 @@ class Data:
         # Calculate transmission and associated error
         transmission = signal["counts"] / openbeam["counts"]
         err = transmission * np.sqrt((signal["err"] / signal["counts"])**2 + 
-                                     (openbeam["err"] / openbeam["counts"])**2)
+                                     (openbeam["err"] / openbeam["counts"])**2 + sys_err**2)
         
         # If background (empty) data is provided, apply correction
         if empty_signal and empty_openbeam:
@@ -109,7 +111,8 @@ class Data:
                 (signal["err"] / signal["counts"])**2 + 
                 (openbeam["err"] / openbeam["counts"])**2 +
                 (empty_signal["err"] / empty_signal["counts"])**2 + 
-                (empty_openbeam["err"] / empty_openbeam["counts"])**2
+                (empty_openbeam["err"] / empty_openbeam["counts"])**2 +
+                sys_err**2
             )
         
         # Construct a dataframe for wavelength, transmission, and error
