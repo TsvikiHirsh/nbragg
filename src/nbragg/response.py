@@ -3,26 +3,27 @@ import pandas as pd
 from scipy.stats import exponnorm
 import matplotlib.pyplot as plt
 from scipy.special import erfc
+from scipy.stats import uniform
 import lmfit
 import inspect
 import warnings
+import nbragg.utils as utils
 
 class Response:
     def __init__(self, kind="jorgensen", vary: bool = False,
-                 wlstep=0.1):
+                 wlstep:float =0.1,tstep:float =10e-6):
         """
         Initializes the Response object with specified parameters.
 
         Parameters:
         kind (str): The type of response function to use. Options are 'expo_gauss' or 'none'.
         vary (bool): If True, the parameters can vary during fitting. Default is False.
-        eps (float): The threshold for cutting the response array symmetrically. Default is 1.0e-6.
-        tstep (float): The time step for the response function. Default is 1.56255e-9 seconds.
-        nbins (int): The number of bins for the response function. Default is 300.
         """
         self.wlstep = wlstep
         self.params = lmfit.Parameters()
         self.Δλ = np.arange(-20, 20, self.wlstep)
+        self.tgrid = np.arange(-0.005,0.005,tstep) # grid for time based response -5ms to 5ms with 10usec bin size
+        self.kind = kind
 
         # Choose the response function
         if kind == "jorgensen":
@@ -30,6 +31,11 @@ class Response:
             self.params = lmfit.Parameters()
             self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
             self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
+
+        elif kind == "square":
+            self.function = self.square_response
+            self.params = lmfit.Parameters()
+            self.params.add(f"width", value=1, min=tstep*1e6, max= 5000, vary=vary)
 
         elif kind == "none":
             self.function = self.empty_response
@@ -92,8 +98,16 @@ class Response:
         """
         return np.array([0., 1., 0.])
 
+    def square_response(self, width=10, **kwargs):
+        """
+        Returns a square response in time with a given width [usec]
+        """
+        width = width*1e-6 # convert to sec
+        tof_response = uniform.pdf(self.tgrid,scale=width)
+        tof_response /= np.sum(tof_response)
+        return tof_response
 
-    def jorgensen_response(self, α1, β1, σ=None, x_range=(-20, 20), dx=0.1, **kwargs):
+    def jorgensen_response(self, α1, β1, σ=None, **kwargs):
         """
         Calculates the Jorgensen peak profile function with Greek Unicode parameters.
         
@@ -105,10 +119,6 @@ class Response:
             Beta parameter [β1₁, β1₂] or single value β1₁ (β1₂ defaults to 0)
         σ : list/tuple, optional
             Sigma parameters [σ₁, σ₂, σ₃], defaults to [0, 0, 0]
-        x_range : tuple
-            (min, max) range for x values, default (-20, 20)
-        dx : float
-            Step size for x values, default 0.1
         
         Returns:
         --------
@@ -126,7 +136,7 @@ class Response:
             β1 = [β1, 0]
         
         # Generate x values
-        x = np.arange(x_range[0], x_range[1], dx)
+        x = self.Δλ
         
         # Calculate parameters using d-spacing of 1.0 as in original code
         d = 1.0
@@ -176,12 +186,18 @@ class Response:
         **kwargs: Additional arguments for plot customization.
         """
         ax = kwargs.pop("ax", plt.gca())
-        xlabel = kwargs.pop("xlabel", "wavelength [Angstrom]")
+        
 
         params = params if params else self.params
         y = self.function(**params.valuesdict())
-        df = pd.Series(y, index=self.Δλ, name="Response")
-        df.plot(ax=ax, xlabel=xlabel, **kwargs)
+        if self.kind == "jorgensen":
+            xlabel = kwargs.pop("xlabel", "wavelength [Angstrom]")
+            df = pd.Series(y, index=self.Δλ, name="Response")
+            df.plot(ax=ax, xlabel=xlabel, **kwargs)
+        elif self.kind == "square":
+            xlabel = kwargs.pop("xlabel", "tof [usec]")
+            df = pd.Series(y, index=self.tgrid, name="Response")
+            df.plot(ax=ax, xlabel=xlabel, **kwargs)       
 
 
 class Background:
