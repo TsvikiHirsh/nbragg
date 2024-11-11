@@ -98,12 +98,13 @@ class Response:
         """
         return np.array([0., 1., 0.])
 
-    def square_response(self, width=10, **kwargs):
+    def square_response(self, width=10, center: bool = True, **kwargs):
         """
         Returns a square response in time with a given width [usec]
         """
         width = width*1e-6 # convert to sec
-        tof_response = uniform.pdf(self.tgrid,scale=width)
+        loc = -0.5*width if center else 0.
+        tof_response = uniform.pdf(self.tgrid,loc=loc,scale=width)
         tof_response /= np.sum(tof_response)
         return tof_response
 
