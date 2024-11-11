@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from scipy.special import erfc
 import lmfit
 import inspect
+import warnings
 
 class Response:
     def __init__(self, kind="jorgensen", vary: bool = False,
@@ -27,14 +28,8 @@ class Response:
         if kind == "jorgensen":
             self.function = self.jorgensen_response
             self.params = lmfit.Parameters()
-            self.params.add(f"α1", value=3.67, min=0.001, max= 5, vary=vary)
-            self.params.add(f"β1", value=3.06, min=0.001, max= 5, vary=vary)
-
-        elif kind == "bem":
-            self.function = self.bem_response
-            self.params = lmfit.Parameters()
-            self.params.add(f"α1", value=3.67, min=0.001, max= 5, vary=vary)
-            self.params.add(f"β1", value=3.06, min=0.001, max= 5, vary=vary)
+            self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
 
         elif kind == "none":
             self.function = self.empty_response
@@ -96,69 +91,81 @@ class Response:
         Returns an empty response [0.0, 1.0, 0.0].
         """
         return np.array([0., 1., 0.])
-    
-    def bem_response(self, α1, β1, **kwargs):
-        from bem import peak_profile
-        import warnings
 
-        Δλ = np.arange(-20, 20, 0.1)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            j = peak_profile.Jorgensen(alpha=[α1, 0.], beta=[β1, 0], sigma=[0, 0, 0]).calc_profile(Δλ, 1.)
-        j = j/sum(j)
-        return np.nan_to_num(j,0)
 
-    def jorgensen_response(self, α1, β1, **kwargs):
+    def jorgensen_response(self, α1, β1, σ=None, x_range=(-20, 20), dx=0.1, **kwargs):
         """
-        Calculate the Jorgensen peak profile with a fixed self.Δλ range.
-
-        This function implements the Jorgensen peak profile based on the formulas
-        described in section 3.3.3 of Sven Vogel's thesis,
-        "A Rietveld-approach for the analysis of neutron time-of-flight transmission data".
-
+        Calculates the Jorgensen peak profile function with Greek Unicode parameters.
+        
         Parameters:
         -----------
-        α1 : float
-            The first alpha parameter. Units: 1/angstrom.
-        β1 : float
-            The first beta parameter. Units: 1/angstrom.
-
+        α1 : float or list/tuple
+            Alpha parameter [α1₁, α1₂] or single value α1₁ (α1₂ defaults to 0)
+        β1 : float or list/tuple
+            Beta parameter [β1₁, β1₂] or single value β1₁ (β1₂ defaults to 0)
+        σ : list/tuple, optional
+            Sigma parameters [σ₁, σ₂, σ₃], defaults to [0, 0, 0]
+        x_range : tuple
+            (min, max) range for x values, default (-20, 20)
+        dx : float
+            Step size for x values, default 0.1
+        
         Returns:
         --------
         numpy.ndarray
-            The calculated Jorgensen profile, normalized so that its sum is 1.
+            Normalized profile values with NaN values replaced by 0
         """
-
-        # Calculate parameters
-        alpha = α1
-        beta = β1
-        sigma = 1.0  # Fixed sigma value
-
-        # Calculate scale and other constants
-        scale = alpha * beta / (2 * (alpha + beta))
-        sigma2 = sigma * sigma
-        sqrt2 = np.sqrt(2)
-
-        # Calculate u, v, y, and z
-        u = alpha / 2 * (alpha * sigma2 + 2 * self.Δλ)
-        v = beta / 2 * (beta * sigma2 - 2 * self.Δλ)
-        y = (alpha * sigma2 + self.Δλ) / (sqrt2 * sigma)
-        z = (beta * sigma2 - self.Δλ) / (sqrt2 * sigma)
-
-        # Calculate the profile
-        term1 = np.exp(u) * erfc(y)
-        term2 = np.exp(v) * erfc(z)
+        # Handle input parameters
+        if σ is None:
+            σ = [0, 0, 0]
         
-        # Avoid division by zero warnings
-        term1 = np.where(np.isfinite(term1), term1, 0)
-        term2 = np.where(np.isfinite(term2), term2, 0)
-
-        profile = scale * (term1 + term2)
-
-        # Normalize the profile
-        normalized_profile = profile / np.sum(profile)
-
-        return np.nan_to_num(normalized_profile,0.)
+        # Convert single values to lists with 0 as second element
+        if not isinstance(α1, (list, tuple)):
+            α1 = [α1, 0]
+        if not isinstance(β1, (list, tuple)):
+            β1 = [β1, 0]
+        
+        # Generate x values
+        x = np.arange(x_range[0], x_range[1], dx)
+        
+        # Calculate parameters using d-spacing of 1.0 as in original code
+        d = 1.0
+        α1_calc = α1[0] + α1[1]/d
+        β1_calc = β1[0] + β1[1]/d**4
+        σ_calc = np.sqrt(σ[0]**2 + (σ[1]*d)**2 + (σ[2]*d*d)**2)
+        
+        # Constants
+        sqrt2 = np.sqrt(2)
+        σ2 = σ_calc * σ_calc
+        
+        # Scaling factor
+        scale = α1_calc * β1_calc / 2 / (α1_calc + β1_calc)
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            
+            # Calculate intermediate terms
+            u = α1_calc/2 * (α1_calc*σ2 + 2*x)
+            v = β1_calc/2 * (β1_calc*σ2 - 2*x)
+            y = (α1_calc*σ2 + x)/(sqrt2*σ_calc)
+            z = (β1_calc*σ2 - x)/(sqrt2*σ_calc)
+            
+            # Calculate profile with special handling for numerical stability
+            term1 = np.exp(u) * erfc(y)
+            term2 = np.exp(v) * erfc(z)
+            
+            # Zero out terms where erfc is zero to avoid NaN
+            term1[erfc(y) == 0] = 0
+            term2[erfc(z) == 0] = 0
+            
+            # Calculate profile
+            profile = scale * (term1 + term2)
+            
+            # Normalize
+            profile = profile / np.sum(profile)
+            
+            # Replace any NaN values with 0
+            return np.nan_to_num(profile, 0)
 
     def plot(self, params=None, **kwargs):
         """

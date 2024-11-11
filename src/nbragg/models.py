@@ -15,7 +15,7 @@ from typing import List, Optional
 class TransmissionModel(lmfit.Model):
     def __init__(self, cross_section, 
                         params: "lmfit.Parameters" = None,
-                        response: str = "bem",
+                        response: str = "jorgensen",
                         background: str = "polynomial3",
                         tof_length: float = 9,
                         vary_weights: bool = None, 
