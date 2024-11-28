@@ -207,7 +207,7 @@ class Background:
         Initializes the Background object with specified parameters.
 
         Parameters:
-        kind (str): Type of background function ('constant', 'polynomial3', 'polynomial5', or 'none').
+        kind (str): Type of background function ('constant', 'polynomial3', 'polynomial5','sample_dependent' or 'none').
         vary (bool): If True, the parameters can vary during fitting.
         """
         self.params = lmfit.Parameters()
@@ -220,6 +220,12 @@ class Background:
             self.function = self.polynomial5_background
             for i in range(5):
                 self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
+        elif kind == "sample_dependent":
+            self.function = self.polynomial3_background
+            self.params.add(f"k", value=1., min=0., max= 10., vary=vary)
+            for i in range(3):
+                self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
+
 
         elif kind == "constant":
             self.function = self.constant_background
@@ -227,7 +233,7 @@ class Background:
         elif kind == "none":
             self.function = self.empty_background
         else:
-            raise NotImplementedError(f"Background kind '{kind}' is not supported. Use 'none', 'constant', 'polynomial3', or 'polynomial5'.")
+            raise NotImplementedError(f"Background kind '{kind}' is not supported. Use 'none', 'constant', 'polynomial3', 'sample_dependent', or 'polynomial5'.")
 
     def empty_background(self, wl, **kwargs):
         """

@@ -141,6 +141,7 @@ class TransmissionModel(lmfit.Model):
 
         if self.background != None:
             bg = self.background.function(wl,**kwargs)
+            k = kwargs.get("k",1.) # sample dependent background factor (k*B)
         else:
             bg = 0.
 
@@ -154,7 +155,7 @@ class TransmissionModel(lmfit.Model):
             response = self.response.function(**kwargs)
             xs = convolve1d(xs,response,0)
 
-        T = norm * np.exp(- xs * thickness * n) * (1 - bg) + bg
+        T = norm * np.exp(- xs * thickness * n) * (1 - bg) + k*bg
         return T
 
     def fit(self, data, params=None, wlmin=1., wlmax=6., **kwargs):
