@@ -59,7 +59,7 @@ class Data:
     @classmethod
     def from_counts(cls, signal: str, openbeam: str,
                     empty_signal: str = "", empty_openbeam: str = "",
-                    tstep: float = 1.56255e-9, L: float = 10.59, sys_err: float = 0.):
+                    tstep: float = 10.0e-6, L: float = 9, sys_err: float = 0.):
         """
         Creates a Data object from signal and open beam counts data, calculates transmission, 
         and converts tof to wavelength using energy-wavelength conversion.
