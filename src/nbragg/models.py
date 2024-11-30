@@ -205,7 +205,8 @@ class TransmissionModel(lmfit.Model):
         # return TransmissionModelResult(fit_result, params or self.params)
         return fit_result
     
-    def plot(self, plot_bg: bool = True, **kwargs):
+    def plot(self, plot_bg: bool = True, 
+             plot_dspace: bool = False, dspace_min=1, **kwargs):
         """
         Plot the results of the fit.
 
@@ -213,6 +214,8 @@ class TransmissionModel(lmfit.Model):
         ----------
         plot_bg : bool, optional
             Whether to include the background in the plot, by default True.
+        plot_dspace: bool, optional
+            If True plots the 2*dsapce and labels of that material that are larger than dspace_min
         kwargs : dict, optional
             Additional plot settings like color, marker size, etc.
 
@@ -247,6 +250,18 @@ class TransmissionModel(lmfit.Model):
             ax[0].legend(["Best fit","Background","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
         else:
             ax[0].legend(["Best fit","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
+        if plot_dspace:
+            for phase in self.cross_section.phases_data:
+                for hkl in self.cross_section.phases_data[phase].info.hklList():
+                    hkl = hkl[:3]
+                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
+                    if dspace>= dspace_min:
+                        trans = ax[0].get_xaxis_transform()
+                        ax[0].axvline(dspace*2,lw=1,color="0.5",zorder=-1,ls=":")
+                        if len(self.cross_section.phases)>1:
+                            ax[0].text(dspace*2-0.1,1,f"{phase} {hkl}",color="0.3",zorder=-1,fontsize=8,transform=trans,rotation=90,va="top",ha="left")
+                        else:
+                            ax[0].text(dspace*2-0.1,1,f"{hkl}",color="0.3",zorder=-1,fontsize=8,transform=trans,rotation=90,va="top",ha="left")
         plt.subplots_adjust(hspace=0.05)
         
         return ax
