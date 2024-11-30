@@ -205,7 +205,9 @@ class TransmissionModel(lmfit.Model):
         # return TransmissionModelResult(fit_result, params or self.params)
         return fit_result
     
-    def plot(self, plot_bg: bool = True, **kwargs):
+    def plot(self, plot_bg: bool = True, 
+             plot_dspace: bool = False, dspace_min:float=1,
+             dspace_label_pos: float= 0.99, **kwargs):
         """
         Plot the results of the fit.
 
@@ -213,6 +215,12 @@ class TransmissionModel(lmfit.Model):
         ----------
         plot_bg : bool, optional
             Whether to include the background in the plot, by default True.
+        plot_dspace: bool, optional
+            If True plots the 2*dsapce and labels of that material that are larger than dspace_min
+        dspace_min: float, optional
+            The minimal dspace from which to plot the dspacing*2 lines
+        dspace_label_pos: float, optional
+            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure
         kwargs : dict, optional
             Additional plot settings like color, marker size, etc.
 
@@ -247,6 +255,18 @@ class TransmissionModel(lmfit.Model):
             ax[0].legend(["Best fit","Background","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
         else:
             ax[0].legend(["Best fit","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
+        if plot_dspace:
+            for phase in self.cross_section.phases_data:
+                for hkl in self.cross_section.phases_data[phase].info.hklList():
+                    hkl = hkl[:3]
+                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
+                    if dspace>= dspace_min:
+                        trans = ax[0].get_xaxis_transform()
+                        ax[0].axvline(dspace*2,lw=1,color="0.4",zorder=-1,ls=":")
+                        if len(self.cross_section.phases)>1:
+                            ax[0].text(dspace*2,dspace_label_pos,f"{phase} {hkl}",color="0.2",zorder=-1,fontsize=8,transform=trans,rotation=90,va="top",ha="right")
+                        else:
+                            ax[0].text(dspace*2,dspace_label_pos,f"{hkl}",color="0.2",zorder=-1,fontsize=8,transform=trans,rotation=90,va="top",ha="right")
         plt.subplots_adjust(hspace=0.05)
         
         return ax
