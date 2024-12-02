@@ -508,3 +508,145 @@ class CrossSection:
                 "'Vol:0.10, EA_ZXZ:(77.21 45.31 268.14), x||(1.9669 0.7061 2.0107), "
                 "y||(-0.5429 2.8119 -0.4564), z||(-2.0607 -0.0669 2.0394)'"
             )
+        
+
+
+    @classmethod
+    def from_mtex(cls, csv_file, material, short_name=None):
+        """
+        Create a CrossSection from MTEX CSV orientation data.
+        
+        Parameters:
+        -----------
+        csv_file : str
+            Path to the CSV file containing orientation components
+        material : dict
+            Base material dictionary with existing properties
+        short_name : str, optional
+            Short name for the phase (e.g., 'γ' for gamma)
+        
+        Returns:
+        --------
+        CrossSection
+            CrossSection object with materials from CSV data
+        """
+        # Read the CSV file
+        try:
+            df = pd.read_csv(csv_file)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"CSV file not found: {csv_file}")
+        
+        # Handle column name variations
+        column_mapping = {
+            'alpha_mtex': ['alpha_mtex', 'alpha'],
+            'beta_mtex': ['beta_mtex', 'beta'],
+            'gamma_mtex': ['gamma_mtex', 'gamma'],
+            'volume_mtex': ['volume_mtex', 'volume']
+        }
+        
+        # Find the correct column names
+        def find_column(key_list):
+            for key in key_list:
+                if key in df.columns:
+                    return key
+            raise KeyError(f"Could not find column for {key_list}")
+        
+        # Map columns
+        try:
+            alpha_col = find_column(column_mapping['alpha_mtex'])
+            beta_col = find_column(column_mapping['beta_mtex'])
+            gamma_col = find_column(column_mapping['gamma_mtex'])
+            volume_col = find_column(column_mapping['volume_mtex'])
+        except KeyError:
+            # If specific orientation columns are not found, return a CrossSection with base material
+            return cls({short_name or material['name']: material}, name=short_name)
+        
+        # Normalize volumes to ensure they sum to 1 or less
+        total_volume = df[volume_col].sum()
+        if total_volume > 1:
+            print(f"Warning: Total volume exceeds 1.0. Normalizing...")
+            df[volume_col] = df[volume_col] / total_volume
+        
+        # Prepare materials dictionary
+        materials = {}
+        
+        # Estimate overall mosaicity for reference
+        overall_mosaicity = cls._estimate_mosaicity(df)
+        
+        # Process each row
+        for i, row in df.iterrows():
+            # Create a copy of the base material
+            updated_material = material.copy()
+            
+            # Extract Euler angles and volume
+            euler_angles = [row[alpha_col], row[beta_col], row[gamma_col]]
+            weight = row[volume_col]
+            
+            # Estimate mosaicity for this specific row (or use overall if not possible)
+            mos = cls._estimate_mosaicity(df.loc[[i]]) or overall_mosaicity
+            
+            # Create material name
+            material_name = f"{short_name or material['name']}{i+1}"
+            
+            # Update material dictionary
+            updated_material.update({
+                'mos': mos,
+                'dir1': cls._extract_vector(row, 'x'),
+                'dir2': cls._extract_vector(row, 'y'),
+                'dirtol': None,
+                'theta': euler_angles[1],
+                'phi': euler_angles[2],
+                'weight': weight
+            })
+            
+            # Add to materials dictionary
+            materials[material_name] = updated_material
+        
+        # Return CrossSection with materials
+        return cls(materials, name=short_name)
+
+    @classmethod
+    def _extract_vector(cls, row, axis):
+        """Extract vector components for a given axis."""
+        vector_cols = [
+            f'{axis}h_mtex', f'{axis}h', 
+            f'{axis}k_mtex', f'{axis}k', 
+            f'{axis}l_mtex', f'{axis}l'
+        ]
+        
+        # Try to find vector components
+        for col in vector_cols:
+            if col in row.index:
+                if pd.notna(row[col]):
+                    return [
+                        row.get(f'{axis}h_mtex', row.get(f'{axis}h', 1.0 if axis == 'x' else 0.0)),
+                        row.get(f'{axis}k_mtex', row.get(f'{axis}k', 0.0 if axis == 'y' else 1.0)),
+                        row.get(f'{axis}l_mtex', row.get(f'{axis}l', 0.0 if axis == 'z' else 1.0))
+                    ]
+        
+        # Default vector if no specific components found
+        default_vectors = {
+            'x': [1.0, 0.0, 0.0],
+            'y': [0.0, 1.0, 0.0],
+            'z': [0.0, 0.0, 1.0]
+        }
+        return default_vectors[axis]
+
+    @classmethod
+    def _estimate_mosaicity(cls, df):
+        """Estimate mosaicity from the dataframe."""
+        # If FWHM column exists, use it directly
+        fwhm_cols = ['fwhm', 'fwhm_mtex']
+        for col in fwhm_cols:
+            if col in df.columns:
+                return df[col].mean()
+        
+        # If no FWHM, try to estimate from volume spread
+        if 'volume' in df.columns:
+            volume_std = df['volume'].std()
+            base_mosaicity = 5.0  # degrees, adjust as needed
+            adjusted_mosaicity = base_mosaicity * (1 + volume_std * 10)
+            return min(adjusted_mosaicity, 50.0)
+        
+        # If no information available, return None
+        return None
