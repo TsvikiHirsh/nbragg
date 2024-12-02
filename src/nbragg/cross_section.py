@@ -594,8 +594,8 @@ class CrossSection:
                 'dir1': cls._extract_vector(row, 'x'),
                 'dir2': cls._extract_vector(row, 'y'),
                 'dirtol': None,
-                'theta': euler_angles[1],
-                'phi': euler_angles[2],
+                'theta': None,
+                'phi': None,
                 'weight': weight
             })
             
