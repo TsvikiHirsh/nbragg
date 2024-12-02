@@ -509,9 +509,12 @@ class CrossSection:
                 "y||(-0.5429 2.8119 -0.4564), z||(-2.0607 -0.0669 2.0394)'"
             )
         
-    def from_mtex(self, csv_file, material, short_name=None):
+
+
+    @classmethod
+    def from_mtex(cls, csv_file, material, short_name=None):
         """
-        Extract orientation and additional information from a MTEX CSV file.
+        Create a CrossSection from MTEX CSV orientation data.
         
         Parameters:
         -----------
@@ -524,8 +527,8 @@ class CrossSection:
         
         Returns:
         --------
-        dict
-            Updated material dictionary with additional orientation information
+        CrossSection
+            CrossSection object with materials from CSV data
         """
         # Read the CSV file
         try:
@@ -555,8 +558,8 @@ class CrossSection:
             gamma_col = find_column(column_mapping['gamma_mtex'])
             volume_col = find_column(column_mapping['volume_mtex'])
         except KeyError:
-            # If specific orientation columns are not found, return the material as-is
-            return {short_name or material['name']: material}
+            # If specific orientation columns are not found, return a CrossSection with base material
+            return cls({short_name or material['name']: material}, name=short_name)
         
         # Normalize volumes to ensure they sum to 1 or less
         total_volume = df[volume_col].sum()
@@ -564,46 +567,47 @@ class CrossSection:
             print(f"Warning: Total volume exceeds 1.0. Normalizing...")
             df[volume_col] = df[volume_col] / total_volume
         
-        # Use the last row for orientation information
-        last_row = df.iloc[-1]
+        # Prepare materials dictionary
+        materials = {}
         
-        # Extract Euler angles and volume
-        euler_angles = [last_row[alpha_col], last_row[beta_col], last_row[gamma_col]]
-        weight = last_row[volume_col]
+        # Estimate overall mosaicity for reference
+        overall_mosaicity = cls._estimate_mosaicity(df)
         
-        # Prepare the material dictionary
-        updated_material = material.copy()
+        # Process each row
+        for i, row in df.iterrows():
+            # Create a copy of the base material
+            updated_material = material.copy()
+            
+            # Extract Euler angles and volume
+            euler_angles = [row[alpha_col], row[beta_col], row[gamma_col]]
+            weight = row[volume_col]
+            
+            # Estimate mosaicity for this specific row (or use overall if not possible)
+            mos = cls._estimate_mosaicity(df.loc[[i]]) or overall_mosaicity
+            
+            # Create material name
+            material_name = f"{short_name or material['name']}{i+1}"
+            
+            # Update material dictionary
+            updated_material.update({
+                'mos': mos,
+                'dir1': cls._extract_vector(row, 'x'),
+                'dir2': cls._extract_vector(row, 'y'),
+                'dirtol': None,
+                'theta': euler_angles[1],
+                'phi': euler_angles[2],
+                'weight': weight
+            })
+            
+            # Add to materials dictionary
+            materials[material_name] = updated_material
         
-        # Add additional keys
-        updated_material.update({
-            'mos': self._estimate_mosaicity(df),
-            'dir1': self._extract_vector(last_row, 'x'),
-            'dir2': self._extract_vector(last_row, 'y'),
-            'dirtol': None,  # You may want to add logic to extract this if available
-            'theta': euler_angles[1],  # Beta angle as theta
-            'phi': euler_angles[2],    # Gamma angle as phi
-            'weight': weight
-        })
-        
-        # Use short name or material name as the key
-        return {short_name or material['name']: updated_material}
+        # Return CrossSection with materials
+        return cls(materials, name=short_name)
 
-    def _extract_vector(self, row, axis):
-        """
-        Extract vector components for a given axis.
-        
-        Parameters:
-        -----------
-        row : pandas.Series
-            DataFrame row containing vector components
-        axis : str
-            Axis to extract ('x', 'y', or 'z')
-        
-        Returns:
-        --------
-        list
-            Vector components [h, k, l]
-        """
+    @classmethod
+    def _extract_vector(cls, row, axis):
+        """Extract vector components for a given axis."""
         vector_cols = [
             f'{axis}h_mtex', f'{axis}h', 
             f'{axis}k_mtex', f'{axis}k', 
@@ -613,7 +617,6 @@ class CrossSection:
         # Try to find vector components
         for col in vector_cols:
             if col in row.index:
-                # If the column exists and has a non-None value
                 if pd.notna(row[col]):
                     return [
                         row.get(f'{axis}h_mtex', row.get(f'{axis}h', 1.0 if axis == 'x' else 0.0)),
@@ -629,25 +632,21 @@ class CrossSection:
         }
         return default_vectors[axis]
 
-    def _estimate_mosaicity(self, df):
-        """
-        Estimate mosaicity from the dataframe.
-        
-        Parameters:
-        -----------
-        df : pandas.DataFrame
-            Dataframe containing orientation components
-        
-        Returns:
-        --------
-        float or None
-            Estimated mosaicity value
-        """
+    @classmethod
+    def _estimate_mosaicity(cls, df):
+        """Estimate mosaicity from the dataframe."""
         # If FWHM column exists, use it directly
         fwhm_cols = ['fwhm', 'fwhm_mtex']
         for col in fwhm_cols:
             if col in df.columns:
                 return df[col].mean()
         
-        # If no FWHM, return None
+        # If no FWHM, try to estimate from volume spread
+        if 'volume' in df.columns:
+            volume_std = df['volume'].std()
+            base_mosaicity = 5.0  # degrees, adjust as needed
+            adjusted_mosaicity = base_mosaicity * (1 + volume_std * 10)
+            return min(adjusted_mosaicity, 50.0)
+        
+        # If no information available, return None
         return None
