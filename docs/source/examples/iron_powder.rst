@@ -26,7 +26,6 @@ First, load the transmission data and use the `.plot` method to plot and inspect
    :width: 80%
    :align: center
 
-
 The user can also inspect the data in a table format by calling:
 
 .. code-block:: python
@@ -47,11 +46,10 @@ The user can also inspect the data in a table format by calling:
 |  4 | 0.518680    | 0.148369 | 0.004451|
 +----+-------------+----------+---------+
 
-
 Cross-Section Configuration
 ---------------------------
 
-We'll use the NCrystal cross-section for alpha-iron and use the `.plot` method to visualize the cross section:
+We'll use the NCrystal cross-section for alpha-iron and use the `.plot` method to visualize the cross-section:
 
 .. code-block:: python
 
@@ -62,7 +60,6 @@ We'll use the NCrystal cross-section for alpha-iron and use the `.plot` method t
 .. image:: iron_powder_xs.png
    :width: 80%
    :align: center
-
 
 Model Creation and Fitting
 --------------------------
@@ -81,13 +78,36 @@ Create a transmission model with background and response variations:
     # Perform fitting
     result = model.fit(data)
 
-    # Display fit summary in Jupyter Notebook
-    result  # This will show an HTML table summarizing fit parameters.
+Visualization
+-------------
+
+Display the fit results using the command:
+
+.. code-block:: python
+
+    result.plot()
+
+.. image:: iron_powder_fit.png
+   :width: 80%
+   :align: center
+
+To visualize the instrumental response after fitting, use:
+
+.. code-block:: python
+
+    model.response.plot(params=result.params)
+
+.. image:: iron_powder_response.png
+   :width: 80%
+   :align: center
+
+
 
 Fit Summary
 -----------
 
 In a Jupyter Notebook, typing `result` displays the following fit summary as an interactive HTML table:
+
 
 Fit Result
 ==========
@@ -175,18 +195,6 @@ Correlations
 | α1             | b0             | -0.1071     |
 +----------------+----------------+-------------+
 
-Visualization
--------------
-
-Display the fit results using the command:
-
-.. code-block:: python
-
-    result.plot()
-
-.. image:: iron_powder_fit.png
-   :width: 80%
-   :align: center
 
 Key Observations
 ----------------
