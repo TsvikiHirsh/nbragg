@@ -2,40 +2,42 @@
 API Reference
 ===========
 
-This section provides detailed documentation for the nbragg package.
-
 Data Handling
 -------------
 
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   nbragg.Data
+.. automodule:: nbragg.data
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Cross-Section
 -------------
 
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   nbragg.CrossSection
+.. automodule:: nbragg.cross_section
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Transmission Model
 ------------------
 
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
+.. automodule:: nbragg.models
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
-   nbragg.TransmissionModel
+Utilities
+---------
 
-Utility Functions
------------------
+.. automodule:: nbragg.utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
+Response Functions
+------------------
 
-   nbragg.utils
+.. automodule:: nbragg.response
+   :members:
+   :undoc-members:
+   :show-inheritance:
