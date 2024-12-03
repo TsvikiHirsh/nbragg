@@ -6,7 +6,7 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'nres'
+project = 'nbragg'
 copyright = '2024, Tsviki Y. Hirsh'
 author = 'Tsviki Y. Hirsh'
 release = '0.1'
@@ -31,9 +31,8 @@ html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
 pygments_style = 'sphinx'
 autosummary_generate = True  # Generate autosummary pages
-autodoc_mock_imports = ['nres._integrate_xs']
 
 # Add your project source directory to sys.path
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../../src'))
+sys.path.insert(0, os.path.abspath('../..'))
