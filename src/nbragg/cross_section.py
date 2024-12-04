@@ -216,8 +216,8 @@ class CrossSection:
 
                 # Format the orientation vectors with NCrystal-specific notation
                 orientation = self.format_orientations(dir1, dir2, theta=theta, phi=phi)
-                dir1_str = f"@crys_hkl:{orientation['dir1'][0]:.4f},{orientation['dir1'][1]:.4f},{orientation['dir1'][2]:.4f}@lab:0,0,1"
-                dir2_str = f"@crys_hkl:{orientation['dir2'][0]:.4f},{orientation['dir2'][1]:.4f},{orientation['dir2'][2]:.4f}@lab:0,1,0"
+                dir1_str = f"@crys_hkl:{orientation['dir1'][0]:.8f},{orientation['dir1'][1]:.8f},{orientation['dir1'][2]:.8f}@lab:0,0,1"
+                dir2_str = f"@crys_hkl:{orientation['dir2'][0]:.8f},{orientation['dir2'][1]:.8f},{orientation['dir2'][2]:.8f}@lab:0,1,0"
 
                 params.append(f"mos={mos}deg")
                 params.append(f"dirtol={dirtol}deg")
