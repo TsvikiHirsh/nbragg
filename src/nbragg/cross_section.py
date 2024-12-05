@@ -75,6 +75,7 @@ class CrossSection:
                     'dirtol': spec.get('dirtol', None),
                     'theta': spec.get('theta', None),
                     'phi': spec.get('phi', None),
+                    'a': spec.get('a',None),
                     'weight': spec.get('weight', 1.0)
                 }
                 raw_total_weight += processed[name]['weight']
@@ -104,6 +105,7 @@ class CrossSection:
                     'dirtol': spec.get('dirtol', None),
                     'theta': spec.get('theta', None),
                     'phi': spec.get('phi', None),
+                    'a': spec.get('a',None),
                     'weight': weight
                 }
 
@@ -257,8 +259,8 @@ class CrossSection:
                 phase += f";{';'.join(params)}"
                 single_phase += f";{';'.join(params)}"
 
-            # Store the individual phase configuration in the dictionary
-            self.phases[name] = single_phase
+            # Store the individual phase configuration in the dictionary and replace materials with virtual mat
+            self.phases[name] = single_phase.replace("ncmat","nbragg")
 
             # Add to the list for the combined configuration string
             phase_parts.append(phase)
@@ -335,6 +337,7 @@ class CrossSection:
             mos_key = f"η{i}"
             theta_key = f"θ{i}"
             phi_key = f"ϕ{i}"
+            lat_key = f"a{i}"
             
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
                 spec['temp'] = kwargs[temp_key]
@@ -352,6 +355,8 @@ class CrossSection:
             if phase_name in kwargs and kwargs[phase_name] != spec["weight"]:
                 spec['weight'] = kwargs[phase_name]
                 updated = True
+            if lat_key in kwargs:
+                self._modify_lattice_params(spec["mat"],a=kwargs[lat_key])
 
         if updated:
             self._generate_cfg_string()
