@@ -110,7 +110,7 @@ class CrossSection:
                 }
 
                 # create virtual material
-                self._modify_lattice_params(processed[name]["mat"])
+                self._modify_lattice_params(processed[name]["mat"],a=processed[name]["a"])
         
         # Second pass: normalize weights while preserving relative proportions
         if raw_total_weight > 0:
@@ -324,6 +324,7 @@ class CrossSection:
                      θ1, θ2, ... for theta values of materials 1, 2, ...
                      ϕ1, ϕ2, ... for phi values of materials 1, 2, ...
                      temp1, temp2, ... for temperatures of materials 1, 2, ...
+                     a1, a2, ... for lattice parameter of materials 1, 2 ...
         """
         updated = False
         direction = None
@@ -357,6 +358,7 @@ class CrossSection:
                 updated = True
             if lat_key in kwargs:
                 self._modify_lattice_params(spec["mat"],a=kwargs[lat_key])
+                updated = True
 
         if updated:
             self._generate_cfg_string()
@@ -382,6 +384,12 @@ class CrossSection:
     def plot(self, **kwargs):
         """Plot the cross-section data."""
         import matplotlib.pyplot as plt
+        # update lattice parameters
+        for material in self.materials:
+            self._modify_lattice_params(self.materials[material]["mat"],
+                                        a=self.materials[material]["a"])
+        self._load_material_data()
+        self._populate_material_data()
         
         title = kwargs.pop("title", self.name)
         ylabel = kwargs.pop("ylabel", "$\sigma$ [barn]")
