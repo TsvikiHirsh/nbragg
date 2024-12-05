@@ -244,6 +244,9 @@ class CrossSection:
         # Generate the complete configuration string
         self.cfg_string = f"phases<{'&'.join(phase_parts)}>" if phase_parts else ""
 
+        # replace materials with virtual materials
+        self.cfg_string = self.cfg_string.replace("ncmat","nbragg")
+
 
     def _load_material_data(self):
         """Load the material data using NCrystal with the phase configuration."""
