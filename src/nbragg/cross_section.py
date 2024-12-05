@@ -106,11 +106,17 @@ class CrossSection:
                     'phi': spec.get('phi', None),
                     'weight': weight
                 }
+
+                # create virtual material
+                _data = nc.createTextData(processed[name]["mat"]).rawData
+                nc.registerInMemoryFileData(processed[name]["mat"].replace("ncmat","nbragg"),_data)
         
         # Second pass: normalize weights while preserving relative proportions
         if raw_total_weight > 0:
             for spec in processed.values():
                 spec['weight'] = (spec['weight'] / raw_total_weight)
+
+        
                 
         return processed
 
