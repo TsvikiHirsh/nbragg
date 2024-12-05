@@ -108,17 +108,39 @@ class CrossSection:
                 }
 
                 # create virtual material
-                _data = nc.createTextData(processed[name]["mat"]).rawData
-                nc.registerInMemoryFileData(processed[name]["mat"].replace("ncmat","nbragg"),_data)
+                self._modify_lattice_params(processed[name]["mat"])
         
         # Second pass: normalize weights while preserving relative proportions
         if raw_total_weight > 0:
             for spec in processed.values():
                 spec['weight'] = (spec['weight'] / raw_total_weight)
 
-        
-                
         return processed
+
+    def _modify_lattice_params(self, mat_name, a=None):
+        """Modify lattice parameters 
+        Currently only supporint cubic crystals
+        Args:
+            mat_name (str): The ncmat file name
+            a (float): lattice parameter [Aa]
+        """
+        textdata = nc.createTextData(mat_name).rawData
+
+        if a:
+            # replace lattice_parameter with new one
+            lines = textdata.split('\n@')
+            cell_start = next((i for i, line in enumerate(lines) if line.startswith('CELL')), -1)
+            cell_lines = lines[cell_start].split("\n")
+
+            cubic_start = next((i for i, line in enumerate(cell_lines) if line.count('cubic')), None)
+            cell_lines[cubic_start] = f"  cubic {a}"
+            cell_lines = "\n".join(cell_lines)
+            lines[cell_start] = cell_lines
+            textdata = "\n@".join(lines)
+
+        # register a new virtual material under the same name with .nbragg extension
+        nc.registerInMemoryFileData(mat_name.replace("ncmat","nbragg"),textdata)
+    
 
     def _resolve_material(self, material: str) -> str:
         """Resolve material specification to filename."""
@@ -246,6 +268,7 @@ class CrossSection:
 
         # replace materials with virtual materials
         self.cfg_string = self.cfg_string.replace("ncmat","nbragg")
+        
 
 
     def _load_material_data(self):
