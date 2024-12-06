@@ -449,13 +449,13 @@ class CrossSection:
             dir2 = self._rotate_vector(dir2, phi, theta)
 
         # Transform to NCrystal lab coordinates
-        dir1_lab = self._transform_lab_coordinates(dir1)
-        dir2_lab = self._transform_lab_coordinates(dir2)
+        # dir1_lab = self._transform_lab_coordinates(dir1)
+        # dir2_lab = self._transform_lab_coordinates(dir2)
 
         # Return vectors without any string formatting for easy processing
         return {
-            'dir1': dir1_lab,
-            'dir2': dir2_lab
+            'dir1': dir1,
+            'dir2': dir2
         }
 
 
