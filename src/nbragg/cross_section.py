@@ -118,6 +118,7 @@ class CrossSection:
                 spec['weight'] = (spec['weight'] / raw_total_weight)
 
         return processed
+        
 
     def _modify_lattice_params(self, material: dict, a: float=None):
         """Modify lattice parameters 
@@ -150,9 +151,10 @@ class CrossSection:
             # update the material
             material["a"] = a
 
+
         # register a new virtual material under the same name with .nbragg extension
         nc.registerInMemoryFileData(material["mat"].replace("ncmat","nbragg"),textdata)
-
+        # material["mat"] = material["mat"].replace("ncmat","nbragg")
     
 
     def _resolve_material(self, material: str) -> str:
@@ -272,6 +274,7 @@ class CrossSection:
 
             # Store the individual phase configuration in the dictionary and replace materials with virtual mat
             self.phases[name] = single_phase.replace("ncmat","nbragg")
+            
 
             # Add to the list for the combined configuration string
             phase_parts.append(phase)
@@ -295,8 +298,7 @@ class CrossSection:
             self.table = pd.DataFrame(index=self.lambda_grid)
             self.table.index.name = "wavelength"
             return
-        
-        mat = nc.load(self.cfg_string)
+
         xs = {}
 
 
@@ -317,7 +319,7 @@ class CrossSection:
         else:
             self.table.columns = ["total"]
         
-        self.atomic_density = mat.info.factor_macroscopic_xs
+        self.atomic_density = self.mat_data.info.factor_macroscopic_xs
 
     def _calculate_cross_section(self, wl, mat):
         """Calculate cross-section using NCrystal's xsect method."""
