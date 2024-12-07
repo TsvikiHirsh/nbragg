@@ -118,38 +118,48 @@ class CrossSection:
                 spec['weight'] = (spec['weight'] / raw_total_weight)
 
         return processed
+    
+    def _parse_cell_info(self, cell_dict: dict) -> str:
+        """
+        Parse crystal cell information and format it for specific output.
+        
+        Args:
+            cell_dict (dict): Dictionary containing cell parameters
+        
+        Returns:
+            str: Formatted cell information string
+        """
+        return f"  lengths {cell_dict['a']:.8f}  {cell_dict['b']:.8f}  {cell_dict['c']:.8f}  \n  angles {cell_dict['alpha']:.8f}  {cell_dict['beta']:.8f}  {cell_dict['gamma']:.8f}"
         
 
-    def _modify_lattice_params(self, material: dict, a: float=None):
+    def _modify_lattice_params(self, material: dict, a: float=None,
+                                                     b: float=None,
+                                                     c: float=None):
         """Modify lattice parameters 
-        Currently only supporint cubic crystals
+        
         Args:
             material (dict): a material dict
             a (float): lattice parameter [Aa]
+            b (float): lattice parameter [Aa]
+            c (float): lattice parameter [Aa]
         """
         textdata = nc.createTextData(material["mat"]).rawData
+
         # find existing "a"
         # only cubic materials are currently supported
         lines = textdata.split('\n@')
         cell_start = next((i for i, line in enumerate(lines) if line.startswith('CELL')), -1)
         cell_lines = lines[cell_start].split("\n")
 
-        cubic_start = next((i for i, line in enumerate(cell_lines) if line.count('cubic')), None)
+        structure = deepcopy(self.phases_data)
+        cell_lines = self._parse_cell_info()
 
-        if material["a"] == None:
-            try:
-                a = float(cell_lines[cubic_start].split()[1].replace("\n",""))
-                material["a"] = a
-            except:
-                return
-            
-        if material["a"] != a and a != None:
-            cell_lines[cubic_start] = f"  cubic {a}"
-            cell_lines = "\n".join(cell_lines)
-            lines[cell_start] = cell_lines
-            textdata = "\n@".join(lines)
-            # update the material
-            material["a"] = a
+        cell_lines[cubic_start] = f"  cubic {a}"
+        cell_lines = "\n".join(cell_lines)
+        lines[cell_start] = cell_lines
+        textdata = "\n@".join(lines)
+        # update the material
+        material["a"] = a
 
 
         # register a new virtual material under the same name with .nbragg extension
