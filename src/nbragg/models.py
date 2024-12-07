@@ -57,8 +57,11 @@ class TransmissionModel(lmfit.Model):
         """
         super().__init__(self.transmission, **kwargs)
 
-        self.cross_section = cross_section
-        self._materials = self.cross_section.materials.copy()
+        # make a new instance of the cross section
+        self.cross_section = CrossSection(cross_section,
+                                          name=cross_section.name,
+                                          total_weight=cross_section.total_weight)
+        self._materials = self.cross_section.materials
         self.tof_length = tof_length
 
         if params!=None:
