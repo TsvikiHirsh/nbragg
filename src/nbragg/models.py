@@ -140,8 +140,9 @@ class TransmissionModel(lmfit.Model):
         wl = NC.ekin2wl(E)
 
         if self.background != None:
-            bg = self.background.function(wl,**kwargs)
             k = kwargs.get("k",1.) # sample dependent background factor (k*B)
+            bg = self.background.function(wl,**kwargs)
+            
         else:
             bg = 0.
 

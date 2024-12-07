@@ -222,7 +222,7 @@ class Background:
                 self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
         elif kind == "sample_dependent":
             self.function = self.polynomial3_background
-            self.params.add(f"k", value=1., min=0., max= 10., vary=vary)
+            self.params.add(f"k", value=1., min=1., max= 10., vary=vary)
             for i in range(3):
                 self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
 
@@ -290,8 +290,10 @@ class Background:
         """
         ax = kwargs.pop("ax", plt.gca())
         ls = kwargs.pop("ls", "--")
+        
         color = kwargs.pop("color", "0.5")
         params = params if params else self.params
-        y = self.function(wl, **params.valuesdict())
+        k = params.get("k",1.) # sample dependent parameter if present
+        y = k*self.function(wl, **params.valuesdict())
         df = pd.Series(y, index=wl, name="Background")
         df.plot(ax=ax, color=color, ls=ls, **kwargs)
