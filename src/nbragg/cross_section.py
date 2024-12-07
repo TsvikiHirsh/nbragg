@@ -110,7 +110,7 @@ class CrossSection:
                 }
 
                 # create virtual material
-                self._modify_lattice_params(processed[name]["mat"],a=processed[name]["a"])
+                self._modify_lattice_params(processed[name])
         
         # Second pass: normalize weights while preserving relative proportions
         if raw_total_weight > 0:
@@ -119,29 +119,40 @@ class CrossSection:
 
         return processed
 
-    def _modify_lattice_params(self, mat_name, a=None):
+    def _modify_lattice_params(self, material: dict, a: float=None):
         """Modify lattice parameters 
         Currently only supporint cubic crystals
         Args:
-            mat_name (str): The ncmat file name
+            material (dict): a material dict
             a (float): lattice parameter [Aa]
         """
-        textdata = nc.createTextData(mat_name).rawData
+        textdata = nc.createTextData(material["mat"]).rawData
+        # find existing "a"
+        # only cubic materials are currently supported
+        lines = textdata.split('\n@')
+        cell_start = next((i for i, line in enumerate(lines) if line.startswith('CELL')), -1)
+        cell_lines = lines[cell_start].split("\n")
 
-        if a:
-            # replace lattice_parameter with new one
-            lines = textdata.split('\n@')
-            cell_start = next((i for i, line in enumerate(lines) if line.startswith('CELL')), -1)
-            cell_lines = lines[cell_start].split("\n")
+        cubic_start = next((i for i, line in enumerate(cell_lines) if line.count('cubic')), None)
 
-            cubic_start = next((i for i, line in enumerate(cell_lines) if line.count('cubic')), None)
+        if material["a"] == None:
+            try:
+                a = float(cell_lines[cubic_start].split()[1].replace("\n",""))
+                material["a"] = a
+            except:
+                return
+            
+        if material["a"] != a and a != None:
             cell_lines[cubic_start] = f"  cubic {a}"
             cell_lines = "\n".join(cell_lines)
             lines[cell_start] = cell_lines
             textdata = "\n@".join(lines)
+            # update the material
+            material["a"] = a
 
         # register a new virtual material under the same name with .nbragg extension
-        nc.registerInMemoryFileData(mat_name.replace("ncmat","nbragg"),textdata)
+        nc.registerInMemoryFileData(material["mat"].replace("ncmat","nbragg"),textdata)
+
     
 
     def _resolve_material(self, material: str) -> str:
@@ -357,7 +368,10 @@ class CrossSection:
                 spec['weight'] = kwargs[phase_name]
                 updated = True
             if lat_key in kwargs:
-                self._modify_lattice_params(spec["mat"],a=kwargs[lat_key])
+                self._modify_lattice_params(spec,a=kwargs[lat_key])
+                updated = True
+            elif "a" in kwargs: # for single phase materials
+                self._modify_lattice_params(spec,a=kwargs["a"])
                 updated = True
 
         if updated:
@@ -386,7 +400,7 @@ class CrossSection:
         import matplotlib.pyplot as plt
         # update lattice parameters
         for material in self.materials:
-            self._modify_lattice_params(self.materials[material]["mat"],
+            self._modify_lattice_params(self.materials[material],
                                         a=self.materials[material]["a"])
         self._load_material_data()
         self._populate_material_data()
