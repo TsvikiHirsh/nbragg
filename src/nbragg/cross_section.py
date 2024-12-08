@@ -509,7 +509,12 @@ class CrossSection:
                 "y||(-0.5429 2.8119 -0.4564), z||(-2.0607 -0.0669 2.0394)'"
             )
         
-
+    @classmethod
+    def _normalize_vector(cls, vector):
+        """Normalize a vector to unit length."""
+        vec = np.array(vector)
+        magnitude = np.linalg.norm(vec)
+        return (vec / magnitude).tolist() if magnitude > 0 else vec.tolist()
 
     @classmethod
     def from_mtex(cls, csv_file, material, short_name=None):
@@ -585,14 +590,21 @@ class CrossSection:
             # Estimate mosaicity for this specific row (or use overall if not possible)
             mos = cls._estimate_mosaicity(df.loc[[i]]) or overall_mosaicity
             
+            # MTEX to NCrystal coordinate transformation
+            # h normal becomes beam direction (z)
+            # k normal becomes x direction 
+            # l normal becomes y direction
+            dir1 = cls._normalize_vector([row.get('zh', 0), row.get('zk', 0), row.get('zl', 1)])
+            dir2 = cls._normalize_vector([row.get('yh', 0), row.get('yk', 1), row.get('yl', 0)])
+            
             # Create material name
             material_name = f"{short_name or material['name']}{i+1}"
             
             # Update material dictionary
             updated_material.update({
                 'mos': mos,
-                'dir1': cls._extract_vector(row, 'x'),
-                'dir2': cls._extract_vector(row, 'y'),
+                'dir1': dir1,
+                'dir2': dir2,
                 'dirtol': None,
                 'theta': None,
                 'phi': None,

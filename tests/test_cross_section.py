@@ -1,62 +1,54 @@
 import unittest
 import numpy as np
-from cross_section import CrossSection, grab_from_endf
+import nbragg
 
-class TestCrossSection(unittest.TestCase):
+class TestMTEXToNCrystalConversion(unittest.TestCase):
+    def setUp(self):
+        # Path to your test CSV file
+        self.csv_file = "tests/simple_components.csv"
+        self.base_material = nbragg.materials["Fe_sg225_Iron-gamma.ncmat"]
 
-    @classmethod
-    def setUpClass(cls):
-        """Set up a CrossSection object for Al-27 before any tests run."""
-        cls.cross_section_al27 = CrossSection(isotopes={"Al-27": 1.0})
 
-    def test_cross_section_al27(self):
-        """Test CrossSection values for Al-27 at specific energies."""
-        # Test at 1.0 MeV
-        energy_1 = np.array([1.0])
-        expected_xs_1 = self.cross_section_al27(energy_1)[0]
-        self.assertAlmostEqual(expected_xs_1, 2.36756, delta=1e-5, 
-                               msg=f"Expected cross section at 1.0 MeV: ~2.36756, but got {expected_xs_1}")
-
-        # Test at 0.1 MeV
-        energy_2 = np.array([0.1])
-        expected_xs_2 = self.cross_section_al27(energy_2)[0]
-        self.assertAlmostEqual(expected_xs_2, 5.30213310, delta=1e-4,
-                               msg=f"Expected cross section at 0.1 MeV: ~5.30213, but got {expected_xs_2}")
-
-        # Test at 10 MeV
-        energy_3 = np.array([10.0])
-        expected_xs_3 = self.cross_section_al27(energy_3)[0]
-        self.assertAlmostEqual(expected_xs_3, 1.723, delta=1e-3,
-                               msg=f"Expected cross section at 10 MeV: ~1.723, but got {expected_xs_3}")
-
-    def test_cross_section_combination(self):
-        """Test CrossSection values for a combination of isotopes."""
-        isotopes = {"Al-27": 0.7, "O-16": 0.3}
-        combined_cs = CrossSection(isotopes=isotopes)
+    def test_first_phase_orientation(self):
+        # Create CrossSection from MTEX data
+        cs = nbragg.CrossSection().from_mtex(self.csv_file, self.base_material, short_name="γ")
         
-        # Test at 1.0 MeV
-        energy_1 = np.array([1.0])
-        combined_xs_1 = combined_cs(energy_1)[0]
-        self.assertAlmostEqual(combined_xs_1, 4.09538, delta=1e-3,
-                               msg=f"Expected combined cross section at 1.0 MeV: ~4.09538, but got {combined_xs_1}")
+        # Check the first phase (γ1)
+        first_phase = cs.materials['γ1']
+        
+        # Normalized dir1 should be [0, 0, 1] (beam direction)
+        expected_dir1 = [0, 0, 1.0]
+        np.testing.assert_almost_equal(first_phase['dir1'], expected_dir1, decimal=7)
+        
+        # Normalized dir2 should be towards y-axis 
+        expected_dir2 = [0, 1.0, 0]
+        np.testing.assert_almost_equal(first_phase['dir2'], expected_dir2, decimal=7)
+        
+        # Check other properties
+        self.assertEqual(first_phase['temp'], 300.0)
+        self.assertEqual(first_phase['mos'], 10.0)
+        self.assertAlmostEqual(first_phase['weight'], 1/7, places=7)
 
-        # Test at 0.1 MeV
-        energy_2 = np.array([0.1])
-        combined_xs_2 = combined_cs(energy_2)[0]
-        self.assertAlmostEqual(combined_xs_2, 4.78696, delta=1e-3,
-                               msg=f"Expected combined cross section at 0.1 MeV: ~4.78696, but got {combined_xs_2}")
+    def test_phases_object_creation(self):
+        # Create CrossSection from MTEX data
+        cs = nbragg.CrossSection().from_mtex(self.csv_file, self.base_material, short_name="γ")
+        
+        # Check phases object creation
+        phases = cs.phases
+        
+        # Check number of phases
+        self.assertEqual(len(phases), 7)
+        
+        # Check first phase details
+        first_phase = phases['γ1']
+        
+        # Verify phase string format
+        expected_prefix = 'Fe_sg225_Iron-gamma.ncmat;temp=300K;mos=10.0deg;dirtol=1.0deg;'
+        self.assertTrue(first_phase.startswith(expected_prefix))
+        
+        # Check dir1 and dir2 parts
+        self.assertIn('dir1=@crys_hkl:0.00000000,0.00000000,1.00000000@lab:0,0,1', first_phase)
+        self.assertIn('dir2=@crys_hkl:0.00000000,1.00000000,0.00000000@lab:0,1,0', first_phase)
 
-        # Test at 10 MeV
-        energy_3 = np.array([10.0])
-        combined_xs_3 = combined_cs(energy_3)[0]
-        self.assertAlmostEqual(combined_xs_3, 1.600516, delta=1e-3,
-                               msg=f"Expected combined cross section at 10 MeV: ~1.600516, but got {combined_xs_3}")
-
-    def test_cross_section_non_existing_isotope(self):
-        """Test handling of non-existing isotopes."""
-        with self.assertRaises(Exception):
-            grab_from_endf("Xy-999")
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
