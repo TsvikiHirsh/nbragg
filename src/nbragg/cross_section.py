@@ -414,18 +414,7 @@ class CrossSection:
         rotated_vec = Ry @ (Rz @ np.array(vec, dtype=float))
         return rotated_vec.tolist()
 
-    def _transform_lab_coordinates(self, vector: List[float]) -> List[float]:
-        """Transform from HIPPO lab coordinates to NCrystal lab coordinates."""
-        # Ensure vector components are floats
-        vector = [float(x) if isinstance(x, str) else x for x in vector]
-        
-        transform = np.array([
-            [0, 0, 1],  # HIPPO's z becomes NCrystal's x
-            [0, 1, 0],  # HIPPO's y stays as NCrystal's y
-            [1, 0, 0]   # HIPPO's x becomes NCrystal's z
-        ])
-        
-        return (transform @ np.array(vector, dtype=float)).tolist()
+
 
     def format_orientations(self, dir1: Union[List[float], List[str]] = None, 
                             dir2: Union[List[float], List[str]] = None,
@@ -448,69 +437,15 @@ class CrossSection:
             dir1 = self._rotate_vector(dir1, phi, theta)
             dir2 = self._rotate_vector(dir2, phi, theta)
 
-        # Transform to NCrystal lab coordinates
-        # dir1_lab = self._transform_lab_coordinates(dir1)
-        # dir2_lab = self._transform_lab_coordinates(dir2)
-
         # Return vectors without any string formatting for easy processing
         return {
             'dir1': dir1,
             'dir2': dir2
         }
 
-
-    def from_maud(self, maud_line: str = None, dirtol: float = None, 
-                 mos: float = None, suffix: str = None) -> 'CrossSection':
-        """Parses a MAUD line and converts orientations from HIPPO to NCrystal convention."""
-        default_maud = (
-            "Vol:0.10, EA_ZXZ:(0.00 0.00 0.00), "
-            "x||(1.0000 0.0000 0.0000), y||(0.0000 1.0000 0.0000), z||(0.0000 0.0000 1.0000)"
-        )
-        
-        if maud_line is None:
-            maud_line = default_maud
-        
-        try:
-            # Extract volume fraction
-            parts = maud_line.split(',')
-            vol_str = parts[0].split(':')[1].strip()
-            vol = float(vol_str)
-            
-            # Extract vectors from MAUD line and convert to floats
-            x_vector = [float(x) for x in parts[2].split('||')[1].strip('()').split()]
-            y_vector = [float(x) for x in parts[3].split('||')[1].strip('()').split()]
-            
-            # Get orientation strings
-            orientations = self.format_orientations(
-                dir1=x_vector,  # HIPPO x (beam) direction
-                dir2=y_vector   # HIPPO y (vertical) direction
-            )
-            
-            # Update materials
-            updated_materials = {}
-            for name, spec in self.materials.items():
-                updated_spec = spec.copy()
-                updated_spec['dir1'] = orientations['dir1']
-                updated_spec['dir2'] = orientations['dir2']
-                if dirtol is not None:
-                    updated_spec['dirtol'] = float(dirtol)
-                if mos is not None:
-                    updated_spec['mos'] = float(mos)
-                
-                new_name = f"{name}{suffix}" if suffix else name
-                updated_materials[new_name] = updated_spec
-            
-            return CrossSection(updated_materials, total_weight=vol)
-            
-        except (IndexError, ValueError) as e:
-            raise ValueError(
-                f"Invalid MAUD line format: {str(e)}. Expected format example: "
-                "'Vol:0.10, EA_ZXZ:(77.21 45.31 268.14), x||(1.9669 0.7061 2.0107), "
-                "y||(-0.5429 2.8119 -0.4564), z||(-2.0607 -0.0669 2.0394)'"
-            )
         
     @classmethod
-    def _normalize_vector(cls, vector):
+    def _normalize_mtex_vector(cls, vector):
         """Normalize a vector to unit length."""
         vec = np.array(vector)
         magnitude = np.linalg.norm(vec)
@@ -569,7 +504,6 @@ class CrossSection:
         # Normalize volumes to ensure they sum to 1 or less
         total_volume = df[volume_col].sum()
         if total_volume > 1:
-            print(f"Warning: Total volume exceeds 1.0. Normalizing...")
             df[volume_col] = df[volume_col] / total_volume
         
         # Prepare materials dictionary
@@ -583,8 +517,7 @@ class CrossSection:
             # Create a copy of the base material
             updated_material = material.copy()
             
-            # Extract Euler angles and volume
-            euler_angles = [row[alpha_col], row[beta_col], row[gamma_col]]
+            # Extract weight
             weight = row[volume_col]
             
             # Estimate mosaicity for this specific row (or use overall if not possible)
@@ -594,8 +527,8 @@ class CrossSection:
             # h normal becomes beam direction (z)
             # k normal becomes x direction 
             # l normal becomes y direction
-            dir1 = cls._normalize_vector([row.get('zh', 0), row.get('zk', 0), row.get('zl', 1)])
-            dir2 = cls._normalize_vector([row.get('yh', 0), row.get('yk', 1), row.get('yl', 0)])
+            dir1 = cls._normalize_mtex_vector([row.get('zh', 0), row.get('zk', 0), row.get('zl', 1)])
+            dir2 = cls._normalize_mtex_vector([row.get('yh', 0), row.get('yk', 1), row.get('yl', 0)])
             
             # Create material name
             material_name = f"{short_name or material['name']}{i+1}"
@@ -616,33 +549,6 @@ class CrossSection:
         
         # Return CrossSection with materials
         return cls(materials, name=short_name)
-
-    @classmethod
-    def _extract_vector(cls, row, axis):
-        """Extract vector components for a given axis."""
-        vector_cols = [
-            f'{axis}h_mtex', f'{axis}h', 
-            f'{axis}k_mtex', f'{axis}k', 
-            f'{axis}l_mtex', f'{axis}l'
-        ]
-        
-        # Try to find vector components
-        for col in vector_cols:
-            if col in row.index:
-                if pd.notna(row[col]):
-                    return [
-                        row.get(f'{axis}h_mtex', row.get(f'{axis}h', 1.0 if axis == 'x' else 0.0)),
-                        row.get(f'{axis}k_mtex', row.get(f'{axis}k', 0.0 if axis == 'y' else 1.0)),
-                        row.get(f'{axis}l_mtex', row.get(f'{axis}l', 0.0 if axis == 'z' else 1.0))
-                    ]
-        
-        # Default vector if no specific components found
-        default_vectors = {
-            'x': [1.0, 0.0, 0.0],
-            'y': [0.0, 1.0, 0.0],
-            'z': [0.0, 0.0, 1.0]
-        }
-        return default_vectors[axis]
 
     @classmethod
     def _estimate_mosaicity(cls, df):
