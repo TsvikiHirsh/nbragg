@@ -58,8 +58,8 @@ This folder contains MATLAB scripts for processing diffraction and pole figure d
    - Adjust parameters as needed for your specific material
 
 4. **Generate CSV for nbragg**
-   - The scripts prepare data that can be used with `nbragg.CrossSection.from_mtex()`
    - Export extracted components to a CSV format for further analysis
+   - The CSV files can be used with `nbragg.CrossSection.from_mtex()`
 
 ## MTEX Preferences
 These scripts use specific MTEX preferences:

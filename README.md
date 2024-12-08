@@ -2,15 +2,15 @@
 # nbragg
 
 [![Documentation Status](https://readthedocs.org/projects/nbragg/badge/?version=latest)](https://nbragg.readthedocs.io/en/latest/?badge=latest)
-[![PyPI version][pypi-version]][pypi-link]
-[![PyPI platforms][pypi-platforms]][pypi-link]
+<!-- [![PyPI version][pypi-version]][pypi-link]
+[![PyPI platforms][pypi-platforms]][pypi-link] -->
 
 nbragg is a package designed for fitting neutron Bragg edge data using NCrystal cross-sections. This tool provides a straightforward way to analyze neutron transmission through polycrystalline materials, leveraging Bragg edges to extract information on material structure and composition.
 
 ## Features
 
 - **Flexible Cross-Section Calculations**: Interfaces with NCrystal to fetch cross-sections for crystalline materials.
-- **Built-In Tools for Response and Background Functions**: Includes predefined models for instrument response (e.g., Gaussian, exponential) and background components (polynomial functions).
+- **Built-In Tools for Response and Background Functions**: Includes predefined models for instrument response (e.g., Jorgensen, square) and background components (polynomial functions).
 - **LMFit Integration**: Allows flexible, nonlinear fitting of experimental data using the powerful lmfit library.
 - **Pythonic API**: Simple-to-use, yet flexible enough for custom modeling.
 - **Plotting Utilities**: Provides ready-to-use plotting functions for easy visualization of results.
