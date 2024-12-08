@@ -387,7 +387,9 @@ class CrossSection:
             mos_key = f"η{i}"
             theta_key = f"θ{i}"
             phi_key = f"ϕ{i}"
-            lat_key = f"a{i}"
+            lata_key = f"a{i}"
+            latb_key = f"b{i}"
+            latc_key = f"c{i}"
             
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
                 spec['temp'] = kwargs[temp_key]
@@ -405,11 +407,11 @@ class CrossSection:
             if phase_name in kwargs and kwargs[phase_name] != spec["weight"]:
                 spec['weight'] = kwargs[phase_name]
                 updated = True
-            if lat_key in kwargs:
-                self._update_lattice_parameters(spec,a=kwargs[lat_key])
+            if lata_key in kwargs:
+                self._update_lattice_parameters(name,a=kwargs[lata_key],b=kwargs[latb_key],c=kwargs[latc_key])
                 updated = True
             elif "a" in kwargs: # for single phase materials
-                self._update_lattice_parameters(spec,a=kwargs["a"])
+                self._update_lattice_parameters(name,a=kwargs["a"],b=kwargs["b"],c=kwargs["c"])
                 updated = True
 
         if updated:
