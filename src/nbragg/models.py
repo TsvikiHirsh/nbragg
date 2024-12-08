@@ -195,7 +195,7 @@ class TransmissionModel(lmfit.Model):
         """
         for i, material in enumerate(self._materials):
             # update materials with new lattice parameter
-            self.cross_section._modify_lattice_params(self._materials[material])
+            self.cross_section._update_lattice_parameters(self._materials[material])
         
         # self.cross_section.set_wavelength_range(wlmin,wlmax)
         if isinstance(data,pandas.DataFrame):
@@ -466,14 +466,38 @@ class TransmissionModel(lmfit.Model):
         params = lmfit.Parameters()
         for i, material in enumerate(self._materials):
             # update materials with new lattice parameter
-            self.cross_section._modify_lattice_params(self._materials[material])
-            a = self._materials[material].get("a", None)
-            if a: 
-                param_name = f"a{i}" if len(self._materials)>1 else "a"
-                if param_name in self.params:
-                    self.params[param_name].vary = vary
+            info = self.cross_section.phases_data[material].info.structure_info
+            a, b, c = info["a"], info["b"], info["c"]
+
+            param_a_name = f"a{i}" if len(self._materials)>1 else "a"
+            param_b_name = f"b{i}" if len(self._materials)>1 else "b"
+            param_c_name = f"c{i}" if len(self._materials)>1 else "c"
+
+            if a==b and b==c:
+                if param_a_name in self.params:
+                    self.params[param_a_name].vary = vary
                 else:
-                    params.add(param_name, value=a, min=0, max=10, vary=vary)
+                    params.add(param_a_name, value=a, min=0, max=10, vary=vary)
+                    params.add(param_b_name, value=a, min=0, max=10, vary=False, expr="b=a")
+                    params.add(param_c_name, value=a, min=0, max=10, vary=False, expr="c=a")
+            elif a==b and c!=b:
+                if param_a_name in self.params:
+                    self.params[param_a_name].vary = vary
+                    self.params[param_c_name].vary = vary
+                else:
+                    params.add(param_a_name, value=a, min=0, max=10, vary=vary)
+                    params.add(param_b_name, value=a, min=0, max=10, vary=False, expr="b=a")
+                    params.add(param_c_name, value=c, min=0, max=10, vary=vary)
+            elif a!=b and c!=b:
+                if param_a_name in self.params:
+                    self.params[param_a_name].vary = vary
+                    self.params[param_b_name].vary = vary
+                    self.params[param_c_name].vary = vary
+                else:
+                    params.add(param_a_name, value=a, min=0, max=10, vary=vary)
+                    params.add(param_b_name, value=b, min=0, max=10, vary=vary)
+                    params.add(param_c_name, value=c, min=0, max=10, vary=vary)
+                    
         return params
 
     def set_cross_section(self, xs: 'CrossSection', inplace: bool = True) -> 'TransmissionModel':

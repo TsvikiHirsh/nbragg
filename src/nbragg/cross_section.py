@@ -50,6 +50,9 @@ class CrossSection:
 
         # Process the combined materials dictionary
         self.materials = self._process_materials(combined_materials)
+
+        # create virtual material
+        self._create_virtual_materials()
         
         # Initialize weights
         self.weights = pd.Series(dtype=float)
@@ -76,6 +79,8 @@ class CrossSection:
                     'theta': spec.get('theta', None),
                     'phi': spec.get('phi', None),
                     'a': spec.get('a',None),
+                    'b': spec.get('b',None),
+                    'c': spec.get('c',None),
                     'weight': spec.get('weight', 1.0)
                 }
                 raw_total_weight += processed[name]['weight']
@@ -106,11 +111,12 @@ class CrossSection:
                     'theta': spec.get('theta', None),
                     'phi': spec.get('phi', None),
                     'a': spec.get('a',None),
+                    'b': spec.get('b',None),
+                    'c': spec.get('c',None),
                     'weight': weight
                 }
 
-                # create virtual material
-                self._modify_lattice_params(processed[name])
+
         
         # Second pass: normalize weights while preserving relative proportions
         if raw_total_weight > 0:
@@ -119,53 +125,73 @@ class CrossSection:
 
         return processed
     
-    def _parse_cell_info(self, cell_dict: dict) -> str:
+    def _create_virtual_materials(self):
+        """
+        Process NCMAT file by creating a template with full @CELL section replacement
+        
+        Args:
+            input_text (str): Contents of the NCMAT file
+        """
+        # Save entire input text
+        self.textdata = {}
+        for material in self.materials:
+            self.textdata[material] = nc.createTextData(self.materials[material]["mat"]).rawData
+        
+            # Split input into lines
+            lines = self.textdata[material].split('\n')
+        
+            # Find @CELL section
+            cell_start = None
+            cell_end = None
+            for i, line in enumerate(lines):
+                if line.strip().startswith('@CELL'):
+                    cell_start = i
+                elif cell_start is not None and line.strip().startswith('@'):
+                    cell_end = i
+                    break
+
+            # Create list of lines before @CELL
+            pre_cell_lines = lines[:cell_start + 1]
+            
+            # Create list of lines after @CELL section
+            post_cell_lines = lines[cell_end:] if cell_end else []
+            
+            # Create template with single f-string placeholder
+            self.datatemplate = '\n'.join(pre_cell_lines + ['**cell_section**'] + post_cell_lines)
+
+            if hasattr(self,"phases_data"):
+                self._update_lattice_parameters(material)
+            else:
+                # save original rawdata in nbragg file name
+                nc.registerInMemoryFileData(self.materials[material]["mat"].replace("ncmat","nbragg"),self.textdata[material])
+
+
+    def _update_lattice_parameters(self, material: str, **kwargs):
+        """Update the virtual material with lattice parametrs
+        """
+        updated_cells = self._cell_info(material)
+
+        self.textdata[material] = self.datatemplate.replace("**cell_section**",updated_cells)
+
+        # save original rawdata in nbragg file name
+        nc.registerInMemoryFileData(self.materials[material]["mat"].replace("ncmat","nbragg"),self.textdata[material])
+        
+    
+    def _cell_info(self, material: str, **kwargs) -> str:
         """
         Parse crystal cell information and format it for specific output.
         
         Args:
-            cell_dict (dict): Dictionary containing cell parameters
+            material (str): material name
+            kwargs (optional): updates to a,b and c parameters in units of Aa
         
         Returns:
             str: Formatted cell information string
         """
+        cell_dict = self.phases_data[material].info.structure_info
+        cell_dict.update(**kwargs)
         return f"  lengths {cell_dict['a']:.8f}  {cell_dict['b']:.8f}  {cell_dict['c']:.8f}  \n  angles {cell_dict['alpha']:.8f}  {cell_dict['beta']:.8f}  {cell_dict['gamma']:.8f}"
         
-
-    def _modify_lattice_params(self, material: dict, a: float=None,
-                                                     b: float=None,
-                                                     c: float=None):
-        """Modify lattice parameters 
-        
-        Args:
-            material (dict): a material dict
-            a (float): lattice parameter [Aa]
-            b (float): lattice parameter [Aa]
-            c (float): lattice parameter [Aa]
-        """
-        textdata = nc.createTextData(material["mat"]).rawData
-
-        # find existing "a"
-        # only cubic materials are currently supported
-        lines = textdata.split('\n@')
-        cell_start = next((i for i, line in enumerate(lines) if line.startswith('CELL')), -1)
-        cell_lines = lines[cell_start].split("\n")
-
-        structure = deepcopy(self.phases_data)
-        cell_lines = self._parse_cell_info()
-
-        cell_lines[cubic_start] = f"  cubic {a}"
-        cell_lines = "\n".join(cell_lines)
-        lines[cell_start] = cell_lines
-        textdata = "\n@".join(lines)
-        # update the material
-        material["a"] = a
-
-
-        # register a new virtual material under the same name with .nbragg extension
-        nc.registerInMemoryFileData(material["mat"].replace("ncmat","nbragg"),textdata)
-        # material["mat"] = material["mat"].replace("ncmat","nbragg")
-    
 
     def _resolve_material(self, material: str) -> str:
         """Resolve material specification to filename."""
@@ -380,10 +406,10 @@ class CrossSection:
                 spec['weight'] = kwargs[phase_name]
                 updated = True
             if lat_key in kwargs:
-                self._modify_lattice_params(spec,a=kwargs[lat_key])
+                self._update_lattice_parameters(spec,a=kwargs[lat_key])
                 updated = True
             elif "a" in kwargs: # for single phase materials
-                self._modify_lattice_params(spec,a=kwargs["a"])
+                self._update_lattice_parameters(spec,a=kwargs["a"])
                 updated = True
 
         if updated:
@@ -412,8 +438,10 @@ class CrossSection:
         import matplotlib.pyplot as plt
         # update lattice parameters
         for material in self.materials:
-            self._modify_lattice_params(self.materials[material],
-                                        a=self.materials[material]["a"])
+            self._update_lattice_parameters(self.materials[material],
+                                        a=self.materials[material]["a"],
+                                        b=self.materials[material]["b"],
+                                        c=self.materials[material]["c"])
         self._load_material_data()
         self._populate_material_data()
         
