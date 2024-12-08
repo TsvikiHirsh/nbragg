@@ -163,6 +163,10 @@ class CrossSection:
         result = CrossSection(new_materials, total_weight=scalar)
         return result
     
+    def __rmul__(self, scalar) -> 'CrossSection':
+        # For commutative multiplication (scalar * material)
+        return self.__mul__(scalar)
+    
     def _generate_cfg_string(self):
         """
         Generate configuration strings using NCrystal phase notation.
