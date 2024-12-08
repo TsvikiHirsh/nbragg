@@ -16,7 +16,7 @@ class Response:
         Initializes the Response object with specified parameters.
 
         Parameters:
-        kind (str): The type of response function to use. Options are 'expo_gauss' or 'none'.
+        kind (str): The type of response function to use. Options are 'jorgensen', 'square', 'square_jorgensen' or 'none'.
         vary (bool): If True, the parameters can vary during fitting. Default is False.
         """
         self.wlstep = wlstep
@@ -35,7 +35,14 @@ class Response:
         elif kind == "square":
             self.function = self.square_response
             self.params = lmfit.Parameters()
-            self.params.add(f"width", value=1, min=tstep*1e6, max= 5000, vary=vary)
+            self.params.add(f"width", value=tstep*1e6, min=tstep*1e6, max= 5000, vary=vary)
+
+        elif kind == "square_jorgensen":
+            self.function = self.square_jorgensen_response
+            self.params = lmfit.Parameters()
+            self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"width", value=tstep*1e6, min=tstep*1e6, max= 5000, vary=vary)
 
         elif kind == "none":
             self.function = self.empty_response
@@ -177,6 +184,92 @@ class Response:
             
             # Replace any NaN values with 0
             return np.nan_to_num(profile, 0)
+        
+    def square_jorgensen_response(self, α1=3.67, β1=3, σ=None, width=None, **kwargs):
+        """
+        Calculates the Jorgensen peak profile function with an additional square width parameter.
+        
+        Parameters:
+        -----------
+        α1 : float or list/tuple
+            Alpha parameter [α1₁, α1₂] or single value α1₁ (α1₂ defaults to 0)
+        β1 : float or list/tuple
+            Beta parameter [β1₁, β1₂] or single value β1₁ (β1₂ defaults to 0)
+        σ : list/tuple, optional
+            Sigma parameters [σ₁, σ₂, σ₃], defaults to [0, 0, 0]
+        width : float, optional
+            Square width to broaden the response [usec]
+        
+        Returns:
+        --------
+        numpy.ndarray
+            Normalized profile values with NaN values replaced by 0
+        """
+        # Handle input parameters
+        if σ is None:
+            σ = [0, 0, 0]
+        
+        # Convert single values to lists with 0 as second element
+        if not isinstance(α1, (list, tuple)):
+            α1 = [α1, 0]
+        if not isinstance(β1, (list, tuple)):
+            β1 = [β1, 0]
+        
+        # Generate x values
+        x = self.Δλ
+        
+        # Calculate parameters using d-spacing of 1.0 as in original code
+        d = 1.0
+        α1_calc = α1[0] + α1[1]/d
+        β1_calc = β1[0] + β1[1]/d**4
+        σ_calc = np.sqrt(σ[0]**2 + (σ[1]*d)**2 + (σ[2]*d*d)**2)
+        
+        # Constants
+        sqrt2 = np.sqrt(2)
+        σ2 = σ_calc * σ_calc
+        
+        # Scaling factor
+        scale = α1_calc * β1_calc / 2 / (α1_calc + β1_calc)
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            
+            # Calculate intermediate terms
+            u = α1_calc/2 * (α1_calc*σ2 + 2*x)
+            v = β1_calc/2 * (β1_calc*σ2 - 2*x)
+            y = (α1_calc*σ2 + x)/(sqrt2*σ_calc)
+            z = (β1_calc*σ2 - x)/(sqrt2*σ_calc)
+            
+            # Calculate profile with special handling for numerical stability
+            term1 = np.exp(u) * erfc(y)
+            term2 = np.exp(v) * erfc(z)
+            
+            # Zero out terms where erfc is zero to avoid NaN
+            term1[erfc(y) == 0] = 0
+            term2[erfc(z) == 0] = 0
+            
+            # Calculate profile
+            profile = scale * (term1 + term2)
+            
+            # Apply square width broadening if specified
+            if width is not None:
+                # Convert width to seconds
+                width_sec = width * 1e-6
+                
+                # Create square broadening function
+                loc = -0.5 * width_sec
+                square_broadening = uniform.pdf(self.tgrid, loc=loc, scale=width_sec)
+                
+                # Convolve Jorgensen profile with square broadening
+                from scipy.ndimage import convolve1d
+                profile = convolve1d(profile, square_broadening, 0)
+            
+            # Normalize
+            profile = profile / np.sum(profile)
+            
+            # Replace any NaN values with 0
+            return np.nan_to_num(profile, 0)
+    
 
     def plot(self, params=None, **kwargs):
         """
