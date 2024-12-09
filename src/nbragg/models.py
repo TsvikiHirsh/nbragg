@@ -167,7 +167,9 @@ class TransmissionModel(lmfit.Model):
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + k*bg
         return T
 
-    def fit(self, data, params=None, wlmin=1., wlmax=6., **kwargs):
+    def fit(self, data, params=None, wlmin=1., wlmax=6., 
+                xtol: float = None, ftol: float = None, gtol: float = None,
+                **kwargs):
         """
         Fit the model to the data.
 
@@ -178,44 +180,78 @@ class TransmissionModel(lmfit.Model):
         params : lmfit.Parameters, optional
             Initial parameter values for the fit. If None, the current model parameters will be used.
         wlmin : float, optional
-            The minimum wavelength for fitting, by default 0.5e6.
+            The minimum wavelength for fitting, by default 1.0.
         wlmax : float, optional
-            The maximum wavelength for fitting, by default 20.e6.
+            The maximum wavelength for fitting, by default 6.0.
+        xtol : float, optional
+            Relative tolerance for changes in the parameters. The optimizer stops when the relative
+            changes in parameter values are smaller than `xtol`. Default is None.
+        ftol : float, optional
+            Relative tolerance for the cost function (e.g., sum of squared residuals). The optimizer
+            stops when the relative change in the cost function is smaller than `ftol`. Default is None.
+        gtol : float, optional
+            Tolerance for the gradient of the cost function with respect to the parameters. The optimizer
+            stops when the gradient norm falls below `gtol`. Default is None.
         kwargs : dict, optional
-            Additional arguments passed to the lmfit.Model.fit method.
+            Additional arguments passed to the `lmfit.Model.fit` method.
 
         Returns
         -------
         lmfit.model.ModelResult
-            The result of the fit.
+            The result of the fit, containing optimized parameters and fitting statistics.
 
         Notes
         -----
-        This function applies wavelength filtering to the input data based on `wlmin` and `wlmax`,
+        - This function applies wavelength filtering to the input data based on `wlmin` and `wlmax`,
         then fits the transmission model to the filtered data.
+        - The `xtol`, `ftol`, and `gtol` parameters are passed to the underlying optimization method 
+        in `lmfit.Model.fit` via the `fit_kws` argument.
+        If not specified, the default tolerances for the optimizer are used.
         """
-        for i, material in enumerate(self._materials):
-            # update materials with new lattice parameter
-            self.cross_section._update_lattice_parameters(material)
-        
-        # self.cross_section.set_wavelength_range(wlmin,wlmax)
-        if isinstance(data,pandas.DataFrame):
-            data = data.query(f"{wlmin}<wavelength<{wlmax}")
-            weights = kwargs.get("weights",1./data["err"].values)
-            fit_result = super().fit(data["trans"].values, params=params or self.params, weights=weights, wl=data["wavelength"].values, **kwargs)
-        elif isinstance(data,Data):
-            data = data.table.query(f"{wlmin}<wavelength<{wlmax}")
-            weights = kwargs.get("weights",1./data["err"].values)
-            fit_result = super().fit(data["trans"].values, params=params or self.params, weights=weights, wl=data["wavelength"].values, **kwargs)
+        # Update fit_kws to include xtol, ftol, gtol
+        fit_kws = kwargs.pop("fit_kws", {})  # Extract existing fit_kws or initialize an empty dict
+        fit_kws.setdefault("xtol", xtol) if xtol is not None else None
+        fit_kws.setdefault("ftol", ftol) if ftol is not None else None
+        fit_kws.setdefault("gtol", gtol) if gtol is not None else None
+
+        # Pass fit_kws back into kwargs
+        kwargs["fit_kws"] = fit_kws
+
+        # Apply wavelength filtering and weights
+        if isinstance(data, pandas.DataFrame):
+            data = data.query(f"{wlmin} < wavelength < {wlmax}")
+            weights = kwargs.get("weights", 1. / data["err"].values)
+            fit_result = super().fit(
+                data["trans"].values,
+                params=params or self.params,
+                weights=weights,
+                wl=data["wavelength"].values,
+                **kwargs
+            )
+
+        elif isinstance(data, Data):
+            data = data.table.query(f"{wlmin} < wavelength < {wlmax}")
+            weights = kwargs.get("weights", 1. / data["err"].values)
+            fit_result = super().fit(
+                data["trans"].values,
+                params=params or self.params,
+                weights=weights,
+                wl=data["wavelength"].values,
+                **kwargs
+            )
+
         else:
             # Perform the fit using the parent class's fit method
-            fit_result = super().fit(data, params=params or self.params, **kwargs)
-        self.fit_result = fit_result
-        # switch method names
-        # fit_result.plot_results = deepcopy(fit_result.plot)
-        fit_result.plot = self.plot
+            fit_result = super().fit(
+                data,
+                params=params or self.params,
+                **kwargs
+            )
 
-        # return TransmissionModelResult(fit_result, params or self.params)
+        # Store and modify fit results
+        self.fit_result = fit_result
+        fit_result.plot = self.plot  # Modify the plot method
+
         return fit_result
     
     def plot(self, plot_bg: bool = True, 
