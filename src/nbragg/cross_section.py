@@ -169,7 +169,7 @@ class CrossSection:
     def _update_lattice_parameters(self, material: str, **kwargs):
         """Update the virtual material with lattice parametrs
         """
-        updated_cells = self._cell_info(material)
+        updated_cells = self._cell_info(material,**kwargs)
 
         self.textdata[material] = self.datatemplate.replace("**cell_section**",updated_cells)
 
@@ -190,7 +190,7 @@ class CrossSection:
         """
         cell_dict = self.phases_data[material].info.structure_info
         cell_dict.update(**kwargs)
-        return f"  lengths {cell_dict['a']:.8f}  {cell_dict['b']:.8f}  {cell_dict['c']:.8f}  \n  angles {cell_dict['alpha']:.8f}  {cell_dict['beta']:.8f}  {cell_dict['gamma']:.8f}"
+        return f"  lengths {cell_dict['a']:.4f}  {cell_dict['b']:.4f}  {cell_dict['c']:.4f}  \n  angles {cell_dict['alpha']:.4f}  {cell_dict['beta']:.4f}  {cell_dict['gamma']:.4f}"
         
 
     def _resolve_material(self, material: str) -> str:
