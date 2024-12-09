@@ -151,6 +151,7 @@ class TransmissionModel(lmfit.Model):
             bg = self.background.function(wl,**kwargs)
             k = kwargs.get("k",1.) # sample dependent background factor (k*B)
         else:
+            k = 1.
             bg = 0.
 
         n = self.atomic_density
