@@ -306,7 +306,7 @@ class TransmissionModel(lmfit.Model):
         ax[1].plot(wavelength,residual,color=color)
         ax[1].set_ylabel("Residuals [1σ]")
         ax[1].set_xlabel("λ [Å]")
-        if plot_bg and self.background.params:
+        if plot_bg and hasattr(self,"background"):
             self.background.plot(wl=wavelength,ax=ax[0],params=self.fit_result.params,**kwargs)
             ax[0].legend(["Best fit","Background","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
         else:
