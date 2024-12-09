@@ -147,6 +147,7 @@ class TransmissionModel(lmfit.Model):
             bg = self.background.function(wl,**kwargs)
             
         else:
+            k = 1.
             bg = 0.
 
         n = self.atomic_density
