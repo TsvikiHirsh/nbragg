@@ -444,10 +444,7 @@ class CrossSection:
         import matplotlib.pyplot as plt
         # update lattice parameters
         for material in self.materials:
-            self._update_lattice_parameters(self.materials[material],
-                                        a=self.materials[material]["a"],
-                                        b=self.materials[material]["b"],
-                                        c=self.materials[material]["c"])
+            self._update_lattice_parameters(material)
         self._load_material_data()
         self._populate_material_data()
         
