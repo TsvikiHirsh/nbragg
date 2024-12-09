@@ -181,7 +181,7 @@ class TestMTEXToNCrystalConversion(unittest.TestCase):
         first_phase = phases['γ1']
         
         # Verify phase string format
-        expected_prefix = 'Fe_sg225_Iron-gamma.ncmat;temp=300K;mos=10.0deg;dirtol=1.0deg;'
+        expected_prefix = 'Fe_sg225_Iron-gamma.nbragg;temp=300K;mos=10.0deg;dirtol=1.0deg;'
         self.assertTrue(first_phase.startswith(expected_prefix))
         
         # Check dir1 and dir2 parts
