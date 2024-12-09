@@ -158,7 +158,7 @@ class TransmissionModel(lmfit.Model):
         n = self.atomic_density
 
         # Transmission function
-        print(kwargs)
+
         xs = self.cross_section(wl,**kwargs)
 
         if self.response != None:
@@ -168,7 +168,8 @@ class TransmissionModel(lmfit.Model):
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + k*bg
         return T
 
-    def fit(self, data, params=None, wlmin=1., wlmax=6., 
+    def fit(self, data, params=None, wlmin:float = 1., wlmax:float = 6., 
+                method:str ="leastsq",
                 xtol: float = None, ftol: float = None, gtol: float = None,
                 **kwargs):
         """
@@ -184,6 +185,8 @@ class TransmissionModel(lmfit.Model):
             The minimum wavelength for fitting, by default 1.0.
         wlmax : float, optional
             The maximum wavelength for fitting, by default 6.0.
+        method : str, optional
+            the method name, default is leastsq. For lattice variation the recommended fit method is "nelder", other valid options are "brute","cobyla","powell" or others specified in lmfit.minimize docstring
         xtol : float, optional
             Relative tolerance for changes in the parameters. The optimizer stops when the relative
             changes in parameter values are smaller than `xtol`. Default is None.
@@ -227,6 +230,7 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
+                method = method,
                 **kwargs
             )
 
@@ -238,6 +242,7 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
+                method = method,
                 **kwargs
             )
 
@@ -246,6 +251,7 @@ class TransmissionModel(lmfit.Model):
             fit_result = super().fit(
                 data,
                 params=params or self.params,
+                method = method,
                 **kwargs
             )
 
