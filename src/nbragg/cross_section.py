@@ -50,6 +50,7 @@ class CrossSection:
 
         # Process the combined materials dictionary
         self.materials = self._process_materials(combined_materials)
+        self.extinction = {}
 
         # create virtual material
         self._create_virtual_materials()
@@ -164,7 +165,7 @@ class CrossSection:
             ext_end = len(lines) if ext_end==None else ext_end
 
             # in case the @CELL section appears first
-            if cell_start>ext_start:
+            if cell_start<ext_start:
 
                 # Create list of lines before @CELL
                 pre_cell_lines = lines[:cell_start + 1]
@@ -191,8 +192,9 @@ class CrossSection:
                 self.datatemplate = '\n'.join(pre_ext_lines + ['**extinction_section**'] + post_ext_lines + ['**cell_section**'] + post_cell_lines)
 
             ext_lines = lines[ext_start:ext_end:+1] if ext_start else []
-
-            ext_info = self._extinction_info(material,ext_lines)
+            
+            if ext_lines:
+                ext_info = self._extinction_info(material,extinction_lines=ext_lines)
 
             if hasattr(self,"phases_data"):
                 self._update_ncmat_parameters(material)
@@ -205,7 +207,10 @@ class CrossSection:
         """Update the virtual material with lattice parametrs
         """
         updated_cells = self._cell_info(material,**kwargs)
-        updated_ext = self._extinction_info(material,**kwargs)
+        if material in self.extinction:
+            updated_ext = self._extinction_info(material,**kwargs)
+        else:
+            updated_ext = ""
 
         self.textdata[material] = self.datatemplate.replace("**cell_section**",updated_cells).replace("**extinction_section**",updated_ext)
 
@@ -235,14 +240,19 @@ class CrossSection:
             material (str): Material name
             extinction_lines (str): text data from the extinction custom section
         """
-        if not hasattr(self,"extinction"):
-            self.extinction = {}
-        if extinction_lines:
+        if len(extinction_lines)>0:
             method, l, Gg, L, tilt = extinction_lines.split()
             self.extinction[material] = dict(method=method, l=float(l), Gg=float(Gg), L=float(L), tilt=tilt)
-
         else:
-            self.extinction[material].update(**kwargs)
+            if "ext_l" in kwargs:
+                self.extinction[material].update(**kwargs)
+
+                method = self.extinction[material]["ext_method"]
+
+        l = self.extinction[material]["ext_l"]
+        Gg = self.extinction[material]["ext_Gg"]
+        L = self.extinction[material]["ext_L"]
+        tilt = self.extinction[material]["ext_tilt"]
 
         return f"  {method}  {l}  {Gg}  {L}  {tilt}"
         

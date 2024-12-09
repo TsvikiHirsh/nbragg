@@ -510,42 +510,6 @@ class TransmissionModel(lmfit.Model):
         params = lmfit.Parameters()
         for i, material in enumerate(self._materials):
             # update materials with new lattice parameter
-            info = self.extinction_data[material]
-            l, Gg, L = info["l"], info["Gg"], info["L"]
-
-            param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
-            param_Gg_name = f"ext_Gg{i+1}" if len(self._materials)>1 else "ext_Gg"
-            param_L_name = f"ext_L{i+1}" if len(self._materials)>1 else "ext_L"
-
-
-            if param_l_name in self.params:
-                self.params[param_l_name].vary = vary
-                self.params[param_Gg_name].vary = vary
-                self.params[param_L_name].vary = vary
-            else:
-                params.add(param_l_name, value=l, min=0.5, max=10, vary=vary)
-                params.add(param_Gg_name, value=Gg, min=0.5, max=10, vary=vary)
-                params.add(param_L_name, value=L, min=0.5, max=10, vary=vary)
-                    
-        return params
-    
-    def _make_extinction_params(self, vary: bool = False):
-        """
-        Create extinction-parameter ('ext_l', 'ext_Gg', 'ext_L') params for the model.
-
-        Parameters
-        ----------
-        vary : bool, optional
-            Whether to allow these parameters to vary during fitting, by default False.
-
-        Returns
-        -------
-        lmfit.Parameters
-            The extinction-related parameters.
-        """
-        params = lmfit.Parameters()
-        for i, material in enumerate(self._materials):
-            # update materials with new lattice parameter
             info = self.cross_section.phases_data[material].info.structure_info
             a, b, c = info["a"], info["b"], info["c"]
 
@@ -577,6 +541,43 @@ class TransmissionModel(lmfit.Model):
                     params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
                     params.add(param_b_name, value=b, min=0.5, max=10, vary=vary)
                     params.add(param_c_name, value=c, min=0.5, max=10, vary=vary)
+                    
+        return params
+
+    
+    def _make_extinction_params(self, vary: bool = False):
+        """
+        Create extinction-parameter ('ext_l', 'ext_Gg', 'ext_L') params for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The extinction-related parameters.
+        """
+        params = lmfit.Parameters()
+        for i, material in enumerate(self._materials):
+            # update materials with new lattice parameter
+            info = self.extinction_data[material]
+            l, Gg, L = info["l"], info["Gg"], info["L"]
+
+            param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
+            param_Gg_name = f"ext_Gg{i+1}" if len(self._materials)>1 else "ext_Gg"
+            param_L_name = f"ext_L{i+1}" if len(self._materials)>1 else "ext_L"
+
+
+            if param_l_name in self.params:
+                self.params[param_l_name].vary = vary
+                self.params[param_Gg_name].vary = vary
+                self.params[param_L_name].vary = vary
+            else:
+                params.add(param_l_name, value=l, min=0.5, max=10, vary=vary)
+                params.add(param_Gg_name, value=Gg, min=0.5, max=10, vary=vary)
+                params.add(param_L_name, value=L, min=0.5, max=10, vary=vary)
                     
         return params
 
