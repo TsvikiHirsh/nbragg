@@ -191,7 +191,7 @@ class CrossSection:
                 # Create template with single f-string placeholder
                 self.datatemplate = '\n'.join(pre_ext_lines + ['**extinction_section**'] + post_ext_lines + ['**cell_section**'] + post_cell_lines)
 
-            ext_lines = lines[ext_start:ext_end:+1] if ext_start else []
+            ext_lines = lines[ext_start+1] if ext_start else ""
             
             if ext_lines:
                 ext_info = self._extinction_info(material,extinction_lines=ext_lines)
@@ -240,19 +240,18 @@ class CrossSection:
             material (str): Material name
             extinction_lines (str): text data from the extinction custom section
         """
-        if len(extinction_lines)>0:
+        if extinction_lines:
             method, l, Gg, L, tilt = extinction_lines.split()
             self.extinction[material] = dict(method=method, l=float(l), Gg=float(Gg), L=float(L), tilt=tilt)
         else:
-            if "ext_l" in kwargs:
+            if "l" in kwargs:
                 self.extinction[material].update(**kwargs)
 
-                method = self.extinction[material]["ext_method"]
-
-        l = self.extinction[material]["ext_l"]
-        Gg = self.extinction[material]["ext_Gg"]
-        L = self.extinction[material]["ext_L"]
-        tilt = self.extinction[material]["ext_tilt"]
+        method = self.extinction[material]["method"]
+        l = self.extinction[material]["l"]
+        Gg = self.extinction[material]["Gg"]
+        L = self.extinction[material]["L"]
+        tilt = self.extinction[material]["tilt"]
 
         return f"  {method}  {l}  {Gg}  {L}  {tilt}"
         
@@ -442,6 +441,7 @@ class CrossSection:
                      ϕ1, ϕ2, ... for phi values of materials 1, 2, ...
                      temp1, temp2, ... for temperatures of materials 1, 2, ...
                      a1, a2, ... for lattice parameter of materials 1, 2 ...
+                     ext_l1, ext_Gg1, ext_L1 ... for extinction params
         """
         updated = False
         direction = None
@@ -458,6 +458,9 @@ class CrossSection:
             lata_key = f"a{i}"
             latb_key = f"b{i}"
             latc_key = f"c{i}"
+            ext_l_key = f"ext_l{i}"
+            ext_Gg_key = f"ext_Gg{i}"
+            ext_L_key = f"ext_L{i}"
             
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
                 spec['temp'] = kwargs[temp_key]
@@ -480,6 +483,12 @@ class CrossSection:
                 updated = True
             elif "a" in kwargs: # for single phase materials
                 self._update_ncmat_parameters(name,a=kwargs["a"],b=kwargs["b"],c=kwargs["c"])
+                updated = True
+            if ext_l_key in kwargs:
+                self._update_ncmat_parameters(name,l=kwargs[ext_l_key],Gg=kwargs[ext_Gg_key],L=kwargs[ext_L_key])
+                updated = True
+            elif "ext_l" in kwargs: # for single phase materials
+                self._update_ncmat_parameters(name,l=kwargs["ext_l"],Gg=kwargs["ext_Gg"],L=kwargs["ext_L"])
                 updated = True
 
         if updated:

@@ -24,6 +24,7 @@ class TransmissionModel(lmfit.Model):
                         vary_response: bool = None,
                         vary_orientation: bool = None,
                         vary_lattice: bool = None,
+                        vary_extinction: bool = None,
                         **kwargs):
         """
         Initialize the TransmissionModel, a subclass of lmfit.Model.
@@ -49,7 +50,9 @@ class TransmissionModel(lmfit.Model):
         vary_orientation : bool, optional
             If True, allows the orientation parameters (θ,ϕ,η) to vary during fitting.
         vary_lattice: bool, optional
-            It True, allows the lattice parameters of the material to be varied (currently only cubic materials are supported)
+            It True, allows the lattice parameters of the material to be varied 
+        vary_extinction: bool, optional
+            It True, allows the extinction parameters of the material to be varied (requires the CrysExtn plugin to be installed)
         kwargs : dict, optional
             Additional keyword arguments for model and background parameters.
 
@@ -80,6 +83,8 @@ class TransmissionModel(lmfit.Model):
             self.params += self._make_tof_params(vary=vary_tof,**kwargs)
         if vary_lattice is not None:
             self.params += self._make_lattice_params(vary=vary_lattice)
+        if vary_extinction is not None:
+            self.params += self._make_extinction_params(vary=vary_extinction)
 
         self.response = None
         if vary_response is not None:
@@ -562,7 +567,7 @@ class TransmissionModel(lmfit.Model):
         params = lmfit.Parameters()
         for i, material in enumerate(self._materials):
             # update materials with new lattice parameter
-            info = self.extinction_data[material]
+            info = self.cross_section.extinction[material]
             l, Gg, L = info["l"], info["Gg"], info["L"]
 
             param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
@@ -575,9 +580,9 @@ class TransmissionModel(lmfit.Model):
                 self.params[param_Gg_name].vary = vary
                 self.params[param_L_name].vary = vary
             else:
-                params.add(param_l_name, value=l, min=0.5, max=10, vary=vary)
-                params.add(param_Gg_name, value=Gg, min=0.5, max=10, vary=vary)
-                params.add(param_L_name, value=L, min=0.5, max=10, vary=vary)
+                params.add(param_l_name, value=l, min=0., vary=vary)
+                params.add(param_Gg_name, value=Gg, min=0., vary=vary)
+                params.add(param_L_name, value=L, min=0., vary=vary)
                     
         return params
 
