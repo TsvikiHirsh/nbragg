@@ -478,15 +478,15 @@ class TransmissionModel(lmfit.Model):
                     self.params[param_a_name].vary = vary
                 else:
                     params.add(param_a_name, value=a, min=0, max=10, vary=vary)
-                    params.add(param_b_name, value=a, min=0, max=10, vary=False, expr="a")
-                    params.add(param_c_name, value=a, min=0, max=10, vary=False, expr="a")
+                    params.add(param_b_name, value=a, min=0, max=10, vary=vary, expr="a")
+                    params.add(param_c_name, value=a, min=0, max=10, vary=vary, expr="a")
             elif a==b and c!=b:
                 if param_a_name in self.params:
                     self.params[param_a_name].vary = vary
                     self.params[param_c_name].vary = vary
                 else:
                     params.add(param_a_name, value=a, min=0, max=10, vary=vary)
-                    params.add(param_b_name, value=a, min=0, max=10, vary=False, expr="a")
+                    params.add(param_b_name, value=a, min=0, max=10, vary=vary, expr="a")
                     params.add(param_c_name, value=c, min=0, max=10, vary=vary)
             elif a!=b and c!=b:
                 if param_a_name in self.params:
