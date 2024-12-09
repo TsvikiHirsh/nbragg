@@ -23,6 +23,7 @@ class TransmissionModel(lmfit.Model):
                         vary_tof: bool = None,
                         vary_response: bool = None,
                         vary_orientation: bool = None,
+                        vary_lattice: bool = None,
                         **kwargs):
         """
         Initialize the TransmissionModel, a subclass of lmfit.Model.
@@ -47,6 +48,8 @@ class TransmissionModel(lmfit.Model):
             If True, allows the response parameters to vary during fitting.
         vary_orientation : bool, optional
             If True, allows the orientation parameters (θ,ϕ,η) to vary during fitting.
+        vary_lattice: bool, optional
+            It True, allows the lattice parameters of the material to be varied (currently only cubic materials are supported)
         kwargs : dict, optional
             Additional keyword arguments for model and background parameters.
 
@@ -75,6 +78,8 @@ class TransmissionModel(lmfit.Model):
             self.params += self._make_weight_params(vary=vary_weights)
         if vary_tof is not None:
             self.params += self._make_tof_params(vary=vary_tof,**kwargs)
+        if vary_lattice is not None:
+            self.params += self._make_lattice_params(vary=vary_lattice)
 
         self.response = None
         if vary_response is not None:
@@ -153,7 +158,7 @@ class TransmissionModel(lmfit.Model):
         n = self.atomic_density
 
         # Transmission function
-        
+        print(kwargs)
         xs = self.cross_section(wl,**kwargs)
 
         if self.response != None:
@@ -480,6 +485,57 @@ class TransmissionModel(lmfit.Model):
             # The last weight is 1 minus the sum of the previous weights
             params.add(f'{param_names[-1]}', expr=f'1 / (1 + {normalization_expr})')
 
+        return params
+    
+    def _make_lattice_params(self, vary: bool = False):
+        """
+        Create lattice-parameter ('a') params for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The lattice-related parameters.
+        """
+        params = lmfit.Parameters()
+        for i, material in enumerate(self._materials):
+            # update materials with new lattice parameter
+            info = self.cross_section.phases_data[material].info.structure_info
+            a, b, c = info["a"], info["b"], info["c"]
+
+            param_a_name = f"a{i+1}" if len(self._materials)>1 else "a"
+            param_b_name = f"b{i+1}" if len(self._materials)>1 else "b"
+            param_c_name = f"c{i+1}" if len(self._materials)>1 else "c"
+
+            if a==b and b==c:
+                if param_a_name in self.params:
+                    self.params[param_a_name].vary = vary
+                else:
+                    params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
+                    params.add(param_b_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
+                    params.add(param_c_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
+            elif a==b and c!=b:
+                if param_a_name in self.params:
+                    self.params[param_a_name].vary = vary
+                    self.params[param_c_name].vary = vary
+                else:
+                    params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
+                    params.add(param_b_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
+                    params.add(param_c_name, value=c, min=0.5, max=10, vary=vary)
+            elif a!=b and c!=b:
+                if param_a_name in self.params:
+                    self.params[param_a_name].vary = vary
+                    self.params[param_b_name].vary = vary
+                    self.params[param_c_name].vary = vary
+                else:
+                    params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
+                    params.add(param_b_name, value=b, min=0.5, max=10, vary=vary)
+                    params.add(param_c_name, value=c, min=0.5, max=10, vary=vary)
+                    
         return params
 
     def set_cross_section(self, xs: 'CrossSection', inplace: bool = True) -> 'TransmissionModel':
