@@ -191,7 +191,7 @@ class CrossSection:
                 # Create template with single f-string placeholder
                 self.datatemplate = '\n'.join(pre_ext_lines + ['**extinction_section**'] + post_ext_lines + ['**cell_section**'] + post_cell_lines)
 
-            ext_lines = lines[ext_start+1] if ext_start else ""
+            ext_lines = lines[ext_start+1] if ext_start<len(lines) else ""
             
             if ext_lines:
                 ext_info = self._extinction_info(material,extinction_lines=ext_lines)
