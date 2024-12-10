@@ -50,6 +50,7 @@ class CrossSection:
 
         # Process the combined materials dictionary
         self.materials = self._process_materials(combined_materials)
+        self.extinction = {}
 
         # create virtual material
         self._create_virtual_materials()
@@ -150,28 +151,68 @@ class CrossSection:
                     cell_end = i
                     break
 
-            # Create list of lines before @CELL
-            pre_cell_lines = lines[:cell_start + 1]
+            # Find @CUSTOM_CRYSEXTN section
+            ext_start = None
+            ext_end = None
+            for i, line in enumerate(lines):
+                if line.strip().startswith('@CUSTOM_CRYSEXTN'):
+                    ext_start = i
+                elif ext_start is not None and line.strip().startswith('@'):
+                    ext_end = i
+                    break
+                
+            ext_start = len(lines) if ext_start==None else ext_start
+            ext_end = len(lines) if ext_end==None else ext_end
+
+            # in case the @CELL section appears first
+            if cell_start<ext_start:
+
+                # Create list of lines before @CELL
+                pre_cell_lines = lines[:cell_start + 1]
+                
+                # Create list of lines after @CELL section
+                post_cell_lines = lines[cell_end:ext_start+1]
+                
+                # Create list of lines after @CRYSEXTN section
+                post_ext_lines = lines[ext_end:] if ext_end else []
+                
+                # Create template with single f-string placeholder
+                self.datatemplate = '\n'.join(pre_cell_lines + ['**cell_section**'] + post_cell_lines + ['**extinction_section**'] + post_ext_lines)
+            else:
+                # Create list of lines before @CRYSEXTN
+                pre_ext_lines = lines[:ext_start + 1]
+                
+                # Create list of lines after @CRYSEXTN section
+                post_ext_lines = lines[ext_end:cell_start+1]
+                
+                # Create list of lines after @CELLS section
+                post_cell_lines = lines[cell_end:] if cell_end else []
+                
+                # Create template with single f-string placeholder
+                self.datatemplate = '\n'.join(pre_ext_lines + ['**extinction_section**'] + post_ext_lines + ['**cell_section**'] + post_cell_lines)
+
+            ext_lines = lines[ext_start+1] if ext_start<len(lines) else ""
             
-            # Create list of lines after @CELL section
-            post_cell_lines = lines[cell_end:] if cell_end else []
-            
-            # Create template with single f-string placeholder
-            self.datatemplate = '\n'.join(pre_cell_lines + ['**cell_section**'] + post_cell_lines)
+            if ext_lines:
+                ext_info = self._extinction_info(material,extinction_lines=ext_lines)
 
             if hasattr(self,"phases_data"):
-                self._update_lattice_parameters(material)
+                self._update_ncmat_parameters(material)
             else:
                 # save original rawdata in nbragg file name
                 nc.registerInMemoryFileData(self.materials[material]["mat"].replace("ncmat","nbragg"),self.textdata[material])
 
 
-    def _update_lattice_parameters(self, material: str, **kwargs):
+    def _update_ncmat_parameters(self, material: str, **kwargs):
         """Update the virtual material with lattice parametrs
         """
         updated_cells = self._cell_info(material,**kwargs)
+        if material in self.extinction:
+            updated_ext = self._extinction_info(material,**kwargs)
+        else:
+            updated_ext = ""
 
-        self.textdata[material] = self.datatemplate.replace("**cell_section**",updated_cells)
+        self.textdata[material] = self.datatemplate.replace("**cell_section**",updated_cells).replace("**extinction_section**",updated_ext)
 
         # save original rawdata in nbragg file name
         nc.registerInMemoryFileData(self.materials[material]["mat"].replace("ncmat","nbragg"),self.textdata[material])
@@ -191,6 +232,28 @@ class CrossSection:
         cell_dict = self.phases_data[material].info.structure_info
         cell_dict.update(**kwargs)
         return f"  lengths {cell_dict['a']:.4f}  {cell_dict['b']:.4f}  {cell_dict['c']:.4f}  \n  angles {cell_dict['alpha']:.4f}  {cell_dict['beta']:.4f}  {cell_dict['gamma']:.4f}"
+    
+    def _extinction_info(self, material: str, extinction_lines:str=None, **kwargs)-> str:
+        """Parse and update the extinction lines
+
+        Args:
+            material (str): Material name
+            extinction_lines (str): text data from the extinction custom section
+        """
+        if extinction_lines:
+            method, l, Gg, L, tilt = extinction_lines.split()
+            self.extinction[material] = dict(method=method, l=float(l), Gg=float(Gg), L=float(L), tilt=tilt)
+        else:
+            if "l" in kwargs:
+                self.extinction[material].update(**kwargs)
+
+        method = self.extinction[material]["method"]
+        l = self.extinction[material]["l"]
+        Gg = self.extinction[material]["Gg"]
+        L = self.extinction[material]["L"]
+        tilt = self.extinction[material]["tilt"]
+
+        return f"  {method}  {l}  {Gg}  {L}  {tilt}"
         
 
     def _resolve_material(self, material: str) -> str:
@@ -378,6 +441,7 @@ class CrossSection:
                      ϕ1, ϕ2, ... for phi values of materials 1, 2, ...
                      temp1, temp2, ... for temperatures of materials 1, 2, ...
                      a1, a2, ... for lattice parameter of materials 1, 2 ...
+                     ext_l1, ext_Gg1, ext_L1 ... for extinction params
         """
         updated = False
         direction = None
@@ -394,6 +458,9 @@ class CrossSection:
             lata_key = f"a{i}"
             latb_key = f"b{i}"
             latc_key = f"c{i}"
+            ext_l_key = f"ext_l{i}"
+            ext_Gg_key = f"ext_Gg{i}"
+            ext_L_key = f"ext_L{i}"
             
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
                 spec['temp'] = kwargs[temp_key]
@@ -412,10 +479,16 @@ class CrossSection:
                 spec['weight'] = kwargs[phase_name]
                 updated = True
             if lata_key in kwargs:
-                self._update_lattice_parameters(name,a=kwargs[lata_key],b=kwargs[latb_key],c=kwargs[latc_key])
+                self._update_ncmat_parameters(name,a=kwargs[lata_key],b=kwargs[latb_key],c=kwargs[latc_key])
                 updated = True
             elif "a" in kwargs: # for single phase materials
-                self._update_lattice_parameters(name,a=kwargs["a"],b=kwargs["b"],c=kwargs["c"])
+                self._update_ncmat_parameters(name,a=kwargs["a"],b=kwargs["b"],c=kwargs["c"])
+                updated = True
+            if ext_l_key in kwargs:
+                self._update_ncmat_parameters(name,l=kwargs[ext_l_key],Gg=kwargs[ext_Gg_key],L=kwargs[ext_L_key])
+                updated = True
+            elif "ext_l" in kwargs: # for single phase materials
+                self._update_ncmat_parameters(name,l=kwargs["ext_l"],Gg=kwargs["ext_Gg"],L=kwargs["ext_L"])
                 updated = True
 
         if updated:
@@ -444,7 +517,7 @@ class CrossSection:
         import matplotlib.pyplot as plt
         # update lattice parameters
         for material in self.materials:
-            self._update_lattice_parameters(material)
+            self._update_ncmat_parameters(material)
         self._load_material_data()
         self._populate_material_data()
         

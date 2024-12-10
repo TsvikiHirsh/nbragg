@@ -10,6 +10,7 @@ import pandas
 import matplotlib.pyplot as plt
 from copy import deepcopy 
 from typing import List, Optional
+import warnings
 
 
 class TransmissionModel(lmfit.Model):
@@ -24,6 +25,7 @@ class TransmissionModel(lmfit.Model):
                         vary_response: bool = None,
                         vary_orientation: bool = None,
                         vary_lattice: bool = None,
+                        vary_extinction: bool = None,
                         **kwargs):
         """
         Initialize the TransmissionModel, a subclass of lmfit.Model.
@@ -49,7 +51,9 @@ class TransmissionModel(lmfit.Model):
         vary_orientation : bool, optional
             If True, allows the orientation parameters (θ,ϕ,η) to vary during fitting.
         vary_lattice: bool, optional
-            It True, allows the lattice parameters of the material to be varied (currently only cubic materials are supported)
+            It True, allows the lattice parameters of the material to be varied 
+        vary_extinction: bool, optional
+            It True, allows the extinction parameters of the material to be varied (requires the CrysExtn plugin to be installed)
         kwargs : dict, optional
             Additional keyword arguments for model and background parameters.
 
@@ -80,6 +84,9 @@ class TransmissionModel(lmfit.Model):
             self.params += self._make_tof_params(vary=vary_tof,**kwargs)
         if vary_lattice is not None:
             self.params += self._make_lattice_params(vary=vary_lattice)
+        if vary_extinction is not None:
+            self.params += self._make_extinction_params(vary=vary_extinction)
+
 
         self.response = None
         if vary_response is not None:
@@ -306,7 +313,7 @@ class TransmissionModel(lmfit.Model):
         ax[1].plot(wavelength,residual,color=color)
         ax[1].set_ylabel("Residuals [1σ]")
         ax[1].set_xlabel("λ [Å]")
-        if plot_bg and hasattr(self,"background"):
+        if plot_bg and self.background:
             self.background.plot(wl=wavelength,ax=ax[0],params=self.fit_result.params,**kwargs)
             ax[0].legend(["Best fit","Background","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
         else:
@@ -495,7 +502,7 @@ class TransmissionModel(lmfit.Model):
     
     def _make_lattice_params(self, vary: bool = False):
         """
-        Create lattice-parameter ('a') params for the model.
+        Create lattice-parameter ('a','b','c') params for the model.
 
         Parameters
         ----------
@@ -542,6 +549,48 @@ class TransmissionModel(lmfit.Model):
                     params.add(param_b_name, value=b, min=0.5, max=10, vary=vary)
                     params.add(param_c_name, value=c, min=0.5, max=10, vary=vary)
                     
+        return params
+
+    
+    def _make_extinction_params(self, vary: bool = False):
+        """
+        Create extinction-parameter ('ext_l', 'ext_Gg', 'ext_L') params for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The extinction-related parameters.
+        """
+        params = lmfit.Parameters()
+        for i, material in enumerate(self._materials):
+            # update materials with new lattice parameter
+            try:
+                info = self.cross_section.extinction[material]
+
+
+                l, Gg, L = info["l"], info["Gg"], info["L"]
+
+                param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
+                param_Gg_name = f"ext_Gg{i+1}" if len(self._materials)>1 else "ext_Gg"
+                param_L_name = f"ext_L{i+1}" if len(self._materials)>1 else "ext_L"
+
+
+                if param_l_name in self.params:
+                    self.params[param_l_name].vary = vary
+                    self.params[param_Gg_name].vary = vary
+                    self.params[param_L_name].vary = vary
+                else:
+                    params.add(param_l_name, value=l, min=0., vary=vary)
+                    params.add(param_Gg_name, value=Gg, min=0., vary=vary)
+                    params.add(param_L_name, value=L, min=0., vary=vary)
+            except KeyError:
+                warnings.warn(f"@CRYSEXTN section is not defined for the {material} phase")
+                                
         return params
 
     def set_cross_section(self, xs: 'CrossSection', inplace: bool = True) -> 'TransmissionModel':
