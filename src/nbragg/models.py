@@ -10,6 +10,7 @@ import pandas
 import matplotlib.pyplot as plt
 from copy import deepcopy 
 from typing import List, Optional
+import warnings
 
 
 class TransmissionModel(lmfit.Model):
@@ -85,6 +86,7 @@ class TransmissionModel(lmfit.Model):
             self.params += self._make_lattice_params(vary=vary_lattice)
         if vary_extinction is not None:
             self.params += self._make_extinction_params(vary=vary_extinction)
+
 
         self.response = None
         if vary_response is not None:
@@ -567,23 +569,28 @@ class TransmissionModel(lmfit.Model):
         params = lmfit.Parameters()
         for i, material in enumerate(self._materials):
             # update materials with new lattice parameter
-            info = self.cross_section.extinction[material]
-            l, Gg, L = info["l"], info["Gg"], info["L"]
-
-            param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
-            param_Gg_name = f"ext_Gg{i+1}" if len(self._materials)>1 else "ext_Gg"
-            param_L_name = f"ext_L{i+1}" if len(self._materials)>1 else "ext_L"
+            try:
+                info = self.cross_section.extinction[material]
 
 
-            if param_l_name in self.params:
-                self.params[param_l_name].vary = vary
-                self.params[param_Gg_name].vary = vary
-                self.params[param_L_name].vary = vary
-            else:
-                params.add(param_l_name, value=l, min=0., vary=vary)
-                params.add(param_Gg_name, value=Gg, min=0., vary=vary)
-                params.add(param_L_name, value=L, min=0., vary=vary)
-                    
+                l, Gg, L = info["l"], info["Gg"], info["L"]
+
+                param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
+                param_Gg_name = f"ext_Gg{i+1}" if len(self._materials)>1 else "ext_Gg"
+                param_L_name = f"ext_L{i+1}" if len(self._materials)>1 else "ext_L"
+
+
+                if param_l_name in self.params:
+                    self.params[param_l_name].vary = vary
+                    self.params[param_Gg_name].vary = vary
+                    self.params[param_L_name].vary = vary
+                else:
+                    params.add(param_l_name, value=l, min=0., vary=vary)
+                    params.add(param_Gg_name, value=Gg, min=0., vary=vary)
+                    params.add(param_L_name, value=L, min=0., vary=vary)
+            except KeyError:
+                warnings.warn(f"@CRYSEXTN section is not defined for the {material} phase")
+                                
         return params
 
     def set_cross_section(self, xs: 'CrossSection', inplace: bool = True) -> 'TransmissionModel':
