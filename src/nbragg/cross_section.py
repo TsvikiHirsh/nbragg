@@ -150,14 +150,52 @@ class CrossSection:
                     cell_end = i
                     break
 
-            # Create list of lines before @CELL
-            pre_cell_lines = lines[:cell_start + 1]
+            # Find @CUSTOM_CRYSEXTN section
+            ext_start = None
+            ext_end = None
+            for i, line in enumerate(lines):
+                if line.strip().startswith('@CUSTOM_CRYSEXTN'):
+                    ext_start = i
+                elif ext_start is not None and line.strip().startswith('@'):
+                    ext_end = i
+                    break
+                
+            ext_start = len(lines) if ext_start==None else ext_start
+            ext_end = len(lines) if ext_end==None else ext_end
+            cell_start = len(lines) if cell_start==None else cell_start
+            cell_end = len(lines) if cell_end==None else cell_end
+
+            # in case the @CELL section appears first
+            if cell_start<ext_start:
+
+                # Create list of lines before @CELL
+                pre_cell_lines = lines[:cell_start + 1]
+                
+                # Create list of lines after @CELL section
+                post_cell_lines = lines[cell_end:ext_start+1]
+                
+                # Create list of lines after @CRYSEXTN section
+                post_ext_lines = lines[ext_end:] if ext_end else []
+                
+                # Create template with single f-string placeholder
+                self.datatemplate = '\n'.join(pre_cell_lines + ['**cell_section**'] + post_cell_lines + ['**extinction_section**'] + post_ext_lines)
+            else:
+                # Create list of lines before @CRYSEXTN
+                pre_ext_lines = lines[:ext_start + 1]
+                
+                # Create list of lines after @CRYSEXTN section
+                post_ext_lines = lines[ext_end:cell_start+1]
+                
+                # Create list of lines after @CELLS section
+                post_cell_lines = lines[cell_end:] if cell_end else []
+                
+                # Create template with single f-string placeholder
+                self.datatemplate = '\n'.join(pre_ext_lines + ['**extinction_section**'] + post_ext_lines + ['**cell_section**'] + post_cell_lines)
+
+            ext_lines = lines[ext_start+1] if ext_start<len(lines) else ""
             
-            # Create list of lines after @CELL section
-            post_cell_lines = lines[cell_end:] if cell_end else []
-            
-            # Create template with single f-string placeholder
-            self.datatemplate = '\n'.join(pre_cell_lines + ['**cell_section**'] + post_cell_lines)
+            if ext_lines:
+                ext_info = self._extinction_info(material,extinction_lines=ext_lines)
 
             if hasattr(self,"phases_data"):
                 self._update_lattice_parameters(material)
@@ -276,7 +314,7 @@ class CrossSection:
             # Collect material-specific parameters
             params = []
             if spec['temp'] is not None:
-                params.append(f"temp={int(spec['temp'])}K")
+                params.append(f"temp={spec['temp']}K")
 
             # Determine if the material is oriented
             mos = spec.get('mos', None)
@@ -443,8 +481,11 @@ class CrossSection:
         """Plot the cross-section data."""
         import matplotlib.pyplot as plt
         # update lattice parameters
-        for material in self.materials:
-            self._update_lattice_parameters(material)
+        try:
+            for material in self.materials:
+                self._update_ncmat_parameters(material)
+        except:
+            pass
         self._load_material_data()
         self._populate_material_data()
         
