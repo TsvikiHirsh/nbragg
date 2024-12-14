@@ -163,6 +163,8 @@ class CrossSection:
                 
             ext_start = len(lines) if ext_start==None else ext_start
             ext_end = len(lines) if ext_end==None else ext_end
+            cell_start = len(lines) if cell_start==None else cell_start
+            cell_end = len(lines) if cell_end==None else cell_end
 
             # in case the @CELL section appears first
             if cell_start<ext_start:
@@ -339,7 +341,7 @@ class CrossSection:
             # Collect material-specific parameters
             params = []
             if spec['temp'] is not None:
-                params.append(f"temp={int(spec['temp'])}K")
+                params.append(f"temp={spec['temp']}K")
 
             # Determine if the material is oriented
             mos = spec.get('mos', None)
@@ -516,8 +518,11 @@ class CrossSection:
         """Plot the cross-section data."""
         import matplotlib.pyplot as plt
         # update lattice parameters
-        for material in self.materials:
-            self._update_ncmat_parameters(material)
+        try:
+            for material in self.materials:
+                self._update_ncmat_parameters(material)
+        except:
+            pass
         self._load_material_data()
         self._populate_material_data()
         
