@@ -265,6 +265,7 @@ class TransmissionModel(lmfit.Model):
         # Store and modify fit results
         self.fit_result = fit_result
         fit_result.plot = self.plot  # Modify the plot method
+        fit_result.plot_total_xs = self.plot_total_xs
 
         return fit_result
     
@@ -320,7 +321,11 @@ class TransmissionModel(lmfit.Model):
             ax[0].legend(["Best fit","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
         if plot_dspace:
             for phase in self.cross_section.phases_data:
-                for hkl in self.cross_section.phases_data[phase].info.hklList():
+                try:
+                    hkls = self.cross_section.phases_data[phase].info.hklList()
+                except:
+                    continue
+                for hkl in hkls:
                     hkl = hkl[:3]
                     dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
                     if dspace>= dspace_min:
@@ -332,6 +337,140 @@ class TransmissionModel(lmfit.Model):
                             ax[0].text(dspace*2,dspace_label_pos,f"{hkl}",color="0.2",zorder=-1,fontsize=8,transform=trans,rotation=90,va="top",ha="right")
         plt.subplots_adjust(hspace=0.05)
         
+        return ax
+
+    def plot_total_xs(self, plot_bg: bool = True, 
+                    plot_dspace: bool = False, 
+                    dspace_min: float = 1, 
+                    dspace_label_pos: float = 0.99, 
+                    **kwargs):
+        """
+        Plot the results of the total cross-section fit.
+
+        Parameters
+        ----------
+        plot_bg : bool, optional
+            Whether to include the background in the plot, by default True.
+        plot_dspace: bool, optional
+            If True plots the 2*dspace and labels of that material that are larger than dspace_min
+        dspace_min: float, optional
+            The minimal dspace from which to plot the dspacing*2 lines
+        dspace_label_pos: float, optional
+            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure
+        kwargs : dict, optional
+            Additional plot settings like color, marker size, etc.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes of the plot.
+
+        Notes
+        -----
+        This function generates a plot showing the total cross-section data, 
+        the best-fit curve, and residuals. If `plot_bg` is True, it will also 
+        plot the background function.
+        """
+        # Prepare data for cross-section calculation
+        wavelength = self.fit_result.userkws["wl"]
+        if "k" in self.fit_result.params:
+            k = self.fit_result.params['k'].value
+        else:
+            k = 1.
+        bg = self.background.function(wavelength,**self.fit_result.params)
+        norm = self.fit_result.params['norm'].value
+        n = self.atomic_density
+        thickness = self.fit_result.params['thickness'].value
+
+        # Calculate cross-section data
+        data_xs = -1. / n / thickness * np.log((self.fit_result.data - k * bg) / norm / (1. - bg))
+
+        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))
+
+        
+        # Calculate best fit and residuals for cross-section
+        xs = self.cross_section(wavelength,**self.fit_result.params)  # You'll need to implement this method
+
+        if self.response != None:
+            response = self.response.function(**self.fit_result.params)
+            best_fit = convolve1d(xs,response,0)
+        residual = data_xs - best_fit
+
+        # Plot styling
+        color = kwargs.pop("color", "crimson")
+        ecolor = kwargs.pop("ecolor", "0.8")
+        ms = kwargs.pop("ms", 2)
+
+        # Top subplot: Data and fit
+        ax[0].errorbar(wavelength, data_xs, 
+                    # yerr=1./self.fit_result.weights,  # Assuming similar error handling
+                    marker="o", 
+                    color=color, 
+                    ms=ms, 
+                    zorder=-1, 
+                    ecolor=ecolor, 
+                    label="Cross-section data")
+        
+        ax[0].plot(wavelength, best_fit, color="0.4", label="Best fit")
+        ax[0].plot(wavelength, xs, color="0.2", label="total xs")
+        ax[0].set_ylabel("Total Cross Section [barn/sr]")
+        # ax[0].set_title(f"{self.cross_section.name} - Total Cross Section")
+
+        # Bottom subplot: Residuals
+        ax[1].plot(wavelength, residual, color=color)
+        ax[1].set_ylabel("Residuals [1σ]")
+        ax[1].set_xlabel("λ [Å]")
+
+        # Background plotting (if enabled)
+        if plot_bg and self.background:
+            self.background.plot(wl=wavelength, ax=ax[0], params=self.fit_result.params, **kwargs)
+            ax[0].legend(["Cross-section data", "Background", "Total cross-section","Best fit"][::-1], 
+                        fontsize=9, 
+                        reverse=True, 
+                        title=f"χ$^2$: {self.fit_result.redchi:.2f}")
+        else:
+            ax[0].legend(["Cross-section data","Total cross-section", "Best fit"][::-1], 
+                        fontsize=9, 
+                        reverse=True, 
+                        title=f"χ$^2$: {self.fit_result.redchi:.2f}")
+
+        # d-spacing plot (if enabled)
+        if plot_dspace:
+            for phase in self.cross_section.phases_data:
+                try:
+                    hkls = self.cross_section.phases_data[phase].info.hklList()
+                except:
+                    continue
+                for hkl in hkls:
+                    hkl = hkl[:3]
+                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
+                    if dspace >= dspace_min:
+                        trans = ax[0].get_xaxis_transform()
+                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
+                        
+                        # Label d-spacing lines
+                        if len(self.cross_section.phases) > 1:
+                            ax[0].text(dspace*2, dspace_label_pos, 
+                                    f"{phase} {hkl}", 
+                                    color="0.2", 
+                                    zorder=-1, 
+                                    fontsize=8, 
+                                    transform=trans, 
+                                    rotation=90, 
+                                    va="top", 
+                                    ha="right")
+                        else:
+                            ax[0].text(dspace*2, dspace_label_pos, 
+                                    f"{hkl}", 
+                                    color="0.2", 
+                                    zorder=-1, 
+                                    fontsize=8, 
+                                    transform=trans, 
+                                    rotation=90, 
+                                    va="top", 
+                                    ha="right")
+
+        plt.subplots_adjust(hspace=0.05)
         return ax
     
     def _make_orientation_params(self, vary: bool = False):
