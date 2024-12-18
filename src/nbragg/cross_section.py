@@ -406,7 +406,6 @@ class CrossSection:
 
         xs = {}
 
-
         # Process each phase separately
         self.phases_data = {name:nc.load(self.phases[name]) for name in self.phases} 
         for phase in self.phases:
@@ -424,7 +423,8 @@ class CrossSection:
         else:
             self.table.columns = ["total"]
         
-        self.atomic_density = self.mat_data.info.factor_macroscopic_xs
+        if not hasattr(self,"atomic_density"):
+            self.atomic_density = self.mat_data.info.factor_macroscopic_xs
 
     def _calculate_cross_section(self, wl, mat):
         """Calculate cross-section using NCrystal's xsect method."""

@@ -68,6 +68,8 @@ class TransmissionModel(lmfit.Model):
         self.cross_section = CrossSection(cross_section,
                                           name=cross_section.name,
                                           total_weight=cross_section.total_weight)
+        # update atomic density
+        self.cross_section.atomic_density = cross_section.atomic_density                                          
         self._materials = self.cross_section.materials
         self.tof_length = tof_length
 
@@ -306,11 +308,12 @@ class TransmissionModel(lmfit.Model):
         residual = self.fit_result.residual
         color = kwargs.pop("color","seagreen")
         ecolor = kwargs.pop("ecolor","0.8")
+        title = kwargs.pop("title",self.cross_section.name)
         ms = kwargs.pop("ms",2)
         ax[0].errorbar(wavelength,data,err,marker="o",color=color,ms=ms,zorder=-1,ecolor=ecolor,label="Best fit")  
         ax[0].plot(wavelength,best_fit,color="0.2",label="Data") 
         ax[0].set_ylabel("Transmission")
-        ax[0].set_title(self.cross_section.name)
+        ax[0].set_title(title)
         ax[1].plot(wavelength,residual,color=color)
         ax[1].set_ylabel("Residuals [1σ]")
         ax[1].set_xlabel("λ [Å]")
@@ -377,7 +380,10 @@ class TransmissionModel(lmfit.Model):
             k = self.fit_result.params['k'].value
         else:
             k = 1.
-        bg = self.background.function(wavelength,**self.fit_result.params)
+        if plot_bg and self.background:
+            bg = self.background.function(wavelength,**self.fit_result.params)
+        else:
+            bg = 0.
         norm = self.fit_result.params['norm'].value
         n = self.atomic_density
         thickness = self.fit_result.params['thickness'].value
@@ -398,6 +404,7 @@ class TransmissionModel(lmfit.Model):
 
         # Plot styling
         color = kwargs.pop("color", "crimson")
+        title = kwargs.pop("title", self.cross_section.name)
         ecolor = kwargs.pop("ecolor", "0.8")
         ms = kwargs.pop("ms", 2)
 
@@ -414,7 +421,7 @@ class TransmissionModel(lmfit.Model):
         ax[0].plot(wavelength, best_fit, color="0.4", label="Best fit")
         ax[0].plot(wavelength, xs, color="0.2", label="total xs")
         ax[0].set_ylabel("Total Cross Section [barn/sr]")
-        # ax[0].set_title(f"{self.cross_section.name} - Total Cross Section")
+        ax[0].set_title(title)
 
         # Bottom subplot: Residuals
         ax[1].plot(wavelength, residual, color=color)
