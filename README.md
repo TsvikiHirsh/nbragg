@@ -1,5 +1,12 @@
 
+
 # nbragg
+
+
+
+<p align="center">
+  <img src="docs/source/nbragg_logo.png" alt="nbragg logo" width="200"/>
+</p>
 
 [![Documentation Status](https://readthedocs.org/projects/nbragg/badge/?version=latest)](https://nbragg.readthedocs.io/en/latest/?badge=latest)
 <!-- [![PyPI version][pypi-version]][pypi-link]
