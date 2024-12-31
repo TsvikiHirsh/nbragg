@@ -29,8 +29,8 @@ class Response:
         if kind == "jorgensen":
             self.function = self.jorgensen_response
             self.params = lmfit.Parameters()
-            self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
-            self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"α0", value=3.67, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"β0", value=3.06, min=0.001, max= 1000, vary=vary)
 
         elif kind == "square":
             self.function = self.square_response
@@ -40,9 +40,16 @@ class Response:
         elif kind == "square_jorgensen":
             self.function = self.square_jorgensen_response
             self.params = lmfit.Parameters()
-            self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
-            self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"α0", value=3.67, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"β0", value=3.06, min=0.001, max= 1000, vary=vary)
             self.params.add(f"width", value=tstep*1e6, min=tstep*1e6, max= 5000, vary=vary)
+
+        elif kind == "full_jorgensen":
+            self.function = self.full_jorgensen_response
+            self.params = lmfit.Parameters()
+            self.params.add(f"α0", value=3.67, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"β0", value=3.06, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"σ1", value=2.5e-3, min=1e-5, max= 100e-3, vary=vary)
 
         elif kind == "none":
             self.function = self.empty_response
@@ -117,7 +124,7 @@ class Response:
 
     def jorgensen_response(self, α1, β1, σ=None, **kwargs):
         """
-        Calculates the Jorgensen peak profile function with Greek Unicode parameters.
+        Calculates the Jorgensen peak profile function.
         
         Parameters:
         -----------
@@ -148,6 +155,77 @@ class Response:
         
         # Calculate parameters using d-spacing of 1.0 as in original code
         d = 1.0
+        α1_calc = α1[0] + α1[1]/d
+        β1_calc = β1[0] + β1[1]/d**4
+        σ_calc = np.sqrt(σ[0]**2 + (σ[1]*d)**2 + (σ[2]*d*d)**2)
+        
+        # Constants
+        sqrt2 = np.sqrt(2)
+        σ2 = σ_calc * σ_calc
+        
+        # Scaling factor
+        scale = α1_calc * β1_calc / 2 / (α1_calc + β1_calc)
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            
+            # Calculate intermediate terms
+            u = α1_calc/2 * (α1_calc*σ2 + 2*x)
+            v = β1_calc/2 * (β1_calc*σ2 - 2*x)
+            y = (α1_calc*σ2 + x)/(sqrt2*σ_calc)
+            z = (β1_calc*σ2 - x)/(sqrt2*σ_calc)
+            
+            # Calculate profile with special handling for numerical stability
+            term1 = np.exp(u) * erfc(y)
+            term2 = np.exp(v) * erfc(z)
+            
+            # Zero out terms where erfc is zero to avoid NaN
+            term1[erfc(y) == 0] = 0
+            term2[erfc(z) == 0] = 0
+            
+            # Calculate profile
+            profile = scale * (term1 + term2)
+            
+            # Normalize
+            profile = profile / np.sum(profile)
+            
+            # Replace any NaN values with 0
+            return np.nan_to_num(profile, 0)
+        
+    def full_jorgensen_response(self, wl=4., α1=3.67, β1=3.04, σ=0.6e-3, **kwargs):
+        """
+        Calculates the Jorgensen peak profile function.
+        
+        Parameters:
+        -----------
+        wl : array of wavelengths
+        α1 : float or list/tuple
+            Alpha parameter [α1₁, α1₂] or single value α1₁ (α1₂ defaults to 0)
+        β1 : float or list/tuple
+            Beta parameter [β1₁, β1₂] or single value β1₁ (β1₂ defaults to 0)
+        σ : list/tuple, optional
+            Sigma parameters [σ₁, σ₂, σ₃], defaults to [0, 1, 0]
+        
+        Returns:
+        --------
+        numpy.ndarray
+            Normalized profile values with NaN values replaced by 0
+        """
+        # Handle input parameters
+        if not isinstance(σ, (list, tuple)):
+            σ = [0, σ, 0]
+        
+        # Convert single values to lists with 0 as second element
+        if not isinstance(α1, (list, tuple)):
+            α1 = [α1, 0]
+        if not isinstance(β1, (list, tuple)):
+            β1 = [β1, 0]
+        
+        # Generate x values
+        x = self.Δλ
+        
+        # Calculate parameters using d-spacing =wl/2
+        d = wl/2.
         α1_calc = α1[0] + α1[1]/d
         β1_calc = β1[0] + β1[1]/d**4
         σ_calc = np.sqrt(σ[0]**2 + (σ[1]*d)**2 + (σ[2]*d*d)**2)
