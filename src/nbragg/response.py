@@ -87,17 +87,32 @@ class Response:
         Returns:
         np.ndarray: Symmetrically cut array with an odd number of elements.
         """
-        if len(arr) % 2 == 0:
-            raise ValueError("Input array length must be odd.")
-
+        # Find center index
         center_idx = len(arr) // 2
-        left_idx = np.argmax(arr[:center_idx][::-1] < threshold)
-        right_idx = np.argmax(arr[center_idx:] < threshold)
         
-        left_bound = center_idx - max(left_idx, right_idx)
-        right_bound = center_idx + max(left_idx, right_idx) + 1  # Ensure odd length
+        # Find indices where values fall below threshold
+        below_threshold = arr < threshold
+        
+        # Find the first index from left and right where value falls below threshold
+        left_indices = np.where(below_threshold[:center_idx])[0]
+        right_indices = np.where(below_threshold[center_idx:])[0] + center_idx
+        
+        if len(left_indices) == 0 or len(right_indices) == 0:
+            return arr
+        
+        # Get the leftmost and rightmost indices
+        left_bound = left_indices[-1]
+        right_bound = right_indices[0]
+        
+        # Ensure symmetry by taking the smaller distance to center
+        distance_to_center = min(center_idx - left_bound, right_bound - center_idx)
+        
+        # Calculate new bounds
+        new_left = center_idx - distance_to_center
+        new_right = center_idx + distance_to_center + 1  # +1 to include the right bound
+        
+        return arr[new_left:new_right]
 
-        return arr[left_bound:right_bound]
 
     def empty_response(self, **kwargs):
         """
