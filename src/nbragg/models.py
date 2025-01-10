@@ -91,6 +91,7 @@ class TransmissionModel(lmfit.Model):
 
 
         self.response = None
+        self.respone_kind = response
         if vary_response is not None:
             self.response = Response(kind=response,vary=vary_response)
             if list(self.response.params.keys())[0] in self.params:
@@ -230,10 +231,14 @@ class TransmissionModel(lmfit.Model):
         # Pass fit_kws back into kwargs
         kwargs["fit_kws"] = fit_kws
 
+        
+
         # Apply wavelength filtering and weights
         if isinstance(data, pandas.DataFrame):
             data = data.query(f"{wlmin} < wavelength < {wlmax}")
             weights = kwargs.get("weights", 1. / data["err"].values)
+            λstep = data["wavelength"].iloc[1] - data["wavelength"].iloc[0]
+            self.response = Response(kind=self.response_kind,λstep=λstep)
             fit_result = super().fit(
                 data["trans"].values,
                 params=params or self.params,
@@ -246,6 +251,7 @@ class TransmissionModel(lmfit.Model):
         elif isinstance(data, Data):
             data = data.table.query(f"{wlmin} < wavelength < {wlmax}")
             weights = kwargs.get("weights", 1. / data["err"].values)
+            self.response = Response(kind=self.response_kind,tstep=data.tstep, flight_path_length=data.L)
             fit_result = super().fit(
                 data["trans"].values,
                 params=params or self.params,

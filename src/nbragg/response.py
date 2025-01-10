@@ -8,46 +8,64 @@ import lmfit
 import inspect
 import warnings
 import nbragg.utils as utils
+from functools import wraps
 
 class Response:
     def __init__(self, kind="jorgensen", vary: bool = False,
-                 wlstep:float =0.1,tstep:float =10e-6):
+                 tstep: float = 10e-6, λstep:float = None, flight_path_length: float = 9.,
+                 cut_symmetric: bool = False, cut_threshold: float = 1e-6):
         """
         Initializes the Response object with specified parameters.
 
         Parameters:
         kind (str): The type of response function to use. Options are 'jorgensen', 'square', 'square_jorgensen' or 'none'.
         vary (bool): If True, the parameters can vary during fitting. Default is False.
+        cut_symmetric (bool): If True, applies symmetric cutting to the response function output.
+        cut_threshold (float): Threshold value for symmetric cutting.
         """
-        self.wlstep = wlstep
         self.params = lmfit.Parameters()
-        self.Δλ = np.arange(-20, 20, self.wlstep)
-        self.tgrid = np.arange(-0.005,0.005,tstep) # grid for time based response -5ms to 5ms with 10usec bin size
+        if λstep != None:
+            self.λgrid = np.arange(-2, 2, λstep)
+            self.tgrid = self.λgrid / 3956.034*flight_path_length
+        else:
+            self.tgrid = np.arange(-0.005, 0.005, tstep)
+            self.λgrid = self.tgrid * 3956.034/flight_path_length
         self.kind = kind
+        self.cut_symmetric = cut_symmetric
+        self.cut_threshold = cut_threshold
 
-        # Choose the response function
+        def symmetric_cut_decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                result = func(*args, **kwargs)
+                if self.cut_symmetric:
+                    return self.cut_array_symmetric(result, self.cut_threshold)
+                return result
+            return wrapper
+
+        # Choose the response function and apply decorator if needed
         if kind == "jorgensen":
-            self.function = self.jorgensen_response
+            self.function = symmetric_cut_decorator(self.jorgensen_response)
             self.params = lmfit.Parameters()
-            self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
-            self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"α1", value=3.67, min=0.001, max=1000, vary=vary)
+            self.params.add(f"β1", value=3.06, min=0.001, max=1000, vary=vary)
 
         elif kind == "square":
-            self.function = self.square_response
+            self.function = symmetric_cut_decorator(self.square_response)
             self.params = lmfit.Parameters()
-            self.params.add(f"width", value=tstep*1e6, min=tstep*1e6, max= 5000, vary=vary)
+            self.params.add(f"width", value=tstep*1e6, min=tstep*1e6, max=5000, vary=vary)
 
         elif kind == "square_jorgensen":
-            self.function = self.square_jorgensen_response
+            self.function = symmetric_cut_decorator(self.square_jorgensen_response)
             self.params = lmfit.Parameters()
-            self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
-            self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
-            self.params.add(f"width", value=tstep*1e6, min=tstep*1e6, max= 5000, vary=vary)
+            self.params.add(f"α1", value=3.67, min=0.001, max=1000, vary=vary)
+            self.params.add(f"β1", value=3.06, min=0.001, max=1000, vary=vary)
+            self.params.add(f"width", value=tstep*1e6, min=tstep*1e6, max=5000, vary=vary)
 
         elif kind == "none":
-            self.function = self.empty_response
+            self.function = symmetric_cut_decorator(self.empty_response)
         else:
-            raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'jorgensen' or 'none'.")
+            raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'jorgensen' or 'square_jorgensen', or 'square' or 'none'.")
 
     def register_response(self, response_func, lmfit_params=None, **kwargs):
         """
@@ -58,8 +76,6 @@ class Response:
         lmfit_params (lmfit.Parameters): Optional lmfit.Parameters to define limits and vary.
         kwargs: Default parameter values for the response function.
         """
-        
-
         # Detect parameters of the response function
         sig_params = inspect.signature(response_func).parameters
         for param, default in kwargs.items():
@@ -68,13 +84,23 @@ class Response:
             else:
                 raise ValueError(f"Parameter '{param}' not found in the response function signature.")
             
-        self.function = response_func.pdf(self.tgrid)
+        def symmetric_cut_decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                result = func(*args, **kwargs)
+                if self.cut_symmetric:
+                    return self.cut_array_symmetric(result, self.cut_threshold)
+                return result
+            return wrapper
+
+        self.function = symmetric_cut_decorator(lambda *args, **kwargs: response_func.pdf(self.tgrid))
 
         # Use optional lmfit.Parameters to customize limits and vary
         if lmfit_params:
             for name, param in lmfit_params.items():
                 if name in self.params:
                     self.params[name].set(value=param.value, vary=param.vary, min=param.min, max=param.max)
+                    
 
     def cut_array_symmetric(self, arr, threshold):
         """
@@ -159,7 +185,7 @@ class Response:
             β1 = [β1, 0]
         
         # Generate x values
-        x = self.Δλ
+        x = self.λgrid
         
         # Calculate parameters using d-spacing of 1.0 as in original code
         d = 1.0
@@ -231,7 +257,7 @@ class Response:
             β1 = [β1, 0]
         
         # Generate x values
-        x = self.Δλ
+        x = self.λgrid
         
         # Calculate parameters using d-spacing of 1.0 as in original code
         d = 1.0
@@ -286,12 +312,13 @@ class Response:
             return np.nan_to_num(profile, 0)
     
 
-    def plot(self, params=None, **kwargs):
+    def plot(self, params=None, by_tof=False, **kwargs):
         """
         Plots the response function.
 
         Parameters:
         params (dict): Parameters for the response function.
+        by_tof (bool): If True plots the response function by time of flight, otherwise use wavelength bininng
         **kwargs: Additional arguments for plot customization.
         """
         ax = kwargs.pop("ax", plt.gca())
@@ -299,14 +326,15 @@ class Response:
 
         params = params if params else self.params
         y = self.function(**params.valuesdict())
-        if self.kind == "jorgensen":
+        if by_tof:
+            xlabel = kwargs.pop("xlabel", "TOF [usec]")
+            df = pd.Series(y, index=self.tgrid*1e6, name="Response")
+        else:
             xlabel = kwargs.pop("xlabel", "wavelength [Angstrom]")
-            df = pd.Series(y, index=self.Δλ, name="Response")
-            df.plot(ax=ax, xlabel=xlabel, **kwargs)
-        elif self.kind == "square":
-            xlabel = kwargs.pop("xlabel", "tof [usec]")
-            df = pd.Series(y, index=self.tgrid, name="Response")
-            df.plot(ax=ax, xlabel=xlabel, **kwargs)       
+            df = pd.Series(y, index=self.λgrid, name="Response")
+        
+        df.plot(ax=ax, xlabel=xlabel, **kwargs)
+
 
 
 class Background:

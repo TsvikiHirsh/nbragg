@@ -138,6 +138,8 @@ class Data:
         # Read signal and open beam counts
         signal = cls._read_counts(signal)
         openbeam = cls._read_counts(openbeam)
+
+
         
         # Convert tof to energy using provided time step and distance
         signal["energy"] = utils.time2energy(signal["tof"] * tstep, L)
@@ -178,11 +180,13 @@ class Data:
         self_data = cls()
         self_data.table = df
         self_data.tgrid = signal["tof"]
+        self_data.L = L
+        self_data.tstep = tstep
         
         return self_data
 
     @classmethod
-    def from_transmission(cls, filename: str, index: str ="wavelength"):
+    def from_transmission(cls, filename: str, index: str ="wavelength", L:float = 9.):
         """
         Creates a Data object directly from a transmission data file containing energy, transmission, and error values.
         Converts energy to wavelength and sets wavelength as the index.
@@ -193,6 +197,7 @@ class Data:
             Path to the file containing the transmission data (energy, transmission, error) separated by whitespace.
         index : str 
             Optional energy to wavelegth convertion: If the index is "energy" it will be converted to wavelength
+        L: float - flight path length [m]
         
         Returns:
         --------
@@ -210,6 +215,9 @@ class Data:
         # Create Data object and assign the dataframe with wavelength as index
         self_data = cls()
         self_data.table = df#.set_index("wavelength")
+        λstep = df["wavelength"].iloc[1] - df["wavelength"].iloc[0]
+        self_data.L = L
+        self_data.tstep = λstep/3956.034*self_data.L
         
         return self_data
     
