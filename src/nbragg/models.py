@@ -91,9 +91,10 @@ class TransmissionModel(lmfit.Model):
 
 
         self.response = None
-        self.respone_kind = response
+        self.response_kind = response
+
         if vary_response is not None:
-            self.response = Response(kind=response,vary=vary_response)
+            self.response = Response(kind=self.response_kind,vary=vary_response)
             if list(self.response.params.keys())[0] in self.params:
                 for param_name in self.params.keys():
                     self.params[param_name].vary = vary_response 
@@ -249,9 +250,11 @@ class TransmissionModel(lmfit.Model):
             )
 
         elif isinstance(data, Data):
+            tstep = data.tstep
+            L = data.L
             data = data.table.query(f"{wlmin} < wavelength < {wlmax}")
             weights = kwargs.get("weights", 1. / data["err"].values)
-            self.response = Response(kind=self.response_kind,tstep=data.tstep, flight_path_length=data.L)
+            self.response = Response(kind=self.response_kind,tstep=tstep, flight_path_length=L)
             fit_result = super().fit(
                 data["trans"].values,
                 params=params or self.params,
