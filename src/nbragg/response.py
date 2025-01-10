@@ -122,17 +122,17 @@ class Response:
         tof_response /= np.sum(tof_response)
         return tof_response
 
-    def jorgensen_response(self, α1, β1, σ=None, **kwargs):
+    def jorgensen_response(self, α0, β0, σ1=None, **kwargs):
         """
         Calculates the Jorgensen peak profile function with Greek Unicode parameters.
         
         Parameters:
         -----------
-        α1 : float or list/tuple
-            Alpha parameter [α1₁, α1₂] or single value α1₁ (α1₂ defaults to 0)
-        β1 : float or list/tuple
-            Beta parameter [β1₁, β1₂] or single value β1₁ (β1₂ defaults to 0)
-        σ : list/tuple, optional
+        α0 : float or list/tuple
+            Alpha parameter [α0₁, α0₂] or single value α0₁ (α0₂ defaults to 0)
+        β0 : float or list/tuple
+            Beta parameter [β0₁, β0₂] or single value β0₁ (β0₂ defaults to 0)
+        σ1 : list/tuple, optional
             Sigma parameters [σ₁, σ₂, σ₃], defaults to [0, 0, 0]
         
         Returns:
@@ -141,39 +141,39 @@ class Response:
             Normalized profile values with NaN values replaced by 0
         """
         # Handle input parameters
-        if σ is None:
-            σ = [0, 0, 0]
+        if σ1 is None:
+            σ1 = [0, 0, 0]
         
         # Convert single values to lists with 0 as second element
-        if not isinstance(α1, (list, tuple)):
-            α1 = [α1, 0]
-        if not isinstance(β1, (list, tuple)):
-            β1 = [β1, 0]
+        if not isinstance(α0, (list, tuple)):
+            α0 = [α0, 0]
+        if not isinstance(β0, (list, tuple)):
+            β0 = [β0, 0]
         
         # Generate x values
         x = self.Δλ
         
         # Calculate parameters using d-spacing of 1.0 as in original code
         d = 1.0
-        α1_calc = α1[0] + α1[1]/d
-        β1_calc = β1[0] + β1[1]/d**4
-        σ_calc = np.sqrt(σ[0]**2 + (σ[1]*d)**2 + (σ[2]*d*d)**2)
+        α0_calc = α0[0] + α0[1]/d
+        β0_calc = β0[0] + β0[1]/d**4
+        σ1_calc = np.sqrt(σ1[0]**2 + (σ1[1]*d)**2 + (σ1[2]*d*d)**2)
         
         # Constants
         sqrt2 = np.sqrt(2)
-        σ2 = σ_calc * σ_calc
+        σ2 = σ1_calc * σ1_calc
         
         # Scaling factor
-        scale = α1_calc * β1_calc / 2 / (α1_calc + β1_calc)
+        scale = α0_calc * β0_calc / 2 / (α0_calc + β0_calc)
         
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
             # Calculate intermediate terms
-            u = α1_calc/2 * (α1_calc*σ2 + 2*x)
-            v = β1_calc/2 * (β1_calc*σ2 - 2*x)
-            y = (α1_calc*σ2 + x)/(sqrt2*σ_calc)
-            z = (β1_calc*σ2 - x)/(sqrt2*σ_calc)
+            u = α0_calc/2 * (α0_calc*σ2 + 2*x)
+            v = β0_calc/2 * (β0_calc*σ2 - 2*x)
+            y = (α0_calc*σ2 + x)/(sqrt2*σ1_calc)
+            z = (β0_calc*σ2 - x)/(sqrt2*σ1_calc)
             
             # Calculate profile with special handling for numerical stability
             term1 = np.exp(u) * erfc(y)
@@ -192,17 +192,88 @@ class Response:
             # Replace any NaN values with 0
             return np.nan_to_num(profile, 0)
         
-    def square_jorgensen_response(self, α1=3.67, β1=3, σ=None, width=None, **kwargs):
+    def full_jorgensen_response(self, wl=4., α0=3.67, β0=3.04, σ1=0.6e-3, **kwargs):
+        """
+        Calculates the Jorgensen peak profile function.
+        
+        Parameters:
+        -----------
+        wl : array of wavelengths
+        α0 : float or list/tuple
+            Alpha parameter [α0, α0] or single value α0 (α0 defaults to 0)
+        β0 : float or list/tuple
+            Beta parameter [β0, β0] or single value β0 (β0 defaults to 0)
+        σ1 : list/tuple, optional
+            Sigma parameters [σ1₁, σ1₂, σ1₃], defaults to [0, 1, 0]
+        
+        Returns:
+        --------
+        numpy.ndarray
+            Normalized profile values with NaN values replaced by 0
+        """
+        # Handle input parameters
+        if not isinstance(σ1, (list, tuple)):
+            σ1 = [0, σ1, 0]
+        
+        # Convert single values to lists with 0 as second element
+        if not isinstance(α0, (list, tuple)):
+            α0 = [α0, 0]
+        if not isinstance(β0, (list, tuple)):
+            β0 = [β0, 0]
+        
+        # Generate x values
+        x = self.λgrid
+        
+        # Calculate parameters using d-spacing =wl/2
+        d = wl/2.
+        α0_calc = α0[0] + α0[1]/d
+        β0_calc = β0[0] + β0[1]/d**4
+        σ1_calc = np.sqrt(σ1[0]**2 + (σ1[1]*d)**2 + (σ1[2]*d*d)**2)
+        
+        # Constants
+        sqrt2 = np.sqrt(2)
+        σ2 = σ1_calc * σ1_calc
+        
+        # Scaling factor
+        scale = α0_calc * β0_calc / 2 / (α0_calc + β0_calc)
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            
+            # Calculate intermediate terms
+            u = α0_calc/2 * (α0_calc*σ2 + 2*x)
+            v = β0_calc/2 * (β0_calc*σ2 - 2*x)
+            y = (α0_calc*σ2 + x)/(sqrt2*σ1_calc)
+            z = (β0_calc*σ2 - x)/(sqrt2*σ1_calc)
+            
+            # Calculate profile with special handling for numerical stability
+            term1 = np.exp(u) * erfc(y)
+            term2 = np.exp(v) * erfc(z)
+            
+            # Zero out terms where erfc is zero to avoid NaN
+            term1[erfc(y) == 0] = 0
+            term2[erfc(z) == 0] = 0
+            
+            # Calculate profile
+            profile = scale * (term1 + term2)
+            
+            # Normalize
+            profile = profile / np.sum(profile)
+            
+            # Replace any NaN values with 0
+            return np.nan_to_num(profile, 0)
+        
+    def square_jorgensen_response(self, α0=3.67, β0=3, σ1=None, width=None, **kwargs):
         """
         Calculates the Jorgensen peak profile function with an additional square width parameter.
         
         Parameters:
         -----------
-        α1 : float or list/tuple
-            Alpha parameter [α1₁, α1₂] or single value α1₁ (α1₂ defaults to 0)
-        β1 : float or list/tuple
-            Beta parameter [β1₁, β1₂] or single value β1₁ (β1₂ defaults to 0)
-        σ : list/tuple, optional
+        α0 : float or list/tuple
+            Alpha parameter [α0, α0] or single value α0 (α0 defaults to 0)
+        β0 : float or list/tuple
+            Beta parameter [β0, β0] or single value β0 (β0 defaults to 0)
+        σ1 : list/tuple, optional
             Sigma parameters [σ₁, σ₂, σ₃], defaults to [0, 0, 0]
         width : float, optional
             Square width to broaden the response [usec]
@@ -213,39 +284,39 @@ class Response:
             Normalized profile values with NaN values replaced by 0
         """
         # Handle input parameters
-        if σ is None:
-            σ = [0, 0, 0]
+        if σ1 is None:
+            σ1 = [0, 0, 0]
         
         # Convert single values to lists with 0 as second element
-        if not isinstance(α1, (list, tuple)):
-            α1 = [α1, 0]
-        if not isinstance(β1, (list, tuple)):
-            β1 = [β1, 0]
+        if not isinstance(α0, (list, tuple)):
+            α0 = [α0, 0]
+        if not isinstance(β0, (list, tuple)):
+            β0 = [β0, 0]
         
         # Generate x values
         x = self.Δλ
         
         # Calculate parameters using d-spacing of 1.0 as in original code
         d = 1.0
-        α1_calc = α1[0] + α1[1]/d
-        β1_calc = β1[0] + β1[1]/d**4
-        σ_calc = np.sqrt(σ[0]**2 + (σ[1]*d)**2 + (σ[2]*d*d)**2)
+        α0_calc = α0[0] + α0[1]/d
+        β0_calc = β0[0] + β0[1]/d**4
+        σ1_calc = np.sqrt(σ1[0]**2 + (σ1[1]*d)**2 + (σ1[2]*d*d)**2)
         
         # Constants
         sqrt2 = np.sqrt(2)
-        σ2 = σ_calc * σ_calc
+        σ2 = σ1_calc * σ1_calc
         
         # Scaling factor
-        scale = α1_calc * β1_calc / 2 / (α1_calc + β1_calc)
+        scale = α0_calc * β0_calc / 2 / (α0_calc + β0_calc)
         
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
             # Calculate intermediate terms
-            u = α1_calc/2 * (α1_calc*σ2 + 2*x)
-            v = β1_calc/2 * (β1_calc*σ2 - 2*x)
-            y = (α1_calc*σ2 + x)/(sqrt2*σ_calc)
-            z = (β1_calc*σ2 - x)/(sqrt2*σ_calc)
+            u = α0_calc/2 * (α0_calc*σ2 + 2*x)
+            v = β0_calc/2 * (β0_calc*σ2 - 2*x)
+            y = (α0_calc*σ2 + x)/(sqrt2*σ1_calc)
+            z = (β0_calc*σ2 - x)/(sqrt2*σ1_calc)
             
             # Calculate profile with special handling for numerical stability
             term1 = np.exp(u) * erfc(y)
