@@ -2,6 +2,9 @@ from nbragg import utils
 import pandas as pd
 import numpy as np
 import NCrystal as NC
+from scipy.interpolate import UnivariateSpline, RectBivariateSpline
+
+
 
 class Data:
     """
@@ -27,6 +30,7 @@ class Data:
         """
         self.table = None
         self.tgrid = None
+         self.original_table = None  # Store original data for rebinning
     
     @classmethod
     def _read_counts(cls, input_data, names=None):
@@ -220,6 +224,48 @@ class Data:
         self_data.tstep = λstep/3956.034*self_data.L
         
         return self_data
+
+    def rebin(self, binwidth):
+        """
+        Rebin the data to new time bins.
+        
+        Parameters
+        ----------
+        binwidth : float
+            New bin width in microseconds
+        """
+        if self.original_table is None:
+            self.original_table = self.table.copy()
+            
+        # Convert binwidth from microseconds to seconds
+        binwidth_s = binwidth * 1e-6
+        
+        # Create new time grid
+        tmax = self.tgrid.max()
+        new_tgrid = np.arange(0, tmax + binwidth_s, binwidth_s)
+        
+        # Prepare data for rebinning
+        old_edges = np.r_[0, self.tgrid.values]
+        new_edges = new_tgrid
+        
+        # Rebin the data
+        rebinned_trans = rebin(old_edges, self.original_table['trans'].values, new_edges)
+        rebinned_err = np.sqrt(rebin(old_edges, self.original_table['err'].values**2, new_edges))
+        
+        # Calculate wavelength for new time grid
+        energy = utils.time2energy(new_tgrid[1:], self.L)
+        wavelength = np.array([NC.ekin2wl(e) for e in energy])
+        
+        # Update table with rebinned data
+        self.table = pd.DataFrame({
+            'wavelength': wavelength,
+            'trans': rebinned_trans,
+            'err': rebinned_err
+        })
+        
+        # Update time grid
+        self.tgrid = pd.Series(new_tgrid[1:])
+        self.tstep = binwidth_s
     
     def plot(self, **kwargs):
         """
@@ -258,3 +304,87 @@ class Data:
         return self.table.dropna().plot(x="wavelength",y="trans", yerr="err",
                                         xlim=xlim, ylim=ylim, logx=logx, ecolor=ecolor,
                                         xlabel=xlabel, ylabel=ylabel, **kwargs)
+
+
+
+class BoundedUnivariateSpline(UnivariateSpline):
+    """1D spline that returns a constant for x outside the specified domain."""
+    def __init__(self, x, y, fill_value=0.0, **kwargs):
+        self.bnds = [x[0], x[-1]]
+        self.fill_value = fill_value
+        UnivariateSpline.__init__(self, x, y, **kwargs)
+        
+    def is_outside_domain(self, x):
+        x = np.asarray(x)
+        return np.logical_or(x < self.bnds[0], x > self.bnds[1])
+        
+    def __call__(self, x):
+        outside = self.is_outside_domain(x)
+        return np.where(outside, self.fill_value, UnivariateSpline.__call__(self, x))
+        
+    def integral(self, a, b):
+        below_dx = np.max([0., self.bnds[0]-a])
+        above_dx = np.max([0., b-self.bnds[1]])
+        outside_contribution = (below_dx + above_dx) * self.fill_value
+        a_f = np.max([a, self.bnds[0]])
+        b_f = np.min([b, self.bnds[1]])
+        if a_f >= b_f:
+            return outside_contribution
+        else:
+            return outside_contribution + UnivariateSpline.integral(self, a_f, b_f)
+
+def rebin(x1, y1, x2, interp_kind=3):
+    """
+    Rebin histogram values y1 from old bin edges x1 to new edges x2.
+    
+    Parameters
+    ----------
+    x1 : array_like
+        Old bin edges
+    y1 : array_like
+        Old histogram values
+    x2 : array_like
+        New bin edges
+    interp_kind : int or str, optional
+        Interpolation type (3 for cubic spline or 'piecewise_constant')
+        
+    Returns
+    -------
+    array_like
+        Rebinned histogram values
+    """
+    if interp_kind == 'piecewise_constant':
+        return rebin_piecewise_constant(x1, y1, x2)
+    else:
+        return rebin_spline(x1, y1, x2, interp_kind=interp_kind)
+
+def rebin_spline(x1, y1, x2, interp_kind):
+    """Rebin using spline interpolation."""
+    m = y1.size
+    n = x2.size - 1
+    
+    x1_mid = (x1[:-1] + x1[1:]) / 2
+    xx = np.hstack([x1[0], x1_mid, x1[-1]])
+    yy = np.hstack([y1[0], y1, y1[-1]])
+    
+    spline = BoundedUnivariateSpline(xx, yy, s=0., k=interp_kind)
+    areas1 = np.array([spline.integral(x1[i], x1[i+1]) for i in range(m)])
+    
+    x1_in_x2 = x1[np.logical_and(x1 > x2[0], x1 < x2[-1])]
+    indices = np.searchsorted(x2, x1_in_x2)
+    subbin_edges = np.insert(x2, indices, x1_in_x2)
+    
+    subbin_areas = np.array([spline.integral(subbin_edges[i], subbin_edges[i+1]) 
+                            for i in range(subbin_edges.size-1)])
+    
+    subbin_mid = (subbin_edges[:-1] + subbin_edges[1:]) / 2
+    sub2old = np.searchsorted(x1, subbin_mid) - 1
+    sub2new = np.searchsorted(x2, subbin_mid) - 1
+    
+    y2 = np.zeros(n)
+    for i in range(subbin_mid.size):
+        if sub2old[i] == -1 or sub2old[i] == x1.size-1:
+            continue
+        y2[sub2new[i]] += (y1[sub2old[i]] * subbin_areas[i] / areas1[sub2old[i]])
+    
+    return y2
