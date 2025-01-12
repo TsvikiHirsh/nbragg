@@ -30,7 +30,7 @@ class Data:
         """
         self.table = None
         self.tgrid = None
-         self.original_table = None  # Store original data for rebinning
+        self.original_table = None  # Store original data for rebinning
     
     @classmethod
     def _read_counts(cls, input_data, names=None):
