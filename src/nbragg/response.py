@@ -29,8 +29,8 @@ class Response:
         if kind == "jorgensen":
             self.function = self.jorgensen_response
             self.params = lmfit.Parameters()
-            self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
-            self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"α0", value=3.67, min=0.001, max= 10000, vary=vary)
+            self.params.add(f"β0", value=3.06, min=0.001, max= 10000, vary=vary)
 
         elif kind == "square":
             self.function = self.square_response
@@ -40,9 +40,16 @@ class Response:
         elif kind == "square_jorgensen":
             self.function = self.square_jorgensen_response
             self.params = lmfit.Parameters()
-            self.params.add(f"α1", value=3.67, min=0.001, max= 1000, vary=vary)
-            self.params.add(f"β1", value=3.06, min=0.001, max= 1000, vary=vary)
+            self.params.add(f"α0", value=3.67, min=0.001, max= 10000, vary=vary)
+            self.params.add(f"β0", value=3.06, min=0.001, max= 10000, vary=vary)
             self.params.add(f"width", value=tstep*1e6, min=tstep*1e6, max= 5000, vary=vary)
+
+        elif kind == "full_jorgensen":
+            self.function = self.full_jorgensen_response
+            self.params = lmfit.Parameters()
+            self.params.add(f"α0", value=3.67, min=0.001, max= 10000, vary=vary)
+            self.params.add(f"β0", value=3.06, min=0.001, max= 10000, vary=vary)
+            self.params.add(f"σ1", value=2.5e-3, min=1e-6, max= 100e-3, vary=vary)
 
         elif kind == "none":
             self.function = self.empty_response
