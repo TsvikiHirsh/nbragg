@@ -11,19 +11,23 @@ import nbragg.utils as utils
 
 class Response:
     def __init__(self, kind="jorgensen", vary: bool = False,
-                 wlstep:float =0.1,tstep:float =10e-6):
+                 wlstep:float =0.1,tstep:float =10e-6, cut_threshold: float=1e-6):
         """
         Initializes the Response object with specified parameters.
 
         Parameters:
         kind (str): The type of response function to use. Options are 'jorgensen', 'square', 'square_jorgensen' or 'none'.
         vary (bool): If True, the parameters can vary during fitting. Default is False.
+        wlstep (float, optional): wavelength step size (Angstrom)
+        tstep (float, optional): time step size (s)
+        cut_threshold (float, optional): threshold to cut the response function
         """
         self.wlstep = wlstep
         self.params = lmfit.Parameters()
-        self.Δλ = np.arange(-20, 20, self.wlstep)
-        self.tgrid = np.arange(-0.005,0.005,tstep) # grid for time based response -5ms to 5ms with 10usec bin size
+        self.Δλ = np.arange(-15, 15, self.wlstep)
+        self.tgrid = np.arange(-0.004,0.004,tstep) # grid for time based response -5ms to 5ms with 10usec bin size
         self.kind = kind
+        self.cut_threshold = cut_threshold
 
         # Choose the response function
         if kind == "jorgensen":
@@ -120,6 +124,7 @@ class Response:
         loc = -0.5*width if center else 0.
         tof_response = uniform.pdf(self.tgrid,loc=loc,scale=width)
         tof_response /= np.sum(tof_response)
+        tof_response = self.cut_array_symmetric(tof_response,self.cut_threshold)
         return tof_response
 
     def jorgensen_response(self, α0, β0, σ1=None, **kwargs):
@@ -190,7 +195,10 @@ class Response:
             profile = profile / np.sum(profile)
             
             # Replace any NaN values with 0
-            return np.nan_to_num(profile, 0)
+            profile = np.nan_to_num(profile, 0)
+
+            # cut symmetric
+            return self.cut_array_symmetric(profile,self.cut_threshold)
         
     def full_jorgensen_response(self, wl=4., α0=3.67, β0=3.04, σ1=0.6e-3, **kwargs):
         """
@@ -222,7 +230,7 @@ class Response:
             β0 = [β0, 0]
         
         # Generate x values
-        x = self.λgrid
+        x = self.Δλ
         
         # Calculate parameters using d-spacing =wl/2
         d = wl/2.
@@ -261,7 +269,10 @@ class Response:
             profile = profile / np.sum(profile)
             
             # Replace any NaN values with 0
-            return np.nan_to_num(profile, 0)
+            profile = np.nan_to_num(profile, 0)
+
+            # cut symmetric
+            return self.cut_array_symmetric(profile,self.cut_threshold)
         
     def square_jorgensen_response(self, α0=3.67, β0=3, σ1=None, width=None, **kwargs):
         """
@@ -346,7 +357,10 @@ class Response:
             profile = profile / np.sum(profile)
             
             # Replace any NaN values with 0
-            return np.nan_to_num(profile, 0)
+            profile = np.nan_to_num(profile, 0)
+
+            # cut symmetric
+            return self.cut_array_symmetric(profile,self.cut_threshold)
     
 
     def plot(self, params=None, **kwargs):
