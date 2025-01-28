@@ -24,8 +24,8 @@ class Response:
         """
         self.wlstep = wlstep
         self.params = lmfit.Parameters()
-        self.Δλ = np.arange(-15, 15, self.wlstep)
-        self.tgrid = np.arange(-0.004,0.004,tstep) # grid for time based response -5ms to 5ms with 10usec bin size
+        self.Δλ = np.arange(-15, 15.00001, self.wlstep)
+        self.tgrid = np.arange(-0.004,0.0040001,tstep) # grid for time based response -5ms to 5ms with 10usec bin size
         self.kind = kind
         self.cut_threshold = cut_threshold
 
@@ -108,7 +108,9 @@ class Response:
         left_bound = center_idx - max(left_idx, right_idx)
         right_bound = center_idx + max(left_idx, right_idx) + 1  # Ensure odd length
 
-        return arr[left_bound:right_bound]
+        response = arr[left_bound:right_bound]
+
+        return response / np.sum(response)
 
     def empty_response(self, **kwargs):
         """
