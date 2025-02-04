@@ -535,7 +535,7 @@ class CrossSection:
         self._populate_material_data()
         
         title = kwargs.pop("title", self.name)
-        ylabel = kwargs.pop("ylabel", "$\sigma$ [barn]")
+        ylabel = kwargs.pop("ylabel", "σ [barn]")
         xlabel = kwargs.pop("xlabel", "Wavelength [Å]")
         lw = kwargs.pop("lw", 1.)
 
