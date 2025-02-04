@@ -128,19 +128,19 @@ class CrossSection:
     
     def _create_virtual_materials(self):
         """
-        Process NCMAT file by creating a template with full @CELL section replacement
-        
-        Args:
-            input_text (str): Contents of the NCMAT file
+        Process NCMAT files by creating individual templates for each material
         """
-        # Save entire input text
+        # Initialize dictionaries to store material-specific data
         self.textdata = {}
-        for material in self.materials:
-            self.textdata[material] = nc.createTextData(self.materials[material]["mat"]).rawData
+        self.datatemplate = {}
         
+        for material in self.materials:
+            # Save entire input text
+            self.textdata[material] = nc.createTextData(self.materials[material]["mat"]).rawData
+            
             # Split input into lines
             lines = self.textdata[material].split('\n')
-        
+            
             # Find @CELL section
             cell_start = None
             cell_end = None
@@ -160,81 +160,93 @@ class CrossSection:
                 elif ext_start is not None and line.strip().startswith('@'):
                     ext_end = i
                     break
-                
-            ext_start = len(lines) if ext_start==None else ext_start
-            ext_end = len(lines) if ext_end==None else ext_end
-            cell_start = len(lines) if cell_start==None else cell_start
-            cell_end = len(lines) if cell_end==None else cell_end
+            
+            # Handle cases where sections might be missing
+            ext_start = len(lines) if ext_start is None else ext_start
+            ext_end = len(lines) if ext_end is None else ext_end
+            cell_start = len(lines) if cell_start is None else cell_start
+            cell_end = len(lines) if cell_end is None else cell_end
 
-            # in case the @CELL section appears first
-            if cell_start<ext_start:
-
-                # Create list of lines before @CELL
+            # Determine template creation strategy based on section order
+            if cell_start < ext_start:
+                # @CELL section appears first
                 pre_cell_lines = lines[:cell_start + 1]
-                
-                # Create list of lines after @CELL section
                 post_cell_lines = lines[cell_end:ext_start+1]
-                
-                # Create list of lines after @CRYSEXTN section
                 post_ext_lines = lines[ext_end:] if ext_end else []
                 
-                # Create template with single f-string placeholder
-                self.datatemplate = '\n'.join(pre_cell_lines + ['**cell_section**'] + post_cell_lines + ['**extinction_section**'] + post_ext_lines)
+                self.datatemplate[material] = '\n'.join(
+                    pre_cell_lines + 
+                    ['**cell_section**'] + 
+                    post_cell_lines + 
+                    ['**extinction_section**'] + 
+                    post_ext_lines
+                )
             else:
-                # Create list of lines before @CRYSEXTN
+                # @CUSTOM_CRYSEXTN section appears first
                 pre_ext_lines = lines[:ext_start + 1]
-                
-                # Create list of lines after @CRYSEXTN section
                 post_ext_lines = lines[ext_end:cell_start+1]
-                
-                # Create list of lines after @CELLS section
                 post_cell_lines = lines[cell_end:] if cell_end else []
                 
-                # Create template with single f-string placeholder
-                self.datatemplate = '\n'.join(pre_ext_lines + ['**extinction_section**'] + post_ext_lines + ['**cell_section**'] + post_cell_lines)
+                self.datatemplate[material] = '\n'.join(
+                    pre_ext_lines + 
+                    ['**extinction_section**'] + 
+                    post_ext_lines + 
+                    ['**cell_section**'] + 
+                    post_cell_lines
+                )
 
-            ext_lines = lines[ext_start+1] if ext_start<len(lines) else ""
+            # Handle extinction information if present
+            ext_lines = lines[ext_start+1] if ext_start < len(lines) else ""
             
             if ext_lines:
-                ext_info = self._extinction_info(material,extinction_lines=ext_lines)
+                self._extinction_info(material, extinction_lines=ext_lines)
 
-            if hasattr(self,"phases_data"):
-                self._update_ncmat_parameters(material)
-            else:
-                # save original rawdata in nbragg file name
-                nc.registerInMemoryFileData(self.materials[material]["mat"].replace("ncmat","nbragg"),self.textdata[material])
-
+            # Save original rawdata in nbragg file name
+            nc.registerInMemoryFileData(
+                self.materials[material]["mat"].replace("ncmat", "nbragg"), 
+                self.textdata[material]
+            )
 
     def _update_ncmat_parameters(self, material: str, **kwargs):
-        """Update the virtual material with lattice parametrs
         """
-        updated_cells = self._cell_info(material,**kwargs)
-        if material in self.extinction:
-            updated_ext = self._extinction_info(material,**kwargs)
-        else:
-            updated_ext = ""
-
-        self.textdata[material] = self.datatemplate.replace("**cell_section**",updated_cells).replace("**extinction_section**",updated_ext)
-
-        # save original rawdata in nbragg file name
-        nc.registerInMemoryFileData(self.materials[material]["mat"].replace("ncmat","nbragg"),self.textdata[material])
-        
-    
-    def _cell_info(self, material: str, **kwargs) -> str:
-        """
-        Parse crystal cell information and format it for specific output.
+        Update the virtual material with lattice parameters
         
         Args:
-            material (str): material name
-            kwargs (optional): updates to a,b and c parameters in units of Aa
-        
-        Returns:
-            str: Formatted cell information string
+            material (str): Name of the material to update
+            **kwargs: Additional parameters to update
         """
-        cell_dict = self.phases_data[material].info.structure_info
-        cell_dict.update(**kwargs)
-        return f"  lengths {cell_dict['a']:.4f}  {cell_dict['b']:.4f}  {cell_dict['c']:.4f}  \n  angles {cell_dict['alpha']:.4f}  {cell_dict['beta']:.4f}  {cell_dict['gamma']:.4f}"
-    
+        # Ensure we have a template for this specific material
+        if material not in self.datatemplate:
+            return
+
+        # Update cell information
+        updated_cells = self._cell_info(material, **kwargs)
+        
+        # Handle extinction information
+        if material in self.extinction:
+            updated_ext = self._extinction_info(material, **kwargs)
+        else:
+            updated_ext = ""
+        
+        # Create the updated material text using the material-specific template
+        updated_textdata = self.datatemplate[material].replace(
+            "**cell_section**", 
+            updated_cells
+        ).replace(
+            "**extinction_section**", 
+            updated_ext
+        )
+        
+        # Update the textdata for this specific material
+        self.textdata[material] = updated_textdata
+        
+        # Register the in-memory file with the correct material name
+        nc.registerInMemoryFileData(
+            self.materials[material]["mat"].replace("ncmat", "nbragg"), 
+            updated_textdata
+        )
+
+
     def _extinction_info(self, material: str, extinction_lines:str=None, **kwargs)-> str:
         """Parse and update the extinction lines
 
@@ -313,7 +325,7 @@ class CrossSection:
     
     def _generate_cfg_string(self):
         """
-        Generate configuration strings using NCrystal phase notation.
+        Generate configuration strings using NCrystal phase notation with consistent phase ordering.
         Stores individual phase configurations in self.phases dictionary and
         creates a combined configuration string in self.cfg_string.
         """
@@ -322,27 +334,29 @@ class CrossSection:
             self.phases = {}
             return
 
+        # Sort materials by their keys to ensure consistent ordering
+        sorted_materials = dict(sorted(self.materials.items()))
+        
         phase_parts = []
         self.phases = {}
-
         # Calculate the sum of weights for normalization
-        total = sum(spec['weight'] for spec in self.materials.values())
-
-        for name, spec in self.materials.items():
+        total = sum(spec['weight'] for spec in sorted_materials.values())
+        
+        for name, spec in sorted_materials.items():
             material = spec['mat']
             if not material:
                 continue
-
+                
             # Normalize the weight for NCrystal configuration
             normalized_weight = spec['weight'] / total if total > 0 else spec['weight']
             phase = f"{normalized_weight}*{material}"
             single_phase = f"{material}"
-
+            
             # Collect material-specific parameters
             params = []
             if spec['temp'] is not None:
                 params.append(f"temp={spec['temp']}K")
-
+                
             # Determine if the material is oriented
             mos = spec.get('mos', None)
             dir1 = spec.get('dir1', None)
@@ -350,9 +364,8 @@ class CrossSection:
             dirtol = spec.get('dirtol', None)
             theta = spec.get('theta', None)
             phi = spec.get('phi', None)
-
+            
             is_oriented = mos is not None or dir1 is not None or dir2 is not None
-
             if is_oriented:
                 # Apply default values if not provided
                 mos = mos if mos is not None else 0.001
@@ -361,36 +374,31 @@ class CrossSection:
                 dirtol = dirtol if dirtol is not None else 1.
                 theta = theta if theta is not None else 0.
                 phi = phi if phi is not None else 0.
-
+                
                 # Format the orientation vectors with NCrystal-specific notation
                 orientation = self.format_orientations(dir1, dir2, theta=theta, phi=phi)
                 dir1_str = f"@crys_hkl:{orientation['dir1'][0]:.8f},{orientation['dir1'][1]:.8f},{orientation['dir1'][2]:.8f}@lab:0,0,1"
                 dir2_str = f"@crys_hkl:{orientation['dir2'][0]:.8f},{orientation['dir2'][1]:.8f},{orientation['dir2'][2]:.8f}@lab:0,1,0"
-
+                
                 params.append(f"mos={mos}deg")
                 params.append(f"dirtol={dirtol}deg")
                 params.append(f"dir1={dir1_str}")
                 params.append(f"dir2={dir2_str}")
-
+                
             # Combine parameters with the phase if any exist
             if params:
-                phase += f";{';'.join(params)}"
-                single_phase += f";{';'.join(params)}"
-
+                phase += f";{';'.join(sorted(params))}"  # Sort parameters for consistency
+                single_phase += f";{';'.join(sorted(params))}"
+                
             # Store the individual phase configuration in the dictionary and replace materials with virtual mat
-            self.phases[name] = single_phase.replace("ncmat","nbragg")
-            
-
+            self.phases[name] = single_phase.replace("ncmat", "nbragg")
             # Add to the list for the combined configuration string
             phase_parts.append(phase)
-
+            
         # Generate the complete configuration string
         self.cfg_string = f"phases<{'&'.join(phase_parts)}>" if phase_parts else ""
-
         # replace materials with virtual materials
-        self.cfg_string = self.cfg_string.replace("ncmat","nbragg")
-        
-
+        self.cfg_string = self.cfg_string.replace("ncmat", "nbragg")
 
     def _load_material_data(self):
         """Load the material data using NCrystal with the phase configuration."""
