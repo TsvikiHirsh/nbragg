@@ -268,9 +268,11 @@ class TransmissionModel(lmfit.Model):
         self.fit_result = fit_result
         fit_result.plot = self.plot  # Modify the plot method
         fit_result.plot_total_xs = self.plot_total_xs
-        fit_result.response = self.response
-        fit_result.response.params = fit_result.params
-        fit_result.background = self.background
+        if self.response != None:
+            fit_result.response = self.response
+            fit_result.response.params = fit_result.params
+        if self.background != None:
+            fit_result.background = self.background
 
         return fit_result
     
