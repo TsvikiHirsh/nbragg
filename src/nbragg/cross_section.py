@@ -756,3 +756,19 @@ class CrossSection:
         
         # If no information available, return None
         return None
+    
+
+    def _cell_info(self, material: str, **kwargs) -> str:
+        """
+        Parse crystal cell information and format it for specific output.
+        
+        Args:
+            material (str): material name
+            kwargs (optional): updates to a,b and c parameters in units of Aa
+        
+        Returns:
+            str: Formatted cell information string
+        """
+        cell_dict = self.phases_data[material].info.structure_info
+        cell_dict.update(**kwargs)
+        return f"  lengths {cell_dict['a']:.4f}  {cell_dict['b']:.4f}  {cell_dict['c']:.4f}  \n  angles {cell_dict['alpha']:.4f}  {cell_dict['beta']:.4f}  {cell_dict['gamma']:.4f}"
