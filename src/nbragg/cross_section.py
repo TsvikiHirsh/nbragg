@@ -126,9 +126,12 @@ class CrossSection:
 
         return processed
     
+
     def _create_virtual_materials(self):
         """
-        Process NCMAT files by creating individual templates for each material
+        Process NCMAT files by creating individual templates for each material.
+        Handles both crystalline (with @CELL and/or @CUSTOM_CRYSEXTN) and 
+        non-crystalline (no @CELL or @CUSTOM_CRYSEXTN) materials.
         """
         # Initialize dictionaries to store material-specific data
         self.textdata = {}
@@ -141,67 +144,74 @@ class CrossSection:
             # Split input into lines
             lines = self.textdata[material].split('\n')
             
-            # Find @CELL section
-            cell_start = None
-            cell_end = None
-            for i, line in enumerate(lines):
-                if line.strip().startswith('@CELL'):
-                    cell_start = i
-                elif cell_start is not None and line.strip().startswith('@'):
-                    cell_end = i
-                    break
-
-            # Find @CUSTOM_CRYSEXTN section
-            ext_start = None
-            ext_end = None
-            for i, line in enumerate(lines):
-                if line.strip().startswith('@CUSTOM_CRYSEXTN'):
-                    ext_start = i
-                elif ext_start is not None and line.strip().startswith('@'):
-                    ext_end = i
-                    break
+            # Check for presence of @CELL and @CUSTOM_CRYSEXTN sections
+            has_cell = any(line.strip().startswith('@CELL') for line in lines)
+            has_extinction = any(line.strip().startswith('@CUSTOM_CRYSEXTN') for line in lines)
             
-            # Handle cases where sections might be missing
-            ext_start = len(lines) if ext_start is None else ext_start
-            ext_end = len(lines) if ext_end is None else ext_end
-            cell_start = len(lines) if cell_start is None else cell_start
-            cell_end = len(lines) if cell_end is None else cell_end
-
-            # Determine template creation strategy based on section order
-            if cell_start < ext_start:
-                # @CELL section appears first
-                pre_cell_lines = lines[:cell_start + 1]
-                post_cell_lines = lines[cell_end:ext_start+1]
-                post_ext_lines = lines[ext_end:] if ext_end else []
+            if has_cell or has_extinction:
+                # Handle crystalline materials with @CELL and/or @CUSTOM_CRYSEXTN
+                cell_start = None
+                cell_end = None
+                ext_start = None
+                ext_end = None
                 
-                self.datatemplate[material] = '\n'.join(
-                    pre_cell_lines + 
-                    ['**cell_section**'] + 
-                    post_cell_lines + 
-                    ['**extinction_section**'] + 
-                    post_ext_lines
-                )
+                # Find section boundaries
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('@CELL'):
+                        cell_start = i
+                    elif cell_start is not None and line.strip().startswith('@') and i > cell_start:
+                        cell_end = i
+                        break
+                    if line.strip().startswith('@CUSTOM_CRYSEXTN'):
+                        ext_start = i
+                    elif ext_start is not None and line.strip().startswith('@') and i > ext_start:
+                        ext_end = i
+                        break
+                
+                # Default to end of file if sections are not terminated
+                cell_start = cell_start if cell_start is not None else len(lines)
+                cell_end = cell_end if cell_end is not None else len(lines)
+                ext_start = ext_start if ext_start is not None else len(lines)
+                ext_end = ext_end if ext_end is not None else len(lines)
+
+                # Determine template creation strategy based on section order
+                if has_cell and (not has_extinction or cell_start < ext_start):
+                    # @CELL section appears first or is the only section
+                    pre_cell_lines = lines[:cell_start + 1]
+                    post_cell_lines = lines[cell_end:ext_start + 1] if has_extinction else lines[cell_end:]
+                    post_ext_lines = lines[ext_end:] if has_extinction else []
+                    
+                    self.datatemplate[material] = '\n'.join(
+                        pre_cell_lines + 
+                        ['**cell_section**'] + 
+                        post_cell_lines + 
+                        (['**extinction_section**'] + post_ext_lines if has_extinction else [])
+                    )
+                elif has_extinction:
+                    # @CUSTOM_CRYSEXTN section appears first or is the only section
+                    pre_ext_lines = lines[:ext_start + 1]
+                    post_ext_lines = lines[ext_end:cell_start + 1] if has_cell else lines[ext_end:]
+                    post_cell_lines = lines[cell_end:] if has_cell else []
+                    
+                    self.datatemplate[material] = '\n'.join(
+                        pre_ext_lines + 
+                        ['**extinction_section**'] + 
+                        post_ext_lines + 
+                        (['**cell_section**'] + post_cell_lines if has_cell else [])
+                    )
+
+                # Handle extinction information if present
+                if has_extinction:
+                    ext_lines = lines[ext_start + 1] if ext_start + 1 < len(lines) else ""
+                    if ext_lines:
+                        self._extinction_info(material, extinction_lines=ext_lines)
             else:
-                # @CUSTOM_CRYSEXTN section appears first
-                pre_ext_lines = lines[:ext_start + 1]
-                post_ext_lines = lines[ext_end:cell_start+1]
-                post_cell_lines = lines[cell_end:] if cell_end else []
-                
-                self.datatemplate[material] = '\n'.join(
-                    pre_ext_lines + 
-                    ['**extinction_section**'] + 
-                    post_ext_lines + 
-                    ['**cell_section**'] + 
-                    post_cell_lines
-                )
+                # Non-crystalline material: no @CELL or @CUSTOM_CRYSEXTN
+                # Use the raw text as the template, no sections to replace
+                self.datatemplate[material] = self.textdata[material]
+                # No extinction data to process
 
-            # Handle extinction information if present
-            ext_lines = lines[ext_start+1] if ext_start < len(lines) else ""
-            
-            if ext_lines:
-                self._extinction_info(material, extinction_lines=ext_lines)
-
-            # Save original rawdata in nbragg file name
+            # Register the in-memory file with the virtual material name
             nc.registerInMemoryFileData(
                 self.materials[material]["mat"].replace("ncmat", "nbragg"), 
                 self.textdata[material]
@@ -209,34 +219,55 @@ class CrossSection:
 
     def _update_ncmat_parameters(self, material: str, **kwargs):
         """
-        Update the virtual material with lattice parameters
+        Update the virtual material with parameters. For non-crystalline materials,
+        skip lattice and extinction updates as they are not applicable.
         
         Args:
             material (str): Name of the material to update
-            **kwargs: Additional parameters to update
+            **kwargs: Additional parameters (e.g., a, b, c for lattice, l, Gg, L for extinction)
         """
         # Ensure we have a template for this specific material
         if material not in self.datatemplate:
             return
 
-        # Update cell information
-        updated_cells = self._cell_info(material, **kwargs)
+        # Check if the material is crystalline (has placeholders for sections)
+        is_crystalline = '**cell_section**' in self.datatemplate[material] or '**extinction_section**' in self.datatemplate[material]
         
-        # Handle extinction information
-        if material in self.extinction:
-            updated_ext = self._extinction_info(material, **kwargs)
+        if is_crystalline:
+            # Update cell information if lattice parameters are provided
+            if 'a' in kwargs or 'b' in kwargs or 'c' in kwargs:
+                updated_cells = self._cell_info(material, **kwargs)
+            else:
+                # Use existing cell section if no update is provided
+                cell_start = self.textdata[material].find('**cell_section**')
+                if cell_start != -1:
+                    updated_cells = '**cell_section**'
+                else:
+                    updated_cells = ""
+
+            # Handle extinction information if present and updated
+            if material in self.extinction and any(k in kwargs for k in ['l', 'Gg', 'L']):
+                updated_ext = self._extinction_info(material, **kwargs)
+            else:
+                # Use existing extinction section if no update is provided
+                ext_start = self.textdata[material].find('**extinction_section**')
+                if ext_start != -1:
+                    updated_ext = '**extinction_section**'
+                else:
+                    updated_ext = ""
+            
+            # Create the updated material text using the material-specific template
+            updated_textdata = self.datatemplate[material].replace(
+                "**cell_section**", 
+                updated_cells
+            ).replace(
+                "**extinction_section**", 
+                updated_ext
+            )
         else:
-            updated_ext = ""
-        
-        # Create the updated material text using the material-specific template
-        updated_textdata = self.datatemplate[material].replace(
-            "**cell_section**", 
-            updated_cells
-        ).replace(
-            "**extinction_section**", 
-            updated_ext
-        )
-        
+            # Non-crystalline material: no updates to lattice or extinction, use original text
+            updated_textdata = self.datatemplate[material]
+
         # Update the textdata for this specific material
         self.textdata[material] = updated_textdata
         
@@ -246,28 +277,63 @@ class CrossSection:
             updated_textdata
         )
 
-
-    def _extinction_info(self, material: str, extinction_lines:str=None, **kwargs)-> str:
-        """Parse and update the extinction lines
+    def _extinction_info(self, material: str, extinction_lines: str = None, **kwargs) -> str:
+        """
+        Parse and update the extinction lines. Returns empty string for non-crystalline materials
+        unless explicitly updated.
 
         Args:
             material (str): Material name
-            extinction_lines (str): text data from the extinction custom section
+            extinction_lines (str, optional): Text data from the extinction custom section
+            **kwargs: Additional parameters (e.g., l, Gg, L)
         """
+        # Initialize extinction data if not already present
+        if material not in self.extinction:
+            self.extinction[material] = {}
+
         if extinction_lines:
+            # Parse extinction data if provided (crystalline material)
             method, l, Gg, L, tilt = extinction_lines.split()
             self.extinction[material] = dict(method=method, l=float(l), Gg=float(Gg), L=float(L), tilt=tilt)
-        else:
-            if "l" in kwargs:
-                self.extinction[material].update(**kwargs)
+        elif not self.extinction[material] and not kwargs:
+            # No extinction data and no updates: non-crystalline material
+            return ""
+        
+        # Update extinction parameters if provided
+        if kwargs and any(k in kwargs for k in ['l', 'Gg', 'L']):
+            self.extinction[material].update(**{k: v for k, v in kwargs.items() if k in ['l', 'Gg', 'L']})
+            # Assume default values for missing parameters if extinction is being added
+            self.extinction[material].setdefault('method', 'gaussian')
+            self.extinction[material].setdefault('l', 0.0)
+            self.extinction[material].setdefault('Gg', 0.0)
+            self.extinction[material].setdefault('L', 0.0)
+            self.extinction[material].setdefault('tilt', '0')
 
-        method = self.extinction[material]["method"]
-        l = self.extinction[material]["l"]
-        Gg = self.extinction[material]["Gg"]
-        L = self.extinction[material]["L"]
-        tilt = self.extinction[material]["tilt"]
+        # Return formatted extinction string if data exists
+        if self.extinction[material]:
+            method = self.extinction[material]["method"]
+            l = self.extinction[material]["l"]
+            Gg = self.extinction[material]["Gg"]
+            L = self.extinction[material]["L"]
+            tilt = self.extinction[material]["tilt"]
+            return f"  {method}  {l}  {Gg}  {L}  {tilt}"
+        return ""
 
-        return f"  {method}  {l}  {Gg}  {L}  {tilt}"
+    def _cell_info(self, material: str, **kwargs) -> str:
+        """
+        Generate or update the @CELL section string. Only applicable to crystalline materials.
+        """
+        # Check if the material is crystalline
+        if '**cell_section**' not in self.datatemplate[material]:
+            return ""  # Non-crystalline materials don’t have a cell section
+        
+        # Default lattice parameters from kwargs or existing material spec
+        a = kwargs.get('a', self.materials[material].get('a', 1.0))
+        b = kwargs.get('b', self.materials[material].get('b', 1.0))
+        c = kwargs.get('c', self.materials[material].get('c', 1.0))
+        
+        # For simplicity, assume cubic lattice unless specified otherwise in the future
+        return f"  lengths {a} {b} {c}\n  angles 90 90 90"
         
 
     def _resolve_material(self, material: str) -> str:
