@@ -77,9 +77,10 @@ class TransmissionModel(lmfit.Model):
             self.params = params.copy()
         else:
             self.params = lmfit.Parameters()
-        
-        self.params += self._make_basic_params()
-        self.params += self._make_temperature_params() # add temperature params to fit
+        if "thickness" not in self.params and "norm" not in self.params:
+            self.params += self._make_basic_params()
+        if "temp" not in self.params:
+            self.params += self._make_temperature_params() # add temperature params to fit
         if vary_weights is not None:
             self.params += self._make_weight_params(vary=vary_weights)
         if vary_tof is not None:
