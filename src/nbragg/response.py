@@ -198,7 +198,7 @@ class Response:
             
             # Replace any NaN values with 0
             profile = np.nan_to_num(profile, 0)
-
+            return profile
             # cut symmetric
             return self.cut_array_symmetric(profile,self.cut_threshold)
         
