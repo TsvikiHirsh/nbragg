@@ -628,7 +628,7 @@ class TransmissionModel(lmfit.Model):
             )
             
             # Value slider/input
-            if param.min is not None and param.max is not None:
+            if param.min is not None and param.max is not None and param.expr=="":
                 # Use slider if min/max are defined
                 value_widget = widgets.FloatSlider(
                     value=param.value,
@@ -642,11 +642,13 @@ class TransmissionModel(lmfit.Model):
                 )
             else:
                 # Use float input if no bounds
-                value_widget = widgets.FloatText(
+                value_widget = widgets.FloatSlider(
                     value=param.value,
                     description='',
-                    layout=widgets.Layout(width='120px')
+                    enabled=False,
+                    layout=widgets.Layout(width='200px')
                 )
+            
             
             # Vary checkbox
             vary_widget = widgets.Checkbox(
@@ -671,7 +673,6 @@ class TransmissionModel(lmfit.Model):
                     # Update the model parameter
                     self.params[pname].value = param_widgets[pname]['value'].value
                     self.params[pname].vary = param_widgets[pname]['vary'].value
-                    
                     
                     # Replot
                     update_plot()
@@ -759,7 +760,6 @@ class TransmissionModel(lmfit.Model):
             """Reset all parameters to original values"""
             for param_name, original_param in original_params.items():
                 self.params[param_name].value = original_param.value
-
                 self.params[param_name].vary = original_param.vary
                 
                 # Update widgets
@@ -790,7 +790,7 @@ class TransmissionModel(lmfit.Model):
         display(main_box)
         
         return main_box
-    
+        
     def _make_orientation_params(self, vary: bool = False):
         """
         Create orientation for the model.
@@ -1042,9 +1042,9 @@ class TransmissionModel(lmfit.Model):
                     self.params[param_Gg_name].vary = vary
                     self.params[param_L_name].vary = vary
                 else:
-                    params.add(param_l_name, value=l, min=0., vary=vary)
-                    params.add(param_Gg_name, value=Gg, min=0., vary=vary)
-                    params.add(param_L_name, value=L, min=0., vary=vary)
+                    params.add(param_l_name, value=l, min=0., max=10000,vary=vary)
+                    params.add(param_Gg_name, value=Gg, min=0., max=10000,vary=vary)
+                    params.add(param_L_name, value=L, min=0., max=1000000,vary=vary)
             except KeyError:
                 warnings.warn(f"@CRYSEXTN section is not defined for the {material} phase")
                                 
