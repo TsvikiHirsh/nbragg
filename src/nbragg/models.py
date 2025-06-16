@@ -11,6 +11,9 @@ import matplotlib.pyplot as plt
 from copy import deepcopy 
 from typing import List, Optional
 import warnings
+import ipywidgets as widgets
+from IPython.display import display
+from matplotlib.patches import Rectangle
 
 
 class TransmissionModel(lmfit.Model):
@@ -541,6 +544,252 @@ class TransmissionModel(lmfit.Model):
 
         plt.subplots_adjust(hspace=0.05)
         return ax
+
+
+
+    def interactive_plot(self, data=None, plot_bg: bool = True,
+                        plot_dspace: bool = False, dspace_min: float = 1,
+                        dspace_label_pos: float = 0.99, **kwargs):
+        """
+        Create an interactive plot with parameter controls using ipywidgets.
+        
+        Parameters
+        ----------
+        data : object, optional
+            Data object to show alongside the model for comparison.
+        plot_bg : bool, optional
+            Whether to include the background in the plot, by default True.
+        plot_dspace: bool, optional
+            If True plots the 2*dspace and labels of that material that are larger than dspace_min
+        dspace_min: float, optional
+            The minimal dspace from which to plot the dspacing*2 lines
+        dspace_label_pos: float, optional
+            The position on the y-axis to plot the dspace label
+        kwargs : dict, optional
+            Additional plot settings like color, marker size, etc.
+            
+        Returns
+        -------
+        ipywidgets.VBox
+            Container with all the interactive controls and plot
+            
+        Notes
+        -----
+        This method creates interactive controls for all model parameters,
+        allowing real-time exploration of parameter space. Only works with
+        model parameters (before fitting).
+        """
+        
+        # Check that we're working with a model, not fit results
+        if hasattr(self, "fit_result") and self.fit_result is not None:
+            print("Warning: interactive_plot is designed for models before fitting.")
+            print("Current object has fit_result. Consider using regular plot() method.")
+            return
+        
+        # Store original parameters for reset functionality
+        original_params = self.params.copy()
+        
+        # Prepare data if provided
+        if data is not None:
+            wavelength = data.table.wavelength
+            data_values = data.table.trans
+            err = data.table.err
+        else:
+            # Use default wavelength range
+            wavelength = np.linspace(1.0, 10.0, 1000)
+            data_values = None
+            err = None
+        
+        # Create output widget for the plot
+        plot_output = widgets.Output()
+        
+        # Dictionary to store all parameter widgets
+        param_widgets = {}
+        
+        # Create widgets for each parameter
+        widget_list = []
+        
+        # Add a reset button
+        reset_button = widgets.Button(
+            description="Reset Parameters",
+            button_style='warning',
+            tooltip='Reset all parameters to original values'
+        )
+        
+        # Create parameter controls
+        for param_name, param in self.params.items():
+            # Create a horizontal box for each parameter
+            param_box = widgets.HBox()
+            
+            # Parameter label
+            label = widgets.Label(
+                value=f"{param_name}:",
+                layout=widgets.Layout(width='120px')
+            )
+            
+            # Value slider/input
+            if param.min is not None and param.max is not None:
+                # Use slider if min/max are defined
+                value_widget = widgets.FloatSlider(
+                    value=param.value,
+                    min=param.min,
+                    max=param.max,
+                    step=(param.max - param.min) / 100,
+                    description='',
+                    readout=True,
+                    readout_format='.4f',
+                    layout=widgets.Layout(width='200px')
+                )
+            else:
+                # Use float input if no bounds
+                value_widget = widgets.FloatText(
+                    value=param.value,
+                    description='',
+                    layout=widgets.Layout(width='120px')
+                )
+            
+            # Vary checkbox
+            vary_widget = widgets.Checkbox(
+                value=param.vary,
+                description='Vary',
+                layout=widgets.Layout(width='60px')
+            )
+            
+            # Store widgets for this parameter
+            param_widgets[param_name] = {
+                'value': value_widget,
+                'vary': vary_widget
+            }
+            
+            # Arrange widgets in the parameter box
+            param_box.children = [label, value_widget, vary_widget]
+            widget_list.append(param_box)
+            
+            # Add callback to update parameter when value changes
+            def make_update_callback(pname):
+                def update_param(change):
+                    # Update the model parameter
+                    self.params[pname].value = param_widgets[pname]['value'].value
+                    self.params[pname].vary = param_widgets[pname]['vary'].value
+                    
+                    
+                    # Replot
+                    update_plot()
+                return update_param
+            
+            # Connect callbacks
+            value_widget.observe(make_update_callback(param_name), names='value')
+            vary_widget.observe(make_update_callback(param_name), names='value')
+        
+        def update_plot():
+            """Update the plot with current parameter values"""
+            with plot_output:
+                plot_output.clear_output(wait=True)
+                
+                # Evaluate model with current parameters
+                model_values = self.eval(params=self.params, wl=wavelength)
+                
+                # Create the plot
+                fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(8, 6))
+                
+                # Plot settings
+                color = kwargs.get("color", "seagreen")
+                ecolor = kwargs.get("ecolor", "0.8")
+                title = kwargs.get("title", self.cross_section.name)
+                ms = kwargs.get("ms", 2)
+                
+                # Plot data if available
+                if data_values is not None:
+                    residual = (data_values - model_values) / err
+                    chi2 = np.sum(((data_values - model_values) / err) ** 2) / (len(data_values) - len(self.params))
+                    
+                    ax[0].errorbar(wavelength, data_values, err, marker="o", color=color, 
+                                ms=ms, zorder=-1, ecolor=ecolor, label="Data")
+                    ax[1].plot(wavelength, residual, color=color)
+                    chi2_text = f"χ$^2$: {chi2:.2f}"
+                else:
+                    ax[1].axhline(0, color='0.5', linestyle='--', alpha=0.5)
+                    chi2_text = "χ$^2$: N/A"
+                
+                # Plot model
+                ax[0].plot(wavelength, model_values, color="0.2", label="Model", linewidth=2)
+                ax[0].set_ylabel("Transmission")
+                ax[0].set_title(title)
+                
+                ax[1].set_ylabel("Residuals [1σ]")
+                ax[1].set_xlabel("λ [Å]")
+                
+                # Plot background if requested
+                if plot_bg and self.background:
+                    self.background.plot(wl=wavelength, ax=ax[0], params=self.params, **kwargs)
+                    legend_labels = ["Model", "Background", "Data"] if data_values is not None else ["Model", "Background"]
+                else:
+                    legend_labels = ["Model", "Data"] if data_values is not None else ["Model"]
+                
+                # Set legend
+                ax[0].legend(legend_labels, fontsize=9, reverse=True, title=chi2_text)
+                
+                # Plot d-spacing lines if requested
+                if plot_dspace:
+                    for phase in self.cross_section.phases_data:
+                        try:
+                            hkls = self.cross_section.phases_data[phase].info.hklList()
+                        except:
+                            continue
+                        for hkl in hkls:
+                            hkl = hkl[:3]
+                            dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
+                            if dspace >= dspace_min:
+                                trans = ax[0].get_xaxis_transform()
+                                ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
+                                if len(self.cross_section.phases) > 1:
+                                    ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}", 
+                                            color="0.2", zorder=-1, fontsize=8, transform=trans, 
+                                            rotation=90, va="top", ha="right")
+                                else:
+                                    ax[0].text(dspace*2, dspace_label_pos, f"{hkl}", 
+                                            color="0.2", zorder=-1, fontsize=8, transform=trans, 
+                                            rotation=90, va="top", ha="right")
+                
+                plt.subplots_adjust(hspace=0.05)
+                plt.tight_layout()
+                plt.show()
+        
+        def reset_parameters(button):
+            """Reset all parameters to original values"""
+            for param_name, original_param in original_params.items():
+                self.params[param_name].value = original_param.value
+
+                self.params[param_name].vary = original_param.vary
+                
+                # Update widgets
+                param_widgets[param_name]['value'].value = original_param.value
+                param_widgets[param_name]['vary'].value = original_param.vary
+            
+            update_plot()
+        
+        reset_button.on_click(reset_parameters)
+        
+        # Create the main container
+        controls_box = widgets.VBox([
+            widgets.HTML("<h3>Parameter Controls</h3>"),
+            reset_button,
+            widgets.HTML("<hr>")
+        ] + widget_list)
+        
+        # Initial plot
+        update_plot()
+        
+        # Create the main interface
+        main_box = widgets.HBox([
+            controls_box,
+            plot_output
+        ])
+        
+        # Display the interface
+        display(main_box)
+        
+        return main_box
     
     def _make_orientation_params(self, vary: bool = False):
         """
