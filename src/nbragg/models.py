@@ -277,57 +277,109 @@ class TransmissionModel(lmfit.Model):
 
         return fit_result
     
-    def plot(self, plot_bg: bool = True, 
-             plot_dspace: bool = False, dspace_min:float=1,
-             dspace_label_pos: float= 0.99, **kwargs):
+    def plot(self, data=None, plot_bg: bool = True,
+            plot_dspace: bool = False, dspace_min: float = 1,
+            dspace_label_pos: float = 0.99, **kwargs):
         """
-        Plot the results of the fit.
-
+        Plot the results of the fit or model.
+        
         Parameters
         ----------
+        data : object, optional
+            Data object to show alongside the model (useful before performing the fit).
+            Should have wavelength, transmission, and error data accessible.
         plot_bg : bool, optional
             Whether to include the background in the plot, by default True.
         plot_dspace: bool, optional
-            If True plots the 2*dsapce and labels of that material that are larger than dspace_min
+            If True plots the 2*dspace and labels of that material that are larger than dspace_min
         dspace_min: float, optional
             The minimal dspace from which to plot the dspacing*2 lines
         dspace_label_pos: float, optional
             The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure
         kwargs : dict, optional
             Additional plot settings like color, marker size, etc.
-
+            
         Returns
         -------
         matplotlib.axes.Axes
             The axes of the plot.
-
+            
         Notes
         -----
-        This function generates a plot showing the transmission data, the best-fit curve, 
+        This function generates a plot showing the transmission data, the best-fit curve,
         and residuals. If `plot_bg` is True, it will also plot the background function.
+        Can be used both after fitting (using fit_result) or before fitting (using model params).
         """
-        fig, ax = plt.subplots(2,1,sharex=True,height_ratios=[3.5,1],figsize=(6,5))
-        wavelength = self.fit_result.userkws["wl"]
-        data = self.fit_result.data
-        err = 1./self.fit_result.weights
-        best_fit = self.fit_result.best_fit
-        residual = self.fit_result.residual
-        color = kwargs.pop("color","seagreen")
-        ecolor = kwargs.pop("ecolor","0.8")
-        title = kwargs.pop("title",self.cross_section.name)
-        ms = kwargs.pop("ms",2)
-        ax[0].errorbar(wavelength,data,err,marker="o",color=color,ms=ms,zorder=-1,ecolor=ecolor,label="Best fit")  
-        ax[0].plot(wavelength,best_fit,color="0.2",label="Data") 
+        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))
+        
+        # Check if we have fit results or should use model
+        if hasattr(self, "fit_result") and self.fit_result is not None:
+            # Use fit results
+            wavelength = self.fit_result.userkws["wl"]
+            data_values = self.fit_result.data
+            err = 1. / self.fit_result.weights
+            best_fit = self.fit_result.best_fit
+            residual = self.fit_result.residual
+            params = self.fit_result.params
+            chi2 = self.fit_result.redchi
+            fit_label = "Best fit"
+        else:
+            # Use model (no fit yet)
+            fit_label = "Model"
+            params = self.params  # Assuming model has params attribute
+            
+            if data is not None:
+                # Extract data from provided data object
+                wavelength = data.table.wavelength
+                data_values = data.table.trans
+                err = data.table.err
+                
+                # Evaluate model at data wavelengths
+                best_fit = self.eval(params=params, wl=wavelength)
+                residual = (data_values - best_fit) / err
+                
+                # Calculate chi2 for the model
+                chi2 = np.sum(((data_values - best_fit) / err) ** 2) / (len(data_values) - len(params))
+            else:
+                # No data provided, just show model over some wavelength range
+                # You might want to define a default wavelength range here
+                wavelength = np.linspace(1.0, 10.0, 1000)  # Adjust range as needed
+                data_values = np.nan * np.ones_like(wavelength)
+                err = np.nan * np.ones_like(wavelength)
+                best_fit = self.eval(params=params, wl=wavelength)
+                residual = np.nan * np.ones_like(wavelength)
+                chi2 = np.nan
+        
+        # Plot settings
+        color = kwargs.pop("color", "seagreen")
+        ecolor = kwargs.pop("ecolor", "0.8")
+        title = kwargs.pop("title", self.cross_section.name)
+        ms = kwargs.pop("ms", 2)
+        
+        # Plot data and best-fit/model
+        ax[0].errorbar(wavelength, data_values, err, marker="o", color=color, ms=ms, 
+                    zorder=-1, ecolor=ecolor, label="Data")
+        ax[0].plot(wavelength, best_fit, color="0.2", label=fit_label)
         ax[0].set_ylabel("Transmission")
         ax[0].set_title(title)
-        ax[1].plot(wavelength,residual,color=color)
+        
+        # Plot residuals
+        ax[1].plot(wavelength, residual, color=color)
         ax[1].set_ylabel("Residuals [1σ]")
-        ax[1].set_xlabel("λ [Å]")
+        ax[1].set_xlabel("λ [Å]")
+        
+        # Plot background if requested
         if plot_bg and self.background:
-            self.background.plot(wl=wavelength,ax=ax[0],params=self.fit_result.params,**kwargs)
-            ax[0].legend(["Best fit","Background","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
+            self.background.plot(wl=wavelength, ax=ax[0], params=params, **kwargs)
+            legend_labels = [fit_label, "Background", "Data"]
         else:
-            ax[0].legend(["Best fit","Data"], fontsize=9,reverse=True,title=f"χ$^2$: {self.fit_result.redchi:.2f}")
+            legend_labels = [fit_label, "Data"]
+        
+        # Set legend with chi2 value
+        ax[0].legend(legend_labels, fontsize=9, reverse=True, 
+                    title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")
+        
+        # Plot d-spacing lines if requested
         if plot_dspace:
             for phase in self.cross_section.phases_data:
                 try:
@@ -337,15 +389,19 @@ class TransmissionModel(lmfit.Model):
                 for hkl in hkls:
                     hkl = hkl[:3]
                     dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
-                    if dspace>= dspace_min:
+                    if dspace >= dspace_min:
                         trans = ax[0].get_xaxis_transform()
-                        ax[0].axvline(dspace*2,lw=1,color="0.4",zorder=-1,ls=":")
-                        if len(self.cross_section.phases)>1:
-                            ax[0].text(dspace*2,dspace_label_pos,f"{phase} {hkl}",color="0.2",zorder=-1,fontsize=8,transform=trans,rotation=90,va="top",ha="right")
+                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
+                        if len(self.cross_section.phases) > 1:
+                            ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}", 
+                                    color="0.2", zorder=-1, fontsize=8, transform=trans, 
+                                    rotation=90, va="top", ha="right")
                         else:
-                            ax[0].text(dspace*2,dspace_label_pos,f"{hkl}",color="0.2",zorder=-1,fontsize=8,transform=trans,rotation=90,va="top",ha="right")
-        plt.subplots_adjust(hspace=0.05)
+                            ax[0].text(dspace*2, dspace_label_pos, f"{hkl}", 
+                                    color="0.2", zorder=-1, fontsize=8, transform=trans, 
+                                    rotation=90, va="top", ha="right")
         
+        plt.subplots_adjust(hspace=0.05)
         return ax
 
     def plot_total_xs(self, plot_bg: bool = True, 
