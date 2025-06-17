@@ -288,19 +288,26 @@ class CrossSection:
                     'l': float(l),
                     'Gg': float(Gg),
                     'L': float(L),
-                    'tilt': float(tilt)
+                    'tilt': tilt
                 })
-                # Only update self.materials if no user-provided values exist
-                if all(self.materials[material].get(key) is None for key in ['ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_tilt']):
-                    self.materials[material].update({
-                        'ext_method': method,
-                        'ext_l': float(l),
-                        'ext_Gg': float(Gg),
-                        'ext_L': float(L),
-                        'ext_tilt': tilt
-                    })
+                # Update self.materials with NCMAT values, preserving any user-provided values
+                current_values = {
+                    'ext_method': self.materials[material].get('ext_method'),
+                    'ext_l': self.materials[material].get('ext_l'),
+                    'ext_Gg': self.materials[material].get('ext_Gg'),
+                    'ext_L': self.materials[material].get('ext_L'),
+                    'ext_tilt': self.materials[material].get('ext_tilt')
+                }
+                self.materials[material].update({
+                    'ext_method': current_values['ext_method'] if current_values['ext_method'] is not None else method,
+                    'ext_l': current_values['ext_l'] if current_values['ext_l'] is not None else float(l),
+                    'ext_Gg': current_values['ext_Gg'] if current_values['ext_Gg'] is not None else float(Gg),
+                    'ext_L': current_values['ext_L'] if current_values['ext_L'] is not None else float(L),
+                    'ext_tilt': current_values['ext_tilt'] if current_values['ext_tilt'] is not None else tilt
+                })
             except ValueError:
                 self.extinction[material] = {}
+                # Set defaults in self.materials if no user-provided values exist
                 if all(self.materials[material].get(key) is None for key in ['ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_tilt']):
                     self.materials[material].update({
                         'ext_method': None,
@@ -313,7 +320,7 @@ class CrossSection:
         # Update extinction parameters from kwargs (e.g., from user modifications)
         for key, target_key in [('ext_method', 'method'), ('ext_l', 'l'), ('ext_Gg', 'Gg'), ('ext_L', 'L'), ('ext_tilt', 'tilt')]:
             if key in kwargs:
-                value = float(kwargs[key]) if key != 'ext_method' and key != "ext_tilt" else kwargs[key]
+                value = float(kwargs[key]) if key != 'ext_method' and key != 'ext_tilt' else kwargs[key]
                 self.extinction[material][target_key] = value
                 self.materials[material][key] = value
 
@@ -324,11 +331,11 @@ class CrossSection:
                 'l': float(self.materials[material].get('ext_l', 0.0)),
                 'Gg': float(self.materials[material].get('ext_Gg', 0.0)),
                 'L': float(self.materials[material].get('ext_L', 0.0)),
-                'tilt': self.materials[material].get('ext_tilt', "Gauss")
+                'tilt': self.materials[material].get('ext_tilt', 'Gauss')
             })
         else:
             # Apply defaults if no values are provided
-            defaults = {'method': 'BC_pure', 'l': 0.0, 'Gg': 0.0, 'L': 0.0, 'tilt': "Gauss"}
+            defaults = {'method': 'BC_pure', 'l': 0.0, 'Gg': 0.0, 'L': 0.0, 'tilt': 'Gauss'}
             for key, value in defaults.items():
                 if key not in self.extinction[material]:
                     self.extinction[material][key] = value
@@ -545,6 +552,7 @@ class CrossSection:
             ext_l_key = f"ext_l{i}"
             ext_Gg_key = f"ext_Gg{i}"
             ext_L_key = f"ext_L{i}"
+            ext_tilt_key = f"ext_tilt{i}"
             
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
                 spec['temp'] = kwargs[temp_key]
@@ -578,13 +586,15 @@ class CrossSection:
                 self._update_ncmat_parameters(name,
                                             ext_l=kwargs[ext_l_key],
                                             ext_Gg=kwargs[ext_Gg_key],
-                                            ext_L=kwargs[ext_L_key])
+                                            ext_L=kwargs[ext_L_key],
+                                            ext_tilt=kwargs.get(ext_tilt_key, spec.get('ext_tilt', 'Gauss')))
                 updated = True
             elif "ext_l" in kwargs: # for single phase materials
                 self._update_ncmat_parameters(name,
                                             ext_l=kwargs["ext_l"],
                                             ext_Gg=kwargs["ext_Gg"],
-                                            ext_L=kwargs["ext_L"])
+                                            ext_L=kwargs["ext_L"],
+                                            ext_tilt=kwargs.get("ext_tilt", spec.get('ext_tilt', 'Gauss')))
                 updated = True
 
         if updated:
