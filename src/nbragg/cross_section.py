@@ -116,8 +116,6 @@ class CrossSection:
                     'c': spec.get('c',None),
                     'weight': weight
                 }
-
-
         
         # Second pass: normalize weights while preserving relative proportions
         if raw_total_weight > 0:
@@ -196,10 +194,9 @@ class CrossSection:
                 )
 
             # Handle extinction information if present
-            ext_lines = lines[ext_start+1] if ext_start < len(lines) else ""
-            
-            if ext_lines:
-                self._extinction_info(material, extinction_lines=ext_lines)
+            ext_lines = lines[ext_start+1:ext_end] if ext_start < len(lines) and ext_start + 1 < ext_end else []
+            if ext_lines and ext_lines[0].strip():
+                self._extinction_info(material, extinction_lines=ext_lines[0])
 
             # Save original rawdata in nbragg file name
             nc.registerInMemoryFileData(
@@ -209,11 +206,11 @@ class CrossSection:
 
     def _update_ncmat_parameters(self, material: str, **kwargs):
         """
-        Update the virtual material with lattice parameters
+        Update the virtual material with lattice and extinction parameters
         
         Args:
             material (str): Name of the material to update
-            **kwargs: Additional parameters to update
+            **kwargs: Additional parameters to update (e.g., a, b, c, l, Gg, L)
         """
         # Ensure we have a template for this specific material
         if material not in self.datatemplate:
@@ -223,10 +220,7 @@ class CrossSection:
         updated_cells = self._cell_info(material, **kwargs)
         
         # Handle extinction information
-        if material in self.extinction:
-            updated_ext = self._extinction_info(material, **kwargs)
-        else:
-            updated_ext = ""
+        updated_ext = self._extinction_info(material, **kwargs) if material in self.extinction else ""
         
         # Create the updated material text using the material-specific template
         updated_textdata = self.datatemplate[material].replace(
@@ -246,29 +240,62 @@ class CrossSection:
             updated_textdata
         )
 
-
-    def _extinction_info(self, material: str, extinction_lines:str=None, **kwargs)-> str:
-        """Parse and update the extinction lines
+    def _extinction_info(self, material: str, extinction_lines: str = None, **kwargs) -> str:
+        """
+        Parse and update extinction parameters, storing them in self.materials.
 
         Args:
             material (str): Material name
-            extinction_lines (str): text data from the extinction custom section
+            extinction_lines (str, optional): Text data from the extinction custom section
+            **kwargs: Parameters to update (e.g., l, Gg, L)
+
+        Returns:
+            str: Formatted extinction information string
         """
+        # Initialize extinction parameters in self.materials if not present
+        if 'extinction' not in self.materials[material]:
+            self.materials[material]['extinction'] = {}
+
+        # Parse extinction lines if provided
         if extinction_lines:
-            method, l, Gg, L, tilt = extinction_lines.split()
-            self.extinction[material] = dict(method=method, l=float(l), Gg=float(Gg), L=float(L), tilt=tilt)
-        else:
-            if "l" in kwargs:
-                self.extinction[material].update(**kwargs)
+            try:
+                method, l, Gg, L, tilt = extinction_lines.strip().split()
+                self.extinction[material] = {
+                    'method': method,
+                    'l': float(l),
+                    'Gg': float(Gg),
+                    'L': float(L),
+                    'tilt': float(tilt)
+                }
+                # Store in self.materials
+                self.materials[material]['extinction'] = self.extinction[material].copy()
+            except ValueError:
+                self.extinction[material] = {}
+                self.materials[material]['extinction'] = {}
 
-        method = self.extinction[material]["method"]
-        l = self.extinction[material]["l"]
-        Gg = self.extinction[material]["Gg"]
-        L = self.extinction[material]["L"]
-        tilt = self.extinction[material]["tilt"]
+        # Update extinction parameters if provided in kwargs
+        if material in self.extinction:
+            for key in ['l', 'Gg', 'L', 'tilt', 'method']:
+                if key in kwargs:
+                    self.extinction[material][key] = float(kwargs[key]) if key != 'method' else kwargs[key]
+                    self.materials[material]['extinction'][key] = self.extinction[material][key]
 
-        return f"  {method}  {l}  {Gg}  {L}  {tilt}"
+            # Ensure all required parameters are present, using defaults if necessary
+            defaults = {'method': 'default', 'l': 0.0, 'Gg': 0.0, 'L': 0.0, 'tilt': 0.0}
+            for key, value in defaults.items():
+                if key not in self.extinction[material]:
+                    self.extinction[material][key] = value
+                    self.materials[material]['extinction'][key] = value
+
+            # Format the extinction line
+            method = self.extinction[material]['method']
+            l = self.extinction[material]['l']
+            Gg = self.extinction[material]['Gg']
+            L = self.extinction[material]['L']
+            tilt = self.extinction[material]['tilt']
+            return f"  {method}  {l:.4f}  {Gg:.4f}  {L:.4f}  {tilt:.4f}"
         
+        return ""
 
     def _resolve_material(self, material: str) -> str:
         """Resolve material specification to filename."""
@@ -602,8 +629,6 @@ class CrossSection:
         rotated_vec = Ry @ (Rz @ np.array(vec, dtype=float))
         return rotated_vec.tolist()
 
-
-
     def format_orientations(self, dir1: Union[List[float], List[str]] = None, 
                             dir2: Union[List[float], List[str]] = None,
                             phi: Union[float, str] = 0.0, 
@@ -631,7 +656,6 @@ class CrossSection:
             'dir2': dir2
         }
 
-        
     @classmethod
     def _normalize_mtex_vector(cls, vector):
         """Normalize a vector to unit length."""
@@ -756,7 +780,6 @@ class CrossSection:
         
         # If no information available, return None
         return None
-    
 
     def _cell_info(self, material: str, **kwargs) -> str:
         """
