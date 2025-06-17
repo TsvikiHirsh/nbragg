@@ -547,190 +547,204 @@ class TransmissionModel(lmfit.Model):
 
 
 
-    def interactive_plot(self, data=None, plot_bg: bool = True,
-                        plot_dspace: bool = False, dspace_min: float = 1,
-                        dspace_label_pos: float = 0.99, **kwargs):
+    def interactive_plot(self, data=None, plot_bg=True, plot_dspace=False, 
+                        dspace_min=1.0, dspace_label_pos=0.99, **kwargs):
         """
-        Create an interactive plot with parameter controls using ipywidgets.
-        
+        Create an interactive plot with intuitive parameter controls using ipywidgets.
+
         Parameters
         ----------
         data : object, optional
             Data object to show alongside the model for comparison.
         plot_bg : bool, optional
             Whether to include the background in the plot, by default True.
-        plot_dspace: bool, optional
-            If True plots the 2*dspace and labels of that material that are larger than dspace_min
-        dspace_min: float, optional
-            The minimal dspace from which to plot the dspacing*2 lines
-        dspace_label_pos: float, optional
-            The position on the y-axis to plot the dspace label
+        plot_dspace : bool, optional
+            If True, plots 2*dspace lines and labels for materials with dspace >= dspace_min.
+        dspace_min : float, optional
+            Minimum dspace for plotting 2*dspace lines, by default 1.0.
+        dspace_label_pos : float, optional
+            Y-axis position for dspace labels, by default 0.99.
         kwargs : dict, optional
-            Additional plot settings like color, marker size, etc.
-            
+            Additional plot settings (e.g., color, marker size).
+
         Returns
         -------
         ipywidgets.VBox
-            Container with all the interactive controls and plot
-            
+            Container with interactive controls and plot.
+
         Notes
         -----
-        This method creates interactive controls for all model parameters,
-        allowing real-time exploration of parameter space. Only works with
-        model parameters (before fitting).
+        Designed for models before fitting. Displays a warning if fit results exist.
+        Provides real-time parameter exploration with sliders, float fields, and reset functionality.
         """
-        
-        # Check that we're working with a model, not fit results
+        # Check for fit results
         if hasattr(self, "fit_result") and self.fit_result is not None:
-            print("Warning: interactive_plot is designed for models before fitting.")
-            print("Current object has fit_result. Consider using regular plot() method.")
+            print("Warning: interactive_plot is for models before fitting. Use plot() instead.")
             return
-        
-        # Store original parameters for reset functionality
+
+        # Store original parameters
         original_params = self.params.copy()
-        
-        # Prepare data if provided
+
+        # Prepare data
         if data is not None:
             wavelength = data.table.wavelength
             data_values = data.table.trans
             err = data.table.err
         else:
-            # Use default wavelength range
             wavelength = np.linspace(1.0, 10.0, 1000)
             data_values = None
             err = None
-        
-        # Create output widget for the plot
+
+        # Create output widget for plot
         plot_output = widgets.Output()
-        
-        # Dictionary to store all parameter widgets
+
+        # Dictionary for parameter widgets
         param_widgets = {}
-        
-        # Create widgets for each parameter
-        widget_list = []
-        
-        # Add a reset button
-        reset_button = widgets.Button(
-            description="Reset Parameters",
-            button_style='warning',
-            tooltip='Reset all parameters to original values'
-        )
-        
+
         # Create parameter controls
+        widget_list = []
         for param_name, param in self.params.items():
-            # Create a horizontal box for each parameter
-            param_box = widgets.HBox()
-            
             # Parameter label
             label = widgets.Label(
                 value=f"{param_name}:",
-                layout=widgets.Layout(width='120px')
+                layout={'width': '100px', 'padding': '5px'}
             )
-            
-            # Value slider/input
-            if param.min is not None and param.max is not None and param.expr=="":
-                # Use slider if min/max are defined
-                value_widget = widgets.FloatSlider(
+
+            # Value slider
+            if param.expr == "":
+                slider = widgets.FloatSlider(
                     value=param.value,
                     min=param.min,
                     max=param.max,
-                    step=(param.max - param.min) / 100,
-                    description='',
+                    step=(param.max - param.min) / 2000,
                     readout=True,
-                    readout_format='.4f',
-                    layout=widgets.Layout(width='200px')
+                    disabled=not param.vary,
+                    layout={'width': '200px'},
+                    style={'description_width': '0px'}
                 )
             else:
-                # Use float input if no bounds
-                value_widget = widgets.FloatSlider(
+                slider = widgets.FloatSlider(
                     value=param.value,
-                    description='',
-                    enabled=False,
-                    layout=widgets.Layout(width='200px')
+                    min=0.001,  # For expressions, we set a minimum to avoid zero division
+                    max=1000,  # Arbitrary large max for expressions
+                    step=(1000 - 0.001) / 200,
+                    readout=True,
+                    disabled=True,
+                    layout={'width': '200px'},
+                    style={'description_width': '0px'}
                 )
-            
-            
+
+
+            # Float text field
+            float_text = widgets.FloatText(
+                value=param.value,
+                disabled=not param.vary,
+                layout={'width': '80px'},
+                style={'description_width': '0px'}
+            )
+
             # Vary checkbox
             vary_widget = widgets.Checkbox(
                 value=param.vary,
                 description='Vary',
-                layout=widgets.Layout(width='60px')
+                layout={'width': '80px'},
+                tooltip='Enable/disable parameter variation',
+                style={'description_width': 'initial'}
             )
-            
-            # Store widgets for this parameter
-            param_widgets[param_name] = {
-                'value': value_widget,
-                'vary': vary_widget
-            }
-            
-            # Arrange widgets in the parameter box
-            param_box.children = [label, value_widget, vary_widget]
+
+            # Store widgets
+            param_widgets[param_name] = {'vary': vary_widget, 'float': float_text, 'slider': slider }
+
+            # Create parameter row
+            param_box = widgets.HBox([label, vary_widget, float_text, slider], layout={'padding': '2px'})
             widget_list.append(param_box)
-            
-            # Add callback to update parameter when value changes
+
+            # Callbacks
             def make_update_callback(pname):
                 def update_param(change):
-                    # Update the model parameter
-                    self.params[pname].value = param_widgets[pname]['value'].value
+                    # Sync slider and float text
+                    if change['owner'] is param_widgets[pname]['slider']:
+                        param_widgets[pname]['float'].value = change['new']
+                    elif change['owner'] is param_widgets[pname]['float']:
+                        param_widgets[pname]['slider'].value = change['new']
+                    # Update model parameter
+                    self.params[pname].value = param_widgets[pname]['slider'].value
                     self.params[pname].vary = param_widgets[pname]['vary'].value
-                    
-                    # Replot
+                    # Enable/disable based on vary
+                    if change['owner'] is param_widgets[pname]['vary']:
+                        param_widgets[pname]['slider'].disabled = not change['new']
+                        param_widgets[pname]['float'].disabled = not change['new']
                     update_plot()
                 return update_param
-            
-            # Connect callbacks
-            value_widget.observe(make_update_callback(param_name), names='value')
+
+            slider.observe(make_update_callback(param_name), names='value')
+            float_text.observe(make_update_callback(param_name), names='value')
             vary_widget.observe(make_update_callback(param_name), names='value')
-        
+
+        # Reset button
+        reset_button = widgets.Button(
+            description="Reset",
+            button_style='info',
+            tooltip='Reset parameters to original values',
+            layout={'width': '100px'}
+        )
+
+        def reset_parameters(button):
+            for param_name, original_param in original_params.items():
+                self.params[param_name].value = original_param.value
+                self.params[param_name].vary = original_param.vary
+                param_widgets[param_name]['slider'].value = original_param.value
+                param_widgets[param_name]['float'].value = original_param.value
+                param_widgets[param_name]['vary'].value = original_param.vary
+                param_widgets[param_name]['slider'].disabled = not original_param.vary
+                param_widgets[param_name]['float'].disabled = not original_param.vary
+            update_plot()
+
+        reset_button.on_click(reset_parameters)
+
         def update_plot():
-            """Update the plot with current parameter values"""
             with plot_output:
                 plot_output.clear_output(wait=True)
-                
-                # Evaluate model with current parameters
                 model_values = self.eval(params=self.params, wl=wavelength)
-                
-                # Create the plot
-                fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(8, 6))
-                
+                fig, (ax0, ax1) = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [3.5, 1]}, figsize=(8, 6))
+
                 # Plot settings
-                color = kwargs.get("color", "seagreen")
-                ecolor = kwargs.get("ecolor", "0.8")
+                color = kwargs.get("color", "teal")
+                ecolor = kwargs.get("ecolor", "lightgray")
                 title = kwargs.get("title", self.cross_section.name)
                 ms = kwargs.get("ms", 2)
-                
-                # Plot data if available
+
+                # Plot data
                 if data_values is not None:
                     residual = (data_values - model_values) / err
                     chi2 = np.sum(((data_values - model_values) / err) ** 2) / (len(data_values) - len(self.params))
-                    
-                    ax[0].errorbar(wavelength, data_values, err, marker="o", color=color, 
-                                ms=ms, zorder=-1, ecolor=ecolor, label="Data")
-                    ax[1].plot(wavelength, residual, color=color)
-                    chi2_text = f"χ$^2$: {chi2:.2f}"
+                    ax0.errorbar(wavelength, data_values, err, marker="o", color=color, ms=ms, 
+                                ecolor=ecolor, label="Data", zorder=1)
+                    ax1.plot(wavelength, residual, color=color, linestyle='-', alpha=0.7)
+                    chi2_text = f"χ²: {chi2:.2f}"
                 else:
-                    ax[1].axhline(0, color='0.5', linestyle='--', alpha=0.5)
-                    chi2_text = "χ$^2$: N/A"
-                
+                    ax1.axhline(0, color='gray', linestyle='--', alpha=0.5)
+                    chi2_text = "χ²: N/A"
+
                 # Plot model
-                ax[0].plot(wavelength, model_values, color="0.2", label="Model", linewidth=2)
-                ax[0].set_ylabel("Transmission")
-                ax[0].set_title(title)
-                
-                ax[1].set_ylabel("Residuals [1σ]")
-                ax[1].set_xlabel("λ [Å]")
-                
-                # Plot background if requested
+                ax0.plot(wavelength, model_values, color="navy", label="Model", linewidth=2, zorder=2)
+                ax0.set_ylabel("Transmission", fontsize=10)
+                ax0.set_title(title, fontsize=12, pad=10)
+
+                ax1.set_ylabel("Residuals [1σ]", fontsize=10)
+                ax1.set_xlabel("λ [Å]", fontsize=10)
+
+                # Plot background
                 if plot_bg and self.background:
-                    self.background.plot(wl=wavelength, ax=ax[0], params=self.params, **kwargs)
+                    self.background.plot(wl=wavelength, ax=ax0, params=self.params, **kwargs)
                     legend_labels = ["Model", "Background", "Data"] if data_values is not None else ["Model", "Background"]
                 else:
                     legend_labels = ["Model", "Data"] if data_values is not None else ["Model"]
-                
-                # Set legend
-                ax[0].legend(legend_labels, fontsize=9, reverse=True, title=chi2_text)
-                
-                # Plot d-spacing lines if requested
+
+                # Legend
+                ax0.legend(legend_labels, fontsize=9, loc='best', title=chi2_text, title_fontsize=9)
+
+                # Plot d-spacing lines
                 if plot_dspace:
                     for phase in self.cross_section.phases_data:
                         try:
@@ -741,54 +755,26 @@ class TransmissionModel(lmfit.Model):
                             hkl = hkl[:3]
                             dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
                             if dspace >= dspace_min:
-                                trans = ax[0].get_xaxis_transform()
-                                ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
-                                if len(self.cross_section.phases) > 1:
-                                    ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}", 
-                                            color="0.2", zorder=-1, fontsize=8, transform=trans, 
-                                            rotation=90, va="top", ha="right")
-                                else:
-                                    ax[0].text(dspace*2, dspace_label_pos, f"{hkl}", 
-                                            color="0.2", zorder=-1, fontsize=8, transform=trans, 
-                                            rotation=90, va="top", ha="right")
-                
+                                ax0.axvline(dspace*2, lw=0.8, color="gray", ls=":", zorder=0)
+                                trans = ax0.get_xaxis_transform()
+                                label = f"{phase} {hkl}" if len(self.cross_section.phases) > 1 else f"{hkl}"
+                                ax0.text(dspace*2, dspace_label_pos, label, color="darkgray", fontsize=8, 
+                                        transform=trans, rotation=90, va="top", ha="right")
+
                 plt.subplots_adjust(hspace=0.05)
                 plt.tight_layout()
                 plt.show()
-        
-        def reset_parameters(button):
-            """Reset all parameters to original values"""
-            for param_name, original_param in original_params.items():
-                self.params[param_name].value = original_param.value
-                self.params[param_name].vary = original_param.vary
-                
-                # Update widgets
-                param_widgets[param_name]['value'].value = original_param.value
-                param_widgets[param_name]['vary'].value = original_param.vary
-            
-            update_plot()
-        
-        reset_button.on_click(reset_parameters)
-        
-        # Create the main container
-        controls_box = widgets.VBox([
-            widgets.HTML("<h3>Parameter Controls</h3>"),
-            reset_button,
-            widgets.HTML("<hr>")
-        ] + widget_list)
-        
+
+        # Layout
+        controls_box = widgets.VBox(
+            [widgets.HTML("<h4 style='margin: 5px;'>Parameter Controls</h4>"), reset_button] + widget_list,
+            layout={'padding': '10px', 'border': '1px solid lightgray', 'width': '350px'}
+        )
+        main_box = widgets.HBox([controls_box, plot_output])
+
         # Initial plot
         update_plot()
-        
-        # Create the main interface
-        main_box = widgets.HBox([
-            controls_box,
-            plot_output
-        ])
-        
-        # Display the interface
         display(main_box)
-        
         return main_box
         
     def _make_orientation_params(self, vary: bool = False):
