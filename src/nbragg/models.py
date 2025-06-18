@@ -547,6 +547,8 @@ class TransmissionModel(lmfit.Model):
 
 
 
+
+
     def interactive_plot(self, data=None, plot_bg=True, plot_dspace=False, 
                         dspace_min=1.0, dspace_label_pos=0.99, **kwargs):
         """
@@ -583,7 +585,7 @@ class TransmissionModel(lmfit.Model):
             return
 
         # Store original parameters
-        original_params = self.params.copy()
+        original_params = deepcopy(self.params)
 
         # Prepare data
         if data is not None:
@@ -616,8 +618,8 @@ class TransmissionModel(lmfit.Model):
                     value=param.value,
                     min=param.min,
                     max=param.max,
-                    step=(param.max - param.min) / 2000,
-                    readout=True,
+                    # step=(param.max - param.min) / 2000,
+                    readout=False,
                     disabled=not param.vary,
                     layout={'width': '200px'},
                     style={'description_width': '0px'}
@@ -625,15 +627,14 @@ class TransmissionModel(lmfit.Model):
             else:
                 slider = widgets.FloatSlider(
                     value=param.value,
-                    min=0.001,  # For expressions, we set a minimum to avoid zero division
-                    max=1000,  # Arbitrary large max for expressions
+                    min=0.001,  # For expressions, set a minimum to avoid zero division
+                    max=1000,   # Arbitrary large max for expressions
                     step=(1000 - 0.001) / 200,
-                    readout=True,
+                    readout=False,
                     disabled=True,
                     layout={'width': '200px'},
                     style={'description_width': '0px'}
                 )
-
 
             # Float text field
             float_text = widgets.FloatText(
@@ -653,7 +654,7 @@ class TransmissionModel(lmfit.Model):
             )
 
             # Store widgets
-            param_widgets[param_name] = {'vary': vary_widget, 'float': float_text, 'slider': slider }
+            param_widgets[param_name] = {'vary': vary_widget, 'float': float_text, 'slider': slider}
 
             # Create parameter row
             param_box = widgets.HBox([label, vary_widget, float_text, slider], layout={'padding': '2px'})
@@ -674,6 +675,13 @@ class TransmissionModel(lmfit.Model):
                     if change['owner'] is param_widgets[pname]['vary']:
                         param_widgets[pname]['slider'].disabled = not change['new']
                         param_widgets[pname]['float'].disabled = not change['new']
+                    # Update CrossSection with new parameters
+                    param_kwargs = {pname: self.params[pname].value}
+                    # Handle indexed parameters (e.g., ext_l1, a1) and non-indexed (e.g., α)
+                    for param in self.params:
+                        if param.endswith('1') or param in self.cross_section.materials:
+                            param_kwargs[param] = self.params[param].value
+                    self.cross_section(wavelength, **param_kwargs)
                     update_plot()
                 return update_param
 
@@ -698,6 +706,9 @@ class TransmissionModel(lmfit.Model):
                 param_widgets[param_name]['vary'].value = original_param.vary
                 param_widgets[param_name]['slider'].disabled = not original_param.vary
                 param_widgets[param_name]['float'].disabled = not original_param.vary
+            # Reset CrossSection with original parameters
+            param_kwargs = {pname: original_params[pname].value for pname in original_params}
+            self.cross_section(wavelength, **param_kwargs)
             update_plot()
 
         reset_button.on_click(reset_parameters)
@@ -774,7 +785,6 @@ class TransmissionModel(lmfit.Model):
 
         # Initial plot
         update_plot()
-        display(main_box)
         return main_box
         
     def _make_orientation_params(self, vary: bool = False):
