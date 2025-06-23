@@ -727,6 +727,9 @@ class CrossSection:
             'dir2': dir2
         }
 
+        
+
+
     @classmethod
     def _normalize_mtex_vector(cls, vector):
         """Normalize a vector to unit length."""
@@ -764,7 +767,14 @@ class CrossSection:
             'alpha_mtex': ['alpha_mtex', 'alpha'],
             'beta_mtex': ['beta_mtex', 'beta'],
             'gamma_mtex': ['gamma_mtex', 'gamma'],
-            'volume_mtex': ['volume_mtex', 'volume']
+            'volume_mtex': ['volume_mtex', 'volume'],
+            'fwhm': ['fwhm', 'fwhm_mtex'],
+            'xh': ['xh'],
+            'xk': ['xk'],
+            'xl': ['xl'],
+            'yh': ['yh'],
+            'yk': ['yk'],
+            'yl': ['yl']
         }
         
         # Find the correct column names
@@ -780,6 +790,13 @@ class CrossSection:
             beta_col = find_column(column_mapping['beta_mtex'])
             gamma_col = find_column(column_mapping['gamma_mtex'])
             volume_col = find_column(column_mapping['volume_mtex'])
+            fwhm_col = find_column(column_mapping['fwhm'])
+            xh_col = find_column(column_mapping['xh'])
+            xk_col = find_column(column_mapping['xk'])
+            xl_col = find_column(column_mapping['xl'])
+            yh_col = find_column(column_mapping['yh'])
+            yk_col = find_column(column_mapping['yk'])
+            yl_col = find_column(column_mapping['yl'])
         except KeyError:
             # If specific orientation columns are not found, return a CrossSection with base material
             return cls({short_name or material['name']: material}, name=short_name)
@@ -792,9 +809,6 @@ class CrossSection:
         # Prepare materials dictionary
         materials = {}
         
-        # Estimate overall mosaicity for reference
-        overall_mosaicity = cls._estimate_mosaicity(df)
-        
         # Process each row
         for i, row in df.iterrows():
             # Create a copy of the base material
@@ -803,27 +817,26 @@ class CrossSection:
             # Extract weight
             weight = row[volume_col]
             
-            # Estimate mosaicity for this specific row (or use overall if not possible)
-            mos = cls._estimate_mosaicity(df.loc[[i]]) or overall_mosaicity
-            
             # MTEX to NCrystal coordinate transformation
-            # h normal becomes beam direction (z)
-            # k normal becomes x direction 
-            # l normal becomes y direction
-            dir1 = cls._normalize_mtex_vector([row.get('zh', 0), row.get('zk', 0), row.get('zl', 1)])
-            dir2 = cls._normalize_mtex_vector([row.get('yh', 0), row.get('yk', 1), row.get('yl', 0)])
+            dir1 = cls._normalize_mtex_vector([row[xh_col], row[xk_col], row[xl_col]])
+            dir2 = cls._normalize_mtex_vector([row[yh_col], row[yk_col], row[yl_col]])
             
             # Create material name
-            material_name = f"{short_name or material['name']}{i+1}"
+            material_name = f"{short_name or material['name']}{i}"
             
-            # Update material dictionary
+            # Update material dictionary with parameters from the snippet
             updated_material.update({
-                'mos': mos,
+                'mat': material.get('mat', ''),  # Use existing mat or empty string
+                'temp': material.get('temp', 300),  # Default to 300 if not specified
+                'mos': row[fwhm_col],
                 'dir1': dir1,
                 'dir2': dir2,
-                'dirtol': None,
-                'theta': None,
-                'phi': None,
+                'alpha': row[alpha_col],
+                'beta': row[beta_col],
+                'gamma': row[gamma_col],
+                'dirtol': 1.0,
+                'theta': 0.0,
+                'phi': 0.0,
                 'weight': weight
             })
             
