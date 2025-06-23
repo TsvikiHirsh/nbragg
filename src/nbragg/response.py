@@ -513,22 +513,22 @@ class Background:
         if kind == "polynomial3":
             self.function = self.polynomial3_background
             for i in range(3):
-                self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
+                self.params.add(f"bg{i}", value=0., min=-1e6, max= 1e6, vary=vary)
 
         elif kind == "polynomial5":
             self.function = self.polynomial5_background
             for i in range(5):
-                self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
+                self.params.add(f"bg{i}", value=0., min=-1e6, max= 1e6, vary=vary)
         elif kind == "sample_dependent":
             self.function = self.polynomial3_background
             self.params.add(f"k", value=1., min=1., max= 10., vary=vary)
             for i in range(3):
-                self.params.add(f"b{i}", value=0., min=-1e6, max= 1e6, vary=vary)
+                self.params.add(f"bg{i}", value=0., min=-1e6, max= 1e6, vary=vary)
 
 
         elif kind == "constant":
             self.function = self.constant_background
-            self.params.add('b0', value=0.0, min=-1e6,max=1e6,vary=vary)
+            self.params.add('bg0', value=0.0, min=-1e6,max=1e6,vary=vary)
         elif kind == "none":
             self.function = self.empty_background
         else:
@@ -540,7 +540,7 @@ class Background:
         """
         return np.zeros_like(wl)
 
-    def constant_background(self, wl, b0=0., **kwargs):
+    def constant_background(self, wl, bg0=0., **kwargs):
         """
         Generates a constant background.
 
@@ -548,35 +548,35 @@ class Background:
         wl (np.ndarray): Wavelength values.
         b0 (float): Constant background value.
         """
-        bg = np.full_like(wl, b0)
+        bg = np.full_like(wl, bg0)
         return np.where(bg>0,bg,0.)
 
-    def polynomial3_background(self, wl, b0=0., b1=1., b2=0., **kwargs):
+    def polynomial3_background(self, wl, bg0=0., bg1=1., bg2=0., **kwargs):
         """
         Computwls a third-degree polynomial background.
 
         Parameters:
         wl (np.ndarray): Energy values.
-        b0 (float): Constant term.
-        b1 (float): Linear term.
-        b2 (float): Quadratic term.
+        bg0 (float): Constant term.
+        bg1 (float): Linear term.
+        bg2 (float): Quadratic term.
         """
-        bg = b0 + b1 * np.sqrt(wl) + b2 / np.sqrt(wl)
+        bg = bg0 + bg1 * np.sqrt(wl) + bg2 / np.sqrt(wl)
         return np.where(bg>0,bg,0.)
 
-    def polynomial5_background(self, wl, b0=0., b1=1., b2=0., b3=0., b4=0., **kwargs):
+    def polynomial5_background(self, wl, bg0=0., bg1=1., bg2=0., bg3=0., bg4=0., **kwargs):
         """
         Computes a fifth-degree polynomial background.
 
         Parameters:
         wl (np.ndarray): Wavelegth values.
-        b0 (float): Constant term.
-        b1 (float): Linear term.
-        b2 (float): Quadratic term.
-        b3 (float): Cubic term.
-        b4 (float): Quartic term.
+        bg0 (float): Constant term.
+        bg1 (float): Linear term.
+        bg2 (float): Quadratic term.
+        bg3 (float): Cubic term.
+        bg4 (float): Quartic term.
         """
-        bg = b0 + b1 * np.sqrt(wl) + b2 / np.sqrt(wl) + b3 * wl + b4 * wl**2
+        bg = bg0 + bg1 * np.sqrt(wl) + bg2 / np.sqrt(wl) + bg3 * wl + bg4 * wl**2
         return np.where(bg>0,bg,0.)
 
     def plot(self, wl, params=None, **kwargs):
