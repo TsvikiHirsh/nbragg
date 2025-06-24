@@ -738,7 +738,7 @@ class CrossSection:
         return (vec / magnitude).tolist() if magnitude > 0 else vec.tolist()
 
     @classmethod
-    def from_mtex(cls, csv_file, material, short_name=None):
+    def from_mtex(cls, csv_file, material, powder_phase=True, short_name=None):
         """
         Create a CrossSection from MTEX CSV orientation data.
         
@@ -748,6 +748,8 @@ class CrossSection:
             Path to the CSV file containing orientation components
         material : dict
             Base material dictionary with existing properties
+        powder_phase : bool, optional
+            Whether to add a non-oriented powder phase with complementary weight (default True)
         short_name : str, optional
             Short name for the phase (e.g., 'γ' for gamma)
         
@@ -809,7 +811,7 @@ class CrossSection:
         # Prepare materials dictionary
         materials = {}
         
-        # Process each row
+        # Process each row for oriented phases
         for i, row in df.iterrows():
             # Create a copy of the base material
             updated_material = material.copy()
@@ -824,7 +826,7 @@ class CrossSection:
             # Create material name
             material_name = f"{short_name or material['name']}{i}"
             
-            # Update material dictionary with parameters from the snippet
+            # Update material dictionary with parameters
             updated_material.update({
                 'mat': material.get('mat', ''),  # Use existing mat or empty string
                 'temp': material.get('temp', 300),  # Default to 300 if not specified
@@ -842,6 +844,27 @@ class CrossSection:
             
             # Add to materials dictionary
             materials[material_name] = updated_material
+        
+        # Add non-oriented powder phase if requested
+        if powder_phase:
+            background_weight = 1.0 - total_volume if total_volume <= 1 else 0.0
+            if background_weight > 0:
+                background_material = material.copy()
+                background_material.update({
+                    'mat': material.get('mat', ''),
+                    'temp': material.get('temp', 300),
+                    'mos': None,  # No mosaicity for powder phase
+                    'dir1': None,  # No orientation
+                    'dir2': None,
+                    'alpha': None,
+                    'beta': None,
+                    'gamma': None,
+                    'dirtol': None,
+                    'theta': None,
+                    'phi': None,
+                    'weight': background_weight
+                })
+                materials[f"{short_name or material['name']}_powder"] = background_material
         
         # Return CrossSection with materials
         return cls(materials, name=short_name)
