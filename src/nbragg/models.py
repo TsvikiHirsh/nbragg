@@ -14,6 +14,8 @@ import warnings
 import ipywidgets as widgets
 from IPython.display import display
 from matplotlib.patches import Rectangle
+import fnmatch
+from numpy import log
 
 
 class TransmissionModel(lmfit.Model):
@@ -1148,3 +1150,166 @@ class TransmissionModel(lmfit.Model):
         E = utils.time2energy(tof + dtof, self.tof_length)
         return E
 
+    def group_weights(self, weights=None, vary=True, **groups):
+        """
+        Define softmax-normalized weight fractions for grouped phases, using shared `p1`, `p2`, ...
+        parameters for internal group ratios, and global `group_<name>` parameters for relative group weights.
+
+        Each group is normalized internally, and all groups sum to 1. Internal variation can be
+        controlled per-group using the `vary` argument. Shared `pX` parameters are reused across groups.
+
+        Parameters
+        ----------
+        weights : list of float, optional
+            Initial relative weights between groups. Will be normalized. If not provided,
+            all groups get equal initial weight.
+        vary : bool or list of bool
+            Whether to vary internal `pX` parameters of each group during fitting.
+            Can be a single bool (applies to all groups), or a list of bools per group.
+            Group-level weights always vary.
+        **groups : dict[str, str | list[str]]
+            Define each group by either:
+            - a wildcard string (e.g., "inconel*")
+            - or a list of phase names (e.g., ["inconel1", "inconel2"])
+
+        Returns
+        -------
+        self : the model object
+
+        Notes
+        -----
+        - This method reuses or creates global `p1`, `p2`, ... parameters to control phase weights.
+        - Phase names are sanitized (dashes replaced with underscores).
+        - The total sum of all phases will be 1.
+
+        Examples
+        --------
+        >>> model = nbragg.TransmissionModel(xs)
+
+        # Use wildcards and allow internal variation in both groups
+        >>> model.group_weights(
+        ...     inconel="inconel*",
+        ...     steel="steel*",
+        ...     weights=[0.7, 0.3],
+        ...     vary=True
+        ... )
+
+        # Set internal variation only in 'inconel' group
+        >>> model.group_weights(
+        ...     inconel="inconel*",
+        ...     steel="steel*",
+        ...     weights=[0.5, 0.5],
+        ...     vary=[True, False]
+        ... )
+
+        # Explicit group definitions (list of phases)
+        >>> model.group_weights(
+        ...     powder=["inconel0", "inconel1", "steel_powder"],
+        ...     bulk=["steel0", "steel1", "steel2"],
+        ...     weights=[0.2, 0.8],
+        ...     vary=False
+        ... )
+        """
+        import fnmatch
+        from numpy import log
+        import lmfit
+
+        self.params = getattr(self, "params", lmfit.Parameters())
+        all_phases = list(self._materials.keys())
+        group_names = list(groups.keys())
+        num_groups = len(group_names)
+
+        # Normalize 'vary'
+        if isinstance(vary, bool):
+            vary = [vary] * num_groups
+        assert len(vary) == num_groups, "Length of `vary` must match number of groups"
+
+        # Normalize 'weights'
+        if weights is None:
+            weights = [1.0] * num_groups
+        assert len(weights) == num_groups, "Length of `weights` must match number of groups"
+
+        # Resolve wildcard groups
+        resolved_groups = {}
+        for name, spec in groups.items():
+            if isinstance(spec, str):
+                matched = sorted(fnmatch.filter(all_phases, spec))
+            elif isinstance(spec, list):
+                matched = spec
+            else:
+                raise ValueError(f"Group '{name}' must be a string or list of phase names")
+            if not matched:
+                raise ValueError(f"No phases matched for group '{name}' using '{spec}'")
+            resolved_groups[name] = matched
+
+        # Add group weight softmax parameters: g1, g2, ...
+        for i in range(num_groups - 1):
+            val = log(weights[i] / weights[-1])
+            self.params.add(f"g{i+1}", value=val, min=-14, max=14, vary=True)
+
+        denom = " + ".join([f"exp(g{i+1})" for i in range(num_groups - 1)] + ["1"])
+        for i, group in enumerate(group_names[:-1]):
+            self.params.add(f"group_{group}", expr=f"exp(g{i+1}) / ({denom})")
+        self.params.add(f"group_{group_names[-1]}", expr=f"1 / ({denom})")
+
+        # Clear any existing p-parameters that might conflict
+        # We'll rebuild them from scratch
+        existing_p_params = [name for name in self.params.keys() if name.startswith('p') and name[1:].isdigit()]
+        for p_name in existing_p_params:
+            del self.params[p_name]
+        
+        # Clear any existing phase parameters that will be rebuilt
+        all_group_phases = []
+        for phases in resolved_groups.values():
+            all_group_phases.extend([phase.replace("-", "") for phase in phases])
+        
+        for phase_name in all_group_phases:
+            if phase_name in self.params:
+                del self.params[phase_name]
+
+        # Assign p1, p2, ..., shared across all groups — exactly N-1 per group
+        p_index = 1
+
+        for group_i, group_name in enumerate(group_names):
+            phases = resolved_groups[group_name]
+            group_frac = f"group_{group_name}"
+            N = len(phases)
+
+            if N == 1:
+                phase_clean = phases[0].replace("-", "")
+                self.params.add(phase_clean, expr=group_frac)
+                continue
+
+            # Create exactly N-1 parameters for this group
+            group_pnames = []
+            for i in range(N - 1):  # Only N−1 softmax params per group
+                pname = f"p{p_index}"
+                p_index += 1
+                
+                # Get initial value from material weights
+                phase = phases[i]
+                val = log(self._materials[phase]["weight"] / self._materials[phases[-1]]["weight"])
+                
+                # Add the parameter if it doesn't exist, or update vary if it does
+                if pname in self.params:
+                    self.params[pname].set(vary=vary[group_i])
+                else:
+                    self.params.add(pname, value=val, min=-14, max=14, vary=vary[group_i])
+                
+                group_pnames.append(pname)
+
+            # Build denominator expression
+            denom_terms = [f"exp({pname})" for pname in group_pnames]
+            denom_expr = "1 + " + " + ".join(denom_terms)
+
+            # Add expressions for first N-1 phases
+            for i, phase in enumerate(phases[:-1]):
+                phase_clean = phase.replace("-", "")
+                pname = group_pnames[i]
+                self.params.add(phase_clean, expr=f"{group_frac} * exp({pname}) / ({denom_expr})")
+
+            # Add expression for the last phase (reference phase)
+            final_phase = phases[-1].replace("-", "")
+            self.params.add(final_phase, expr=f"{group_frac} / ({denom_expr})")
+
+        return self
