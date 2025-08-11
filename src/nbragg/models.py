@@ -978,7 +978,7 @@ class TransmissionModel(lmfit.Model):
 
         # Plot styling    
         color = kwargs.pop("color", "crimson")    
-        title = kwargs.pop("title", self.cross_section.name + title_suffix)    
+        title = kwargs.pop("title", self.cross_section.name)    
         ecolor = kwargs.pop("ecolor", "0.8")    
         ms = kwargs.pop("ms", 2)    
 
@@ -1084,11 +1084,11 @@ class TransmissionModel(lmfit.Model):
         else:
             raise ValueError("Cannot plot stage progression without original fit data")
         
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots()
         
         # Plot data once
         ax.errorbar(wavelength, data_values, err, marker="o", 
-                    color='lightgray', ms=1, alpha=0.7, zorder=-1, 
+                    color='lightgray', ms=4, alpha=0.7, zorder=-1, 
                     ecolor='lightgray', label="Data")
         
         # Color scheme for stages
@@ -1130,17 +1130,17 @@ class TransmissionModel(lmfit.Model):
             linewidth = 1 + i * 0.5
             alpha = 0.6 + i * 0.1
             
-            ax.plot(wavelength, best_fit, color=colors[i], linewidth=linewidth, alpha=alpha,
+            ax.plot(wavelength, best_fit, color=colors[i], linewidth=linewidth,
                     label=f"Stage {stage}: {param_str} (χ²={chi2:.3f})" if not np.isnan(chi2) else f"Stage {stage}: {param_str}")
         
         ax.set_xlabel("λ [Å]")
         ax.set_ylabel("Transmission")
         ax.set_title("Rietveld Refinement Stage Progression")
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
-        ax.grid(True, alpha=0.3)
+        ax.legend()
+        # ax.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        return fig
+        return ax
 
     def plot_chi2_progression(self, **kwargs):
         """
@@ -1178,7 +1178,7 @@ class TransmissionModel(lmfit.Model):
             else:
                 stage_labels.append(f"Stage {stage}")
         
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots()
         
         # Plot chi2 progression
         ax.plot(stages, chi2_values, 'o-', linewidth=2, markersize=8, color='crimson')
@@ -1192,15 +1192,15 @@ class TransmissionModel(lmfit.Model):
         ax.set_xlabel("Refinement Stage")
         ax.set_ylabel("Reduced χ²")
         ax.set_title("Rietveld Refinement χ² Progression")
-        ax.grid(True, alpha=0.3)
+        # ax.grid(True, alpha=0.3)
         
         # Add stage parameter labels on x-axis
-        ax.set_xticks(stages)
-        ax.set_xticklabels([f"S{i}\n{label}" for i, label in enumerate(stages, 1)], 
-                        rotation=45, ha='right', fontsize=9)
+        # ax.set_xticks(stages)
+        # ax.set_xticklabels([f"S{i}\n{label}" for i, label in enumerate(stages, 1)], 
+        #                 rotation=45, ha='right', fontsize=9)
         
         plt.tight_layout()
-        return fig
+        return ax
 
     def get_stages_summary_table(self):
         """
