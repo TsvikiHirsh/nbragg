@@ -514,24 +514,19 @@ class CrossSection:
 
         xs = {}
 
-        # Process each phase separately
-        self.phases_data = {name:nc.load(self.phases[name]) for name in self.phases} 
-        for phase in self.phases:
+        # Load all phases in the final weights order
+        self.phases_data = {name: nc.load(self.phases[name]) for name in self.weights.index}
+        for phase in self.weights.index:
             xs[phase] = self._calculate_cross_section(self.lambda_grid, self.phases_data[phase])
-        
+
         # Calculate total
         xs["total"] = self._calculate_cross_section(self.lambda_grid, self.mat_data)
-        
-        # Create DataFrame with all phases
+
+        # Build DataFrame in the correct order from the start
         self.table = pd.DataFrame(xs, index=self.lambda_grid)
         self.table.index.name = "wavelength"
-        
-        if len(self.table.columns) > 1:
-            self.table.columns = self.weights.index.to_list() + ["total"]
-        else:
-            self.table.columns = ["total"]
-        
-        if not hasattr(self,"atomic_density"):
+
+        if not hasattr(self, "atomic_density"):
             self.atomic_density = self.mat_data.info.factor_macroscopic_xs
 
     def _calculate_cross_section(self, wl, mat):
@@ -639,40 +634,88 @@ class CrossSection:
         return material_info
 
     def plot(self, **kwargs):
-        """Plot the cross-section data."""
+        """
+        Plot the weighted neutron cross-section data for each phase and the total.
+
+        This method will:
+        1. Update lattice and extinction parameters for each material (if applicable).
+        2. Load and populate the cross-section data table.
+        3. Plot each phase's weighted cross-section in the same order as the table columns.
+        4. Plot the total cross-section as a thicker dark line.
+        5. Generate a legend with phase names and their weight percentages.
+
+        Parameters
+        ----------
+        title : str, optional
+            Title of the plot. Defaults to the cross-section object's `name`.
+        ylabel : str, optional
+            Y-axis label. Defaults to ``"σ [barn]"``.
+        xlabel : str, optional
+            X-axis label. Defaults to ``"Wavelength [Å]"``.
+        lw : float, optional
+            Base line width for phase curves. Defaults to ``1.0``.
+        **kwargs
+            Additional keyword arguments passed to ``pandas.DataFrame.plot`` for the phase curves.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The matplotlib Axes object containing the plot.
+
+        Notes
+        -----
+        - The order of phases in the plot and legend is preserved according to the
+        order of the columns in ``self.table`` (excluding the "total" column).
+        - The "total" curve is always plotted last, with a distinct style and label.
+
+        Examples
+        --------
+        >>> xs = 0.0275 * nbragg.CrossSection(celloluse=nbragg.materials["Cellulose_C6O5H10.ncmat"]) \
+        ...     + (1 - 0.00275) * nbragg.CrossSection(α=nbragg.materials["Fe_sg229_Iron-alpha_CrysExtn1.ncmat"])
+        >>> ax = xs.plot(title="Cross-section comparison", lw=1.5)
+        >>> ax.figure.show()
+        """
         import matplotlib.pyplot as plt
-        # update lattice and extinction parameters
+
+        # Update parameters if possible
         try:
             for material in self.materials:
                 self._update_ncmat_parameters(material)
-        except:
+        except Exception:
             pass
+
         self._load_material_data()
         self._populate_material_data()
-        
+
         title = kwargs.pop("title", self.name)
         ylabel = kwargs.pop("ylabel", "σ [barn]")
         xlabel = kwargs.pop("xlabel", "Wavelength [Å]")
-        lw = kwargs.pop("lw", 1.)
+        lw = kwargs.pop("lw", 1.0)
 
         fig, ax = plt.subplots()
 
-        # Plot each material component with reduced line width
-        if len(self.table.columns) > 1:
-            self.table.iloc[:, :-1].mul(self.weights).plot(ax=ax, lw=lw, **kwargs)
+        # Ensure weights are aligned with table column order (excluding total)
+        phase_cols = [col for col in self.table.columns if col != "total"]
+        weights_aligned = self.weights.reindex(phase_cols)
 
-        # Plot the total curve with a thicker line width and distinct color
-        self.table["total"].plot(ax=ax, color="0.2", lw=lw*1.2, label="Total")
+        # Plot each phase component
+        if phase_cols:
+            self.table[phase_cols].mul(weights_aligned).plot(ax=ax, lw=lw, **kwargs)
 
+        # Plot total
+        self.table["total"].plot(ax=ax, color="0.2", lw=lw * 1.2, label="Total")
+
+        # Axis labels and title
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_title(title)
 
-        legend_labels = [f"{material}: {weight*100:.1f}%" 
-                        for material, weight in self.weights.items()] + ["Total"]
+        # Legend
+        legend_labels = [f"{mat}: {weights_aligned[mat] * 100:.3f}%" for mat in phase_cols] + ["Total"]
         ax.legend(legend_labels)
 
         return ax
+
 
     @staticmethod
     def _normalize_vector(vector: Union[List[float], List[str]]) -> List[float]:
