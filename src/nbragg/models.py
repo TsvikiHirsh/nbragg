@@ -247,6 +247,8 @@ class TransmissionModel(lmfit.Model):
         fit_result.plot_total_xs = self.plot_total_xs
         fit_result.plot_stage_progression = self.plot_stage_progression
         fit_result.plot_chi2_progression = self.plot_chi2_progression
+        fit_result.self.stages_summary = self.stages_summary
+        fit_result.show_available_params = self.show_available_params
         
         if self.response is not None:
             fit_result.response = self.response
@@ -278,9 +280,12 @@ class TransmissionModel(lmfit.Model):
             If True, prints detailed information about each fitting stage.
         progress_bar : bool, optional
             If True, shows a progress bar for each fitting stage.
-        param_groups : list of str or list of list of str, optional
-            Groups of parameters to fit in each stage. If None, uses predefined groups.
-            Each group can be a single parameter name or a list of parameter names.
+        param_groups : list, dict, or None, optional
+            Groups of parameters to fit in each stage. Can be:
+            - List of lists: [["norm", "thickness"], ["background", "extinction"]]
+            - List of strings/lists: ["basic", ["b0", "ext_l2"]]
+            - Dict with stage names: {"stage1": ["norm"], "stage2": ["background"]}
+            If None, uses predefined groups.
         return_all_results : bool, optional
             If True, returns all stage results and summaries.
             If False, returns only the final fit result.
@@ -313,46 +318,110 @@ class TransmissionModel(lmfit.Model):
         # User-friendly group name mapping
         group_map = {
             "basic": ["norm", "thickness"],
-            "background": [p for p in self.params if p in ["b0", "b1", "b2"] or p.startswith("b_")],
+            "background": [p for p in self.params if p in ["b0", "b1", "b2", "bg0", "bg1", "bg2"] or p.startswith("b_")],
             "tof": [p for p in ["L0", "t0"] if p in self.params],
             "response": [p for p in self.params if self.response and p in self.response.params],
             "weights": [p for p in self.params if p in self.cross_section.weights.keys()],
             "lattice": [p for p in self.params if p in ["a", "b", "c"]],
             "extinction": [p for p in self.params if p.startswith("ext_")],
             "orientation": [p for p in ["phi", "theta", "eta"] if p in self.params],
+            "temperature": [p for p in ["temp"] if p in self.params],
         }
 
-        # Helper to resolve a group entry
-        def resolve_group(entry):
-            if isinstance(entry, str):
-                # If it's a group name
-                if entry in group_map:
-                    return group_map[entry]
-                # If it's a single param name
-                elif entry in self.params:
-                    return [entry]
+        def resolve_single_param_or_group(item):
+            """Resolve a single parameter name or group name to a list of parameters."""
+            if item in group_map:
+                # It's a predefined group
+                resolved = group_map[item]
+                if verbose:
+                    print(f"  Resolved group '{item}' to: {resolved}")
+                return resolved
+            elif item in self.params:
+                # It's a single parameter name
+                if verbose:
+                    print(f"  Found parameter: {item}")
+                return [item]
+            else:
+                # Check if it matches any parameters with wildcards
+                matching_params = [p for p in self.params.keys() if fnmatch.fnmatch(p, item)]
+                if matching_params:
+                    if verbose:
+                        print(f"  Pattern '{item}' matched: {matching_params}")
+                    return matching_params
                 else:
-                    warnings.warn(f"Unknown parameter or group: {entry}")
+                    warnings.warn(f"Unknown parameter or group: '{item}'. Available parameters: {list(self.params.keys())}")
                     return []
+
+        def resolve_group(entry):
+            """Resolve a group entry (string, list, or nested structure) to a flat list of parameters."""
+            if isinstance(entry, str):
+                return resolve_single_param_or_group(entry)
             elif isinstance(entry, list):
-                # Recursively resolve each item
+                # Flatten nested lists
                 resolved = []
-                for e in entry:
-                    resolved.extend(resolve_group(e))
+                for item in entry:
+                    if isinstance(item, str):
+                        resolved.extend(resolve_single_param_or_group(item))
+                    elif isinstance(item, list):
+                        # Handle nested lists recursively
+                        resolved.extend(resolve_group(item))
+                    else:
+                        warnings.warn(f"Unexpected item type in group: {type(item)} - {item}")
                 return resolved
             else:
-                raise ValueError(f"Invalid param_groups entry: {entry}")
+                warnings.warn(f"Invalid param_groups entry type: {type(entry)} - {entry}")
+                return []
 
-        # Resolve all param_groups
+        # Handle different input formats for param_groups
+        stage_names = []
         if param_groups is None:
+            # Default groups
             param_groups = [
                 "basic", "background", "tof", "response",
                 "weights", "lattice", "extinction", "orientation"
             ]
-        resolved_param_groups = [resolve_group(g) for g in param_groups]
+            resolved_param_groups = [resolve_group(g) for g in param_groups]
+            stage_names = [f"Stage_{i+1}" for i in range(len(param_groups))]
+            
+        elif isinstance(param_groups, dict):
+            # Dictionary format: {"stage_name": ["param1", "param2"], ...}
+            stage_names = list(param_groups.keys())
+            resolved_param_groups = [resolve_group(param_groups[stage]) for stage in stage_names]
+            if verbose:
+                print(f"Using custom stage names: {stage_names}")
+                
+        elif isinstance(param_groups, list):
+            # List format: [["param1", "param2"], ["param3"], ...]
+            resolved_param_groups = [resolve_group(g) for g in param_groups]
+            stage_names = [f"Stage_{i+1}" for i in range(len(param_groups))]
+            
+        else:
+            raise ValueError("param_groups must be None, a list, or a dictionary")
+
+        # Remove empty groups
+        valid_groups = []
+        valid_names = []
+        for i, group in enumerate(resolved_param_groups):
+            if group:  # Only keep non-empty groups
+                valid_groups.append(group)
+                valid_names.append(stage_names[i])
+            elif verbose:
+                print(f"Skipping empty group: {stage_names[i]}")
+        
+        resolved_param_groups = valid_groups
+        stage_names = valid_names
+
+        if not resolved_param_groups:
+            raise ValueError("No valid parameter groups found. Check your parameter names.")
+
+        if verbose:
+            print(f"\nFitting stages:")
+            for i, (name, group) in enumerate(zip(stage_names, resolved_param_groups)):
+                print(f"  {name}: {group}")
 
         # Store the resolved param groups for the summary table
         self._stage_param_groups = resolved_param_groups
+        self._stage_names = stage_names
 
         # Prepare data
         if isinstance(data, pandas.DataFrame):
@@ -375,11 +444,27 @@ class TransmissionModel(lmfit.Model):
             from tqdm.notebook import tqdm as notebook_tqdm
             # Check if we're in a Jupyter environment
             if 'ipykernel' in sys.modules:
-                iterator = notebook_tqdm(resolved_param_groups, desc="Rietveld Fit", disable=not progress_bar)
+                iterator = notebook_tqdm(
+                    zip(stage_names, resolved_param_groups), 
+                    desc="Rietveld Fit", 
+                    disable=not progress_bar,
+                    total=len(stage_names)
+                )
             else:
-                iterator = tqdm(resolved_param_groups, desc="Rietveld Fit", disable=not progress_bar)
+                iterator = tqdm(
+                    zip(stage_names, resolved_param_groups), 
+                    desc="Rietveld Fit", 
+                    disable=not progress_bar,
+                    total=len(stage_names)
+                )
         except ImportError:
-            iterator = tqdm(resolved_param_groups, desc="Rietveld Fit", disable=not progress_bar)
+            iterator = tqdm(
+                zip(stage_names, resolved_param_groups), 
+                desc="Rietveld Fit", 
+                disable=not progress_bar,
+                total=len(stage_names)
+            )
+        
         stage_results = []  # Store results
         stage_summaries = []  # For DataFrame summary
 
@@ -414,27 +499,44 @@ class TransmissionModel(lmfit.Model):
             
             return result
 
-        for i, group in enumerate(iterator):
+        for stage_name, group in iterator:
+            stage_num = len(stage_results) + 1
+            
             if verbose:
-                print(f"\nStage {i+1}/{len(resolved_param_groups)}: Fitting {group}")
+                print(f"\n{stage_name}: Fitting {group}")
 
-            # Freeze all
+            # Freeze all parameters
             for p in params.values():
                 p.vary = False
+                
             # Unfreeze current group
+            unfrozen_count = 0
             for name in group:
                 if name in params:
                     params[name].vary = True
+                    unfrozen_count += 1
+                    if verbose:
+                        print(f"  Unfrozen: {name}")
+                else:
+                    warnings.warn(f"Parameter '{name}' not found in params")
+            
+            if unfrozen_count == 0:
+                warnings.warn(f"No parameters were unfrozen in {stage_name}. Skipping this stage.")
+                continue
 
             # Fit this stage
-            fit_result = super().fit(
-                trans,
-                params=params,
-                wl=wavelengths,
-                weights=weights,
-                method="leastsq",
-                **kwargs
-            )
+            try:
+                fit_result = super().fit(
+                    trans,
+                    params=params,
+                    wl=wavelengths,
+                    weights=weights,
+                    method="leastsq",
+                    **kwargs
+                )
+            except Exception as e:
+                warnings.warn(f"Fitting failed in {stage_name}: {e}")
+                continue
 
             # Extract only pickleable parts
             stripped_result = extract_pickleable_attributes(fit_result)
@@ -444,7 +546,8 @@ class TransmissionModel(lmfit.Model):
 
             # Build summary row
             summary = {
-                "stage": i+1,
+                "stage": stage_num,
+                "stage_name": stage_name,
                 "fitted_params": group,
                 "redchi": fit_result.redchi
             }
@@ -456,11 +559,19 @@ class TransmissionModel(lmfit.Model):
 
             # Update for next stage
             params = fit_result.params
+            
+            if verbose:
+                print(f"  {stage_name} completed. χ²/dof = {fit_result.redchi:.4f}")
+
+        if not stage_results:
+            raise RuntimeError("No successful fitting stages completed")
 
         # Final
         self.fit_result = fit_result
         self.fit_stages = stage_results
-        self.stages_summary = self._create_stages_summary_table(stage_results, resolved_param_groups)
+        
+        # Call the updated summary table method with stage names
+        self.stages_summary = self._create_stages_summary_table_enhanced(stage_results, resolved_param_groups, stage_names)
 
         # Attach plotting
         fit_result.plot = self.plot
@@ -474,10 +585,11 @@ class TransmissionModel(lmfit.Model):
             fit_result.background = self.background
 
         if return_all_results:
-            return fit_result, self.all_stage_summaries
+            return fit_result, self.stages_summary
         return fit_result
 
-    def _create_stages_summary_table(self, stage_results, resolved_param_groups):
+
+    def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None):
         """
         Create a summary table showing parameter progression through refinement stages.
         
@@ -487,6 +599,8 @@ class TransmissionModel(lmfit.Model):
             List of fit results from each stage
         resolved_param_groups : list
             The resolved parameter groups used for fitting stages
+        stage_names : list, optional
+            Custom names for each stage. If None, uses "Stage_1", "Stage_2", etc.
             
         Returns
         -------
@@ -503,9 +617,12 @@ class TransmissionModel(lmfit.Model):
         # Create data structure for the table
         stage_data = {}
         
+        # Use custom stage names if provided
+        if stage_names is None:
+            stage_names = [f"Stage_{i+1}" for i in range(len(stage_results))]
+        
         for stage_idx, stage_result in enumerate(stage_results):
-            stage_num = stage_idx + 1
-            stage_col = f"Stage_{stage_num}"
+            stage_col = stage_names[stage_idx] if stage_idx < len(stage_names) else f"Stage_{stage_idx + 1}"
             
             # Initialize stage data
             stage_data[stage_col] = {
@@ -555,6 +672,61 @@ class TransmissionModel(lmfit.Model):
         df = df.reindex(all_param_names_with_redchi)
         
         return df
+
+
+    def show_available_params(self, show_groups=True, show_params=True):
+        """
+        Display available parameter groups and individual parameters for Rietveld fitting.
+        
+        Parameters
+        ----------
+        show_groups : bool, optional
+            If True, show predefined parameter groups
+        show_params : bool, optional
+            If True, show all individual parameters
+        """
+        if show_groups:
+            print("Available parameter groups:")
+            print("=" * 30)
+            
+            group_map = {
+                "basic": ["norm", "thickness"],
+                "background": [p for p in self.params if p in ["b0", "b1", "b2", "bg0", "bg1", "bg2"] or p.startswith("b_")],
+                "tof": [p for p in ["L0", "t0"] if p in self.params],
+                "response": [p for p in self.params if self.response and p in self.response.params],
+                "weights": [p for p in self.params if p in self.cross_section.weights.keys()],
+                "lattice": [p for p in self.params if p in ["a", "b", "c"]],
+                "extinction": [p for p in self.params if p.startswith("ext_")],
+                "orientation": [p for p in ["phi", "theta", "eta"] if p in self.params],
+                "temperature": [p for p in ["temp"] if p in self.params],
+            }
+            
+            for group_name, params in group_map.items():
+                if params:  # Only show groups with available parameters
+                    print(f"  '{group_name}': {params}")
+            
+        if show_params:
+            if show_groups:
+                print("\nAll individual parameters:")
+                print("=" * 30)
+            else:
+                print("Available parameters:")
+                print("=" * 20)
+                
+            for param_name, param in self.params.items():
+                vary_status = "vary" if param.vary else "fixed"
+                print(f"  {param_name}: {param.value:.6g} ({vary_status})")
+                
+        print("\nExample usage:")
+        print("=" * 15)
+        print("# Using predefined groups:")
+        print('param_groups = ["basic", "background", "extinction"]')
+        print("\n# Using individual parameters:")
+        print('param_groups = [["norm", "thickness"], ["b0", "ext_l2"]]')
+        print("\n# Using named stages:")
+        print('param_groups = {"scale": ["norm"], "sample": ["thickness", "extinction"]}')
+        print("\n# Mixed approach:")
+        print('param_groups = ["basic", ["b0", "ext_l2"], "lattice"]')
 
     def plot(self, data=None, plot_bg: bool = True,    
             plot_dspace: bool = False, dspace_min: float = 1,    
