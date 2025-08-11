@@ -199,7 +199,7 @@ class Data:
         Data
             A Data object with the transmission data loaded into a dataframe.
         """
-        df = pd.read_csv(filename, delim_whitespace=True)
+        df = pd.read_csv(filename, sep=r"\s+")
         df.columns = [index, "trans", "err"]
         
         if index=="energy":
