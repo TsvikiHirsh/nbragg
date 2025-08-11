@@ -1144,148 +1144,123 @@ class TransmissionModel(lmfit.Model):
     def plot_stage_progression(self, stages: list = None, **kwargs):
         """
         Plot the progression of Rietveld refinement stages showing how the fit improves.
-        
-        Parameters
-        ----------
-        stages : list, optional
-            List of stage numbers to plot. If None, plots all stages.
-        kwargs : dict, optional
-            Additional plot settings
-            
-        Returns
-        -------
-        matplotlib.figure.Figure
-            Figure showing stage progression
         """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
         if not hasattr(self, "fit_stages") or not self.fit_stages:
             raise ValueError("No Rietveld stages available. Run fit with method='rietveld' first.")
-        
+
         if stages is None:
             stages = list(range(1, len(self.fit_stages) + 1))
-        
-        # Get original data
+
+        # Original data
         if hasattr(self, "fit_result") and self.fit_result is not None:
             wavelength = self.fit_result.userkws["wl"]
             data_values = self.fit_result.data
             err = 1. / self.fit_result.weights
         else:
             raise ValueError("Cannot plot stage progression without original fit data")
-        
-        fig, ax = plt.subplots()
-        
-        # Plot data once
-        ax.errorbar(wavelength, data_values, err, marker="o", 
-                    color='lightgray', ms=4, alpha=0.7, zorder=-1, 
-                    ecolor='lightgray', label="Data")
-        
-        # Color scheme for stages
-        colors = plt.cm.viridis(np.linspace(0, 1, len(stages)))
-        
-        # Store chi2 values for legend
-        chi2_progression = []
-        
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+
+        # Match style: light gray points for data
+        ax.errorbar(wavelength, data_values, err,
+                    marker="o", color="0.6", ms=2, alpha=0.7, zorder=-1,
+                    ecolor="0.85", label="Data")
+
+        # Use consistent style palette
+        colors = plt.cm.plasma(np.linspace(0, 0.85, len(stages)))
+
         for i, stage in enumerate(stages):
             if stage < 1 or stage > len(self.fit_stages):
                 continue
-                
+
             stage_result = self.fit_stages[stage - 1]
             params = stage_result.params
-            
-            # Evaluate model for this stage
             best_fit = self.eval(params=params, wl=wavelength)
-            chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
-            chi2_progression.append(chi2)
-            
-            # Get fitted parameters for this stage from summary
+            chi2 = getattr(stage_result, "redchi", np.nan)
+
+            # Get stage name if available
+            stage_name = f"Stage {stage}"
             if hasattr(self, "stages_summary"):
-                # Extract which parameters were varied in this stage
                 stage_col = f"Stage_{stage}"
-                if (stage_col, 'vary') in self.stages_summary.columns:
+                if (stage_col, "vary") in self.stages_summary.columns:
                     varied_params = self.stages_summary.loc[
-                        self.stages_summary[(stage_col, 'vary')] == True
+                        self.stages_summary[(stage_col, "vary")] == True
                     ].index.tolist()
-                    # Remove 'redchi' if it's in there
-                    varied_params = [p for p in varied_params if p != 'redchi']
-                    param_str = ", ".join(varied_params[:2]) + (f" + {len(varied_params)-2} more" if len(varied_params) > 2 else "")
-                else:
-                    param_str = "Unknown parameters"
-            else:
-                fitted_params = [name for name, param in params.items() if param.vary]
-                param_str = ", ".join(fitted_params[:2]) + (f" + {len(fitted_params)-2} more" if len(fitted_params) > 2 else "")
-            
-            # Plot with increasing line width to show progression
-            linewidth = 1 + i * 0.5
-            alpha = 0.6 + i * 0.1
-            
-            ax.plot(wavelength, best_fit, color=colors[i], linewidth=linewidth,
-                    label=f"Stage {stage}: {param_str} (χ²={chi2:.3f})" if not np.isnan(chi2) else f"Stage {stage}: {param_str}")
-        
+                    varied_params = [p for p in varied_params if p != "redchi"]
+                    if varied_params:
+                        stage_name = ", ".join(varied_params[:2]) + (
+                            f" +{len(varied_params)-2}" if len(varied_params) > 2 else ""
+                        )
+
+            ax.plot(wavelength, best_fit,
+                    color=colors[i], lw=1.2 + 0.4 * i,
+                    alpha=0.8,
+                    label=f"{stage_name} (χ²={chi2:.3f})" if not np.isnan(chi2) else stage_name)
+
         ax.set_xlabel("λ [Å]")
         ax.set_ylabel("Transmission")
         ax.set_title("Rietveld Refinement Stage Progression")
-        ax.legend()
-        # ax.grid(True, alpha=0.3)
-        
+        ax.legend(fontsize=8, frameon=False)
+
         plt.tight_layout()
         return ax
 
+
     def plot_chi2_progression(self, **kwargs):
         """
-        Plot the chi-squared progression through Rietveld stages.
-        
-        Returns
-        -------
-        matplotlib.figure.Figure
-            Figure showing chi2 progression
+        Plot the χ² progression through Rietveld stages with stage names on x-axis.
         """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
         if not hasattr(self, "fit_stages") or not self.fit_stages:
             raise ValueError("No Rietveld stages available. Run fit with method='rietveld' first.")
-        
+
         stages = list(range(1, len(self.fit_stages) + 1))
         chi2_values = []
         stage_labels = []
-        
-        for i, stage in enumerate(stages):
+
+        for stage in stages:
             stage_result = self.fit_stages[stage - 1]
-            chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
+            chi2 = getattr(stage_result, "redchi", np.nan)
             chi2_values.append(chi2)
-            
-            # Get stage description from summary if available
+
+            label = f"Stage {stage}"
             if hasattr(self, "stages_summary"):
                 stage_col = f"Stage_{stage}"
-                if (stage_col, 'vary') in self.stages_summary.columns:
+                if (stage_col, "vary") in self.stages_summary.columns:
                     varied_params = self.stages_summary.loc[
-                        self.stages_summary[(stage_col, 'vary')] == True
+                        self.stages_summary[(stage_col, "vary")] == True
                     ].index.tolist()
-                    # Remove 'redchi' if it's in there
-                    varied_params = [p for p in varied_params if p != 'redchi']
-                    stage_labels.append(", ".join(varied_params[:2]) + (f"+{len(varied_params)-2}" if len(varied_params) > 2 else ""))
-                else:
-                    stage_labels.append(f"Stage {stage}")
-            else:
-                stage_labels.append(f"Stage {stage}")
-        
-        fig, ax = plt.subplots()
-        
-        # Plot chi2 progression
-        ax.plot(stages, chi2_values, 'o-', linewidth=2, markersize=8, color='crimson')
-        
-        # Add value labels on points
-        for i, (stage, chi2) in enumerate(zip(stages, chi2_values)):
+                    varied_params = [p for p in varied_params if p != "redchi"]
+                    if varied_params:
+                        label = ", ".join(varied_params[:2]) + (
+                            f" +{len(varied_params)-2}" if len(varied_params) > 2 else ""
+                        )
+            stage_labels.append(label)
+
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+
+        ax.plot(stages, chi2_values, marker="o", lw=2, color="seagreen")
+
+        # Annotate each point
+        for stage, chi2 in zip(stages, chi2_values):
             if not np.isnan(chi2):
-                ax.annotate(f'{chi2:.3f}', (stage, chi2), textcoords="offset points", 
-                        xytext=(0,10), ha='center', fontsize=10)
-        
+                ax.annotate(f"{chi2:.3f}", (stage, chi2),
+                            textcoords="offset points", xytext=(0, 8),
+                            ha="center", fontsize=8)
+
         ax.set_xlabel("Refinement Stage")
         ax.set_ylabel("Reduced χ²")
-        ax.set_title("Rietveld Refinement χ² Progression")
-        # ax.grid(True, alpha=0.3)
-        
-        # Add stage parameter labels on x-axis
-        # ax.set_xticks(stages)
-        # ax.set_xticklabels([f"S{i}\n{label}" for i, label in enumerate(stages, 1)], 
-        #                 rotation=45, ha='right', fontsize=9)
-        
+        ax.set_title("Rietveld χ² Progression")
+
+        # Stage names at bottom
+        ax.set_xticks(stages)
+        ax.set_xticklabels(stage_labels, rotation=30, ha="right", fontsize=8)
+
         plt.tight_layout()
         return ax
 
