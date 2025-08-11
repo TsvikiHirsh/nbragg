@@ -15,6 +15,7 @@ import ipywidgets as widgets
 from IPython.display import display
 from matplotlib.patches import Rectangle
 import fnmatch
+import re
 from numpy import log
 
 
@@ -400,13 +401,14 @@ class TransmissionModel(lmfit.Model):
         # User-friendly group name mapping
         group_map = {
             "basic": ["norm", "thickness"],
-            "background": [p for p in self.params if p in ["b0", "b1", "b2", "bg0", "bg1", "bg2"] or p.startswith("b_")],
+            "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
             "tof": [p for p in ["L0", "t0"] if p in self.params],
             "response": [p for p in self.params if self.response and p in self.response.params],
-            "weights": [p for p in self.params if p in self.cross_section.weights.keys()],
+            "weights": [p for p in self.params if re.compile(r"p\d+").match(p) ],
             "lattice": [p for p in self.params if p in ["a", "b", "c"]],
             "extinction": [p for p in self.params if p.startswith("ext_")],
-            "orientation": [p for p in ["phi", "theta", "eta"] if p in self.params],
+            "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
+            "mosaicity": [p for p in self.params if p.startswith("η")],
             "temperature": [p for p in ["temp"] if p in self.params],
         }
 
@@ -460,7 +462,7 @@ class TransmissionModel(lmfit.Model):
             # Default groups
             param_groups = [
                 "basic", "background", "tof", "response",
-                "weights", "lattice", "extinction", "orientation"
+                "weights", "lattice", "extinction", "orientation","mosaicity", "temperature",
             ]
             resolved_param_groups = [resolve_group(g) for g in param_groups]
             stage_names = [f"Stage_{i+1}" for i in range(len(param_groups))]
@@ -775,13 +777,13 @@ class TransmissionModel(lmfit.Model):
         if show_groups:
             print("Available parameter groups:")
             print("=" * 30)
-            
+
             group_map = {
                 "basic": ["norm", "thickness"],
-                "background": [p for p in self.params if p in ["b0", "b1", "b2", "bg0", "bg1", "bg2"] or p.startswith("b_")],
+                "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
                 "tof": [p for p in ["L0", "t0"] if p in self.params],
                 "response": [p for p in self.params if self.response and p in self.response.params],
-                "weights": [p for p in self.params if p in self.cross_section.weights.keys()],
+                "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
                 "lattice": [p for p in self.params if p in ["a", "b", "c"]],
                 "extinction": [p for p in self.params if p.startswith("ext_")],
                 "orientation": [p for p in ["phi", "theta", "eta"] if p in self.params],
