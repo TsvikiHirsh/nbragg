@@ -245,6 +245,9 @@ class TransmissionModel(lmfit.Model):
         self.fit_result = fit_result
         fit_result.plot = self.plot
         fit_result.plot_total_xs = self.plot_total_xs
+        fit_result.plot_stage_progression = self.plot_stage_progression
+        fit_result.plot_chi2_progression = self.plot_chi2_progression
+        
         if self.response is not None:
             fit_result.response = self.response
             fit_result.response.params = fit_result.params
@@ -252,24 +255,70 @@ class TransmissionModel(lmfit.Model):
             fit_result.background = self.background
 
         return fit_result
+    
 
     def _rietveld_fit(self, data, params, wlmin, wlmax,
                     verbose=False, progress_bar=False,
                     param_groups=None, return_all_results=False,
                     **kwargs):
+        """ Perform Rietveld-style staged fitting.
+        This method allows for staged fitting of parameters, where each stage
+        refines a specific group of parameters while keeping others fixed.
+        Parameters
+        ----------
+        data : pandas.DataFrame or Data
+            The input data containing wavelength and transmission values.
+        params : lmfit.Parameters, optional
+            Initial parameters for the fit. If None, uses the model's default parameters.       
+        wlmin : float
+            Minimum wavelength for fitting.
+        wlmax : float
+            Maximum wavelength for fitting.
+        verbose : bool, optional
+            If True, prints detailed information about each fitting stage.
+        progress_bar : bool, optional
+            If True, shows a progress bar for each fitting stage.
+        param_groups : list of str or list of list of str, optional
+            Groups of parameters to fit in each stage. If None, uses predefined groups.
+            Each group can be a single parameter name or a list of parameter names.
+        return_all_results : bool, optional
+            If True, returns all stage results and summaries.
+            If False, returns only the final fit result.
+        kwargs : dict, optional
+            Additional keyword arguments for the fit method, such as weights, method, etc.
+
+        Returns
+        -------
+        fit_result : lmfit.ModelResult
+            The final fit result after all stages.
+        stage_results : list of lmfit.ModelResult, optional
+            If `return_all_results` is True, returns a list of results for each fitting stage.
+        stage_summaries : pandas.DataFrame, optional
+            If `return_all_results` is True, returns a DataFrame summarizing each stage's results.
+
+        Notes
+        -----
+        This method is designed for Rietveld-style fitting, where parameters are fitted in stages.
+        It allows for flexible grouping of parameters, enabling users to refine specific aspects of the model iteratively.
+        """
         from copy import deepcopy
-        from tqdm.auto import tqdm
+        import sys
+        import warnings
+        try:
+            from tqdm.notebook import tqdm
+        except ImportError:
+            from tqdm.auto import tqdm
         import pickle
 
         # User-friendly group name mapping
         group_map = {
             "basic": ["norm", "thickness"],
-            "background": [p for p in self.params if p.startswith("b")],
+            "background": [p for p in self.params if p in ["b0", "b1", "b2"] or p.startswith("b_")],
             "tof": [p for p in ["L0", "t0"] if p in self.params],
-            "response": [p for p in self.params if p.startswith("resp_")],
-            "weights": [p for p in self.params if p.startswith("weight_")],
-            "lattice": [p for p in self.params if p.startswith("lattice")],
-            "extinction": [p for p in self.params if p.startswith("extinction")],
+            "response": [p for p in self.params if self.response and p in self.response.params],
+            "weights": [p for p in self.params if p in self.cross_section.weights.keys()],
+            "lattice": [p for p in self.params if p in ["a", "b", "c"]],
+            "extinction": [p for p in self.params if p.startswith("ext_")],
             "orientation": [p for p in ["phi", "theta", "eta"] if p in self.params],
         }
 
@@ -302,6 +351,9 @@ class TransmissionModel(lmfit.Model):
             ]
         resolved_param_groups = [resolve_group(g) for g in param_groups]
 
+        # Store the resolved param groups for the summary table
+        self._stage_param_groups = resolved_param_groups
+
         # Prepare data
         if isinstance(data, pandas.DataFrame):
             data = data.query(f"{wlmin} < wavelength < {wlmax}")
@@ -318,7 +370,16 @@ class TransmissionModel(lmfit.Model):
 
         params = deepcopy(params or self.params)
 
-        iterator = tqdm(resolved_param_groups, desc="Rietveld Fit", disable=not progress_bar)
+        # Use tqdm.notebook for Jupyter environments
+        try:
+            from tqdm.notebook import tqdm as notebook_tqdm
+            # Check if we're in a Jupyter environment
+            if 'ipykernel' in sys.modules:
+                iterator = notebook_tqdm(resolved_param_groups, desc="Rietveld Fit", disable=not progress_bar)
+            else:
+                iterator = tqdm(resolved_param_groups, desc="Rietveld Fit", disable=not progress_bar)
+        except ImportError:
+            iterator = tqdm(resolved_param_groups, desc="Rietveld Fit", disable=not progress_bar)
         stage_results = []  # Store results
         stage_summaries = []  # For DataFrame summary
 
@@ -398,12 +459,14 @@ class TransmissionModel(lmfit.Model):
 
         # Final
         self.fit_result = fit_result
-        self.all_stage_results = stage_results
-        self.all_stage_summaries = pandas.DataFrame(stage_summaries)
+        self.fit_stages = stage_results
+        self.stages_summary = self._create_stages_summary_table(stage_results, resolved_param_groups)
 
         # Attach plotting
         fit_result.plot = self.plot
         fit_result.plot_total_xs = self.plot_total_xs
+        fit_result.plot_stage_progression = self.plot_stage_progression
+        fit_result.plot_chi2_progression = self.plot_chi2_progression
         if self.response is not None:
             fit_result.response = self.response
             fit_result.response.params = fit_result.params
@@ -414,273 +477,573 @@ class TransmissionModel(lmfit.Model):
             return fit_result, self.all_stage_summaries
         return fit_result
 
-    def plot(self, data=None, plot_bg: bool = True,
-            plot_dspace: bool = False, dspace_min: float = 1,
-            dspace_label_pos: float = 0.99, **kwargs):
+    def _create_stages_summary_table(self, stage_results, resolved_param_groups):
         """
-        Plot the results of the fit or model.
+        Create a summary table showing parameter progression through refinement stages.
         
         Parameters
         ----------
-        data : object, optional
-            Data object to show alongside the model (useful before performing the fit).
-            Should have wavelength, transmission, and error data accessible.
-        plot_bg : bool, optional
-            Whether to include the background in the plot, by default True.
-        plot_dspace: bool, optional
-            If True plots the 2*dspace and labels of that material that are larger than dspace_min
-        dspace_min: float, optional
-            The minimal dspace from which to plot the dspacing*2 lines
-        dspace_label_pos: float, optional
-            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure
-        kwargs : dict, optional
-            Additional plot settings like color, marker size, etc.
+        stage_results : list
+            List of fit results from each stage
+        resolved_param_groups : list
+            The resolved parameter groups used for fitting stages
             
         Returns
         -------
-        matplotlib.axes.Axes
-            The axes of the plot.
-            
-        Notes
-        -----
-        This function generates a plot showing the transmission data, the best-fit curve,
-        and residuals. If `plot_bg` is True, it will also plot the background function.
-        Can be used both after fitting (using fit_result) or before fitting (using model params).
+        pandas.DataFrame
+            Multi-index DataFrame with parameters as rows and stages as columns.
+            Each stage has columns for 'value', 'stderr', 'vary', and the table includes redchi.
         """
-        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))
+        import pandas as pd
+        import numpy as np
         
-        # Check if we have fit results or should use model
+        # Get all parameter names from the final stage
+        all_param_names = list(stage_results[-1].params.keys())
+        
+        # Create data structure for the table
+        stage_data = {}
+        
+        for stage_idx, stage_result in enumerate(stage_results):
+            stage_num = stage_idx + 1
+            stage_col = f"Stage_{stage_num}"
+            
+            # Initialize stage data
+            stage_data[stage_col] = {
+                'value': {},
+                'stderr': {},
+                'vary': {}
+            }
+            
+            # Get the parameters that were varied in this stage
+            varied_in_stage = set(resolved_param_groups[stage_idx])
+            
+            # Fill in parameter data
+            for param_name in all_param_names:
+                if param_name in stage_result.params:
+                    param = stage_result.params[param_name]
+                    stage_data[stage_col]['value'][param_name] = param.value
+                    stage_data[stage_col]['stderr'][param_name] = param.stderr if param.stderr is not None else np.nan
+                    # Set vary based on whether this parameter was varied in THIS stage
+                    stage_data[stage_col]['vary'][param_name] = param_name in varied_in_stage
+                else:
+                    # Parameter not in this stage
+                    stage_data[stage_col]['value'][param_name] = np.nan
+                    stage_data[stage_col]['stderr'][param_name] = np.nan
+                    stage_data[stage_col]['vary'][param_name] = False
+            
+            # Add redchi for this stage
+            redchi = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
+            stage_data[stage_col]['value']['redchi'] = redchi
+            stage_data[stage_col]['stderr']['redchi'] = np.nan  # redchi doesn't have stderr
+            stage_data[stage_col]['vary']['redchi'] = np.nan    # redchi doesn't have vary flag
+        
+        # Convert to DataFrame with multi-index columns
+        data_for_df = {}
+        
+        for stage_col in stage_data:
+            for metric in ['value', 'stderr', 'vary']:
+                data_for_df[(stage_col, metric)] = stage_data[stage_col][metric]
+        
+        # Create the DataFrame
+        df = pd.DataFrame(data_for_df)
+        
+        # Set multi-index for columns
+        df.columns = pd.MultiIndex.from_tuples(df.columns, names=['Stage', 'Metric'])
+        
+        # Add redchi as the last row
+        all_param_names_with_redchi = all_param_names + ['redchi']
+        df = df.reindex(all_param_names_with_redchi)
+        
+        return df
+
+    def plot(self, data=None, plot_bg: bool = True,    
+            plot_dspace: bool = False, dspace_min: float = 1,    
+            dspace_label_pos: float = 0.99, stage: int = None, **kwargs):    
+        """    
+        Plot the results of the fit or model.    
+            
+        Parameters    
+        ----------    
+        data : object, optional    
+            Data object to show alongside the model (useful before performing the fit).    
+            Should have wavelength, transmission, and error data accessible.    
+        plot_bg : bool, optional    
+            Whether to include the background in the plot, by default True.    
+        plot_dspace: bool, optional    
+            If True plots the 2*dspace and labels of that material that are larger than dspace_min    
+        dspace_min: float, optional    
+            The minimal dspace from which to plot the dspacing*2 lines    
+        dspace_label_pos: float, optional    
+            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure    
+        stage: int, optional    
+            If provided, plot results from a specific Rietveld fitting stage (1-indexed).    
+            Only works if Rietveld fitting has been performed.    
+        kwargs : dict, optional    
+            Additional plot settings like color, marker size, etc.    
+                
+        Returns    
+        -------    
+        matplotlib.axes.Axes    
+            The axes of the plot.    
+                
+        Notes    
+        -----    
+        This function generates a plot showing the transmission data, the best-fit curve,    
+        and residuals. If `plot_bg` is True, it will also plot the background function.    
+        Can be used both after fitting (using fit_result) or before fitting (using model params).    
+        """    
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))    
+            
+        # Determine which results to use
+        if stage is not None and hasattr(self, "fit_stages") and self.fit_stages:
+            # Use specific stage results
+            if stage < 1 or stage > len(self.fit_stages):
+                raise ValueError(f"Stage {stage} not available. Available stages: 1-{len(self.fit_stages)}")
+            
+            # Get stage results
+            stage_result = self.fit_stages[stage - 1]  # Convert to 0-indexed
+            
+            # We need to reconstruct the fit data from the original fit
+            if hasattr(self, "fit_result") and self.fit_result is not None:
+                wavelength = self.fit_result.userkws["wl"]    
+                data_values = self.fit_result.data    
+                err = 1. / self.fit_result.weights    
+            else:
+                raise ValueError("Cannot plot stage results without original fit data")
+                
+            # Use stage parameters to evaluate model
+            params = stage_result.params
+            best_fit = self.eval(params=params, wl=wavelength)
+            residual = (data_values - best_fit) / err
+            chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.sum(residual**2) / (len(data_values) - len(params))
+            fit_label = f"Stage {stage} fit"
+            
+        elif hasattr(self, "fit_result") and self.fit_result is not None:    
+            # Use final fit results    
+            wavelength = self.fit_result.userkws["wl"]    
+            data_values = self.fit_result.data    
+            err = 1. / self.fit_result.weights    
+            best_fit = self.fit_result.best_fit    
+            residual = self.fit_result.residual    
+            params = self.fit_result.params    
+            chi2 = self.fit_result.redchi    
+            fit_label = "Best fit"    
+        else:    
+            # Use model (no fit yet)    
+            fit_label = "Model"    
+            params = self.params  # Assuming model has params attribute    
+                
+            if data is not None:    
+                # Extract data from provided data object    
+                wavelength = data.table.wavelength    
+                data_values = data.table.trans    
+                err = data.table.err    
+                    
+                # Evaluate model at data wavelengths    
+                best_fit = self.eval(params=params, wl=wavelength)    
+                residual = (data_values - best_fit) / err    
+                    
+                # Calculate chi2 for the model    
+                chi2 = np.sum(((data_values - best_fit) / err) ** 2) / (len(data_values) - len(params))    
+            else:    
+                # No data provided, just show model over some wavelength range    
+                wavelength = np.linspace(1.0, 10.0, 1000)  # Adjust range as needed    
+                data_values = np.nan * np.ones_like(wavelength)    
+                err = np.nan * np.ones_like(wavelength)    
+                best_fit = self.eval(params=params, wl=wavelength)    
+                residual = np.nan * np.ones_like(wavelength)    
+                chi2 = np.nan    
+            
+        # Plot settings    
+        color = kwargs.pop("color", "seagreen")    
+        ecolor = kwargs.pop("ecolor", "0.8")    
+        title = kwargs.pop("title", self.cross_section.name)    
+        ms = kwargs.pop("ms", 2)    
+            
+        # Plot data and best-fit/model    
+        ax[0].errorbar(wavelength, data_values, err, marker="o", color=color, ms=ms,     
+                    zorder=-1, ecolor=ecolor, label="Data")    
+        ax[0].plot(wavelength, best_fit, color="0.2", label=fit_label)    
+        ax[0].set_ylabel("Transmission")    
+        ax[0].set_title(title)    
+            
+        # Plot residuals    
+        ax[1].plot(wavelength, residual, color=color)    
+        ax[1].set_ylabel("Residuals [1σ]")    
+        ax[1].set_xlabel("λ [Å]")    
+            
+        # Plot background if requested    
+        if plot_bg and self.background:    
+            self.background.plot(wl=wavelength, ax=ax[0], params=params, **kwargs)    
+            legend_labels = [fit_label, "Background", "Data"]    
+        else:    
+            legend_labels = [fit_label, "Data"]    
+            
+        # Set legend with chi2 value    
+        ax[0].legend(legend_labels, fontsize=9, reverse=True,     
+                    title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")    
+            
+        # Plot d-spacing lines if requested    
+        if plot_dspace:    
+            for phase in self.cross_section.phases_data:    
+                try:    
+                    hkls = self.cross_section.phases_data[phase].info.hklList()    
+                except:    
+                    continue    
+                for hkl in hkls:    
+                    hkl = hkl[:3]    
+                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)    
+                    if dspace >= dspace_min:    
+                        trans = ax[0].get_xaxis_transform()    
+                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")    
+                        if len(self.cross_section.phases) > 1:    
+                            ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}",     
+                                    color="0.2", zorder=-1, fontsize=8, transform=trans,     
+                                    rotation=90, va="top", ha="right")    
+                        else:    
+                            ax[0].text(dspace*2, dspace_label_pos, f"{hkl}",     
+                                    color="0.2", zorder=-1, fontsize=8, transform=trans,     
+                                    rotation=90, va="top", ha="right")    
+            
+        plt.subplots_adjust(hspace=0.05)    
+        return ax    
+
+
+    def plot_total_xs(self, plot_bg: bool = True,     
+                    plot_dspace: bool = False,     
+                    dspace_min: float = 1,     
+                    dspace_label_pos: float = 0.99,     
+                    stage: int = None,
+                    **kwargs):    
+        """    
+        Plot the results of the total cross-section fit.    
+
+        Parameters    
+        ----------    
+        plot_bg : bool, optional    
+            Whether to include the background in the plot, by default True.    
+        plot_dspace: bool, optional    
+            If True plots the 2*dspace and labels of that material that are larger than dspace_min    
+        dspace_min: float, optional    
+            The minimal dspace from which to plot the dspacing*2 lines    
+        dspace_label_pos: float, optional    
+            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure    
+        stage: int, optional    
+            If provided, plot results from a specific Rietveld fitting stage (1-indexed).    
+            Only works if Rietveld fitting has been performed.    
+        kwargs : dict, optional    
+            Additional plot settings like color, marker size, etc.    
+
+        Returns    
+        -------    
+        matplotlib.axes.Axes    
+            The axes of the plot.    
+
+        Notes    
+        -----    
+        This function generates a plot showing the total cross-section data,     
+        the best-fit curve, and residuals. If `plot_bg` is True, it will also     
+        plot the background function.    
+        """    
+        # Determine which parameters to use
+        if stage is not None and hasattr(self, "fit_stages") and self.fit_stages:
+            # Use specific stage results
+            if stage < 1 or stage > len(self.fit_stages):
+                raise ValueError(f"Stage {stage} not available. Available stages: 1-{len(self.fit_stages)}")
+            
+            stage_result = self.fit_stages[stage - 1]  # Convert to 0-indexed
+            params = stage_result.params
+            chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
+            title_suffix = f" (Stage {stage})"
+            
+            # We still need the original wavelength data
+            if not hasattr(self, "fit_result") or self.fit_result is None:
+                raise ValueError("Cannot plot stage cross-section without original fit data")
+            wavelength = self.fit_result.userkws["wl"]
+            data_values = self.fit_result.data
+            
+        elif hasattr(self, "fit_result") and self.fit_result is not None:
+            # Use final fit results
+            params = self.fit_result.params
+            chi2 = self.fit_result.redchi
+            wavelength = self.fit_result.userkws["wl"]
+            data_values = self.fit_result.data
+            title_suffix = ""
+        else:
+            raise ValueError("Cannot plot cross-section without fit results")
+        
+        # Prepare data for cross-section calculation    
+        if "k" in params:    
+            k = params['k'].value    
+        else:    
+            k = 1.    
+        if plot_bg and self.background:    
+            bg = self.background.function(wavelength, **params)    
+        else:    
+            bg = 0.    
+        norm = params['norm'].value    
+        n = self.atomic_density    
+        thickness = params['thickness'].value    
+
+        # Calculate cross-section data    
+        data_xs = -1. / n / thickness * np.log((data_values - k * bg) / norm / (1. - bg))    
+
+        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))    
+
+            
+        # Calculate best fit and residuals for cross-section    
+        xs = self.cross_section(wavelength, **params)  # You'll need to implement this method    
+
+        if self.response != None:    
+            response = self.response.function(**params)    
+            best_fit = convolve1d(xs, response, 0)    
+        else:
+            best_fit = xs
+        residual = data_xs - best_fit    
+
+        # Plot styling    
+        color = kwargs.pop("color", "crimson")    
+        title = kwargs.pop("title", self.cross_section.name + title_suffix)    
+        ecolor = kwargs.pop("ecolor", "0.8")    
+        ms = kwargs.pop("ms", 2)    
+
+        # Top subplot: Data and fit    
+        ax[0].errorbar(wavelength, data_xs,     
+                    # yerr=1./self.fit_result.weights,  # Assuming similar error handling    
+                    marker="o",     
+                    color=color,     
+                    ms=ms,     
+                    zorder=-1,     
+                    ecolor=ecolor,     
+                    label="Cross-section data")    
+            
+        ax[0].plot(wavelength, best_fit, color="0.4", label="Best fit")    
+        ax[0].plot(wavelength, xs, color="0.2", label="total xs")    
+        ax[0].set_ylabel("Total Cross Section [barn/sr]")    
+        ax[0].set_title(title)    
+
+        # Bottom subplot: Residuals    
+        ax[1].plot(wavelength, residual, color=color)    
+        ax[1].set_ylabel("Residuals [1σ]")    
+        ax[1].set_xlabel("λ [Å]")    
+
+        # Background plotting (if enabled)    
+        if plot_bg and self.background:    
+            self.background.plot(wl=wavelength, ax=ax[0], params=params, **kwargs)    
+            ax[0].legend(["Cross-section data", "Background", "Total cross-section","Best fit"][::-1],     
+                        fontsize=9,     
+                        reverse=True,     
+                        title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")    
+        else:    
+            ax[0].legend(["Cross-section data","Total cross-section", "Best fit"][::-1],     
+                        fontsize=9,     
+                        reverse=True,     
+                        title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")    
+
+        # d-spacing plot (if enabled)    
+        if plot_dspace:    
+            for phase in self.cross_section.phases_data:    
+                try:    
+                    hkls = self.cross_section.phases_data[phase].info.hklList()    
+                except:    
+                    continue    
+                for hkl in hkls:    
+                    hkl = hkl[:3]    
+                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)    
+                    if dspace >= dspace_min:    
+                        trans = ax[0].get_xaxis_transform()    
+                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")    
+                            
+                        # Label d-spacing lines    
+                        if len(self.cross_section.phases) > 1:    
+                            ax[0].text(dspace*2, dspace_label_pos,     
+                                    f"{phase} {hkl}",     
+                                    color="0.2",     
+                                    zorder=-1,     
+                                    fontsize=8,     
+                                    transform=trans,     
+                                    rotation=90,     
+                                    va="top",     
+                                    ha="right")    
+                        else:    
+                            ax[0].text(dspace*2, dspace_label_pos,     
+                                    f"{hkl}",     
+                                    color="0.2",     
+                                    zorder=-1,     
+                                    fontsize=8,     
+                                    transform=trans,     
+                                    rotation=90,     
+                                    va="top",     
+                                    ha="right")    
+
+        plt.subplots_adjust(hspace=0.05)    
+        return ax
+
+    def plot_stage_progression(self, stages: list = None, **kwargs):
+        """
+        Plot the progression of Rietveld refinement stages showing how the fit improves.
+        
+        Parameters
+        ----------
+        stages : list, optional
+            List of stage numbers to plot. If None, plots all stages.
+        kwargs : dict, optional
+            Additional plot settings
+            
+        Returns
+        -------
+        matplotlib.figure.Figure
+            Figure showing stage progression
+        """
+        if not hasattr(self, "fit_stages") or not self.fit_stages:
+            raise ValueError("No Rietveld stages available. Run fit with method='rietveld' first.")
+        
+        if stages is None:
+            stages = list(range(1, len(self.fit_stages) + 1))
+        
+        # Get original data
         if hasattr(self, "fit_result") and self.fit_result is not None:
-            # Use fit results
             wavelength = self.fit_result.userkws["wl"]
             data_values = self.fit_result.data
             err = 1. / self.fit_result.weights
-            best_fit = self.fit_result.best_fit
-            residual = self.fit_result.residual
-            params = self.fit_result.params
-            chi2 = self.fit_result.redchi
-            fit_label = "Best fit"
         else:
-            # Use model (no fit yet)
-            fit_label = "Model"
-            params = self.params  # Assuming model has params attribute
+            raise ValueError("Cannot plot stage progression without original fit data")
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Plot data once
+        ax.errorbar(wavelength, data_values, err, marker="o", 
+                    color='lightgray', ms=1, alpha=0.7, zorder=-1, 
+                    ecolor='lightgray', label="Data")
+        
+        # Color scheme for stages
+        colors = plt.cm.viridis(np.linspace(0, 1, len(stages)))
+        
+        # Store chi2 values for legend
+        chi2_progression = []
+        
+        for i, stage in enumerate(stages):
+            if stage < 1 or stage > len(self.fit_stages):
+                continue
+                
+            stage_result = self.fit_stages[stage - 1]
+            params = stage_result.params
             
-            if data is not None:
-                # Extract data from provided data object
-                wavelength = data.table.wavelength
-                data_values = data.table.trans
-                err = data.table.err
-                
-                # Evaluate model at data wavelengths
-                best_fit = self.eval(params=params, wl=wavelength)
-                residual = (data_values - best_fit) / err
-                
-                # Calculate chi2 for the model
-                chi2 = np.sum(((data_values - best_fit) / err) ** 2) / (len(data_values) - len(params))
+            # Evaluate model for this stage
+            best_fit = self.eval(params=params, wl=wavelength)
+            chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
+            chi2_progression.append(chi2)
+            
+            # Get fitted parameters for this stage from summary
+            if hasattr(self, "stages_summary"):
+                # Extract which parameters were varied in this stage
+                stage_col = f"Stage_{stage}"
+                if (stage_col, 'vary') in self.stages_summary.columns:
+                    varied_params = self.stages_summary.loc[
+                        self.stages_summary[(stage_col, 'vary')] == True
+                    ].index.tolist()
+                    # Remove 'redchi' if it's in there
+                    varied_params = [p for p in varied_params if p != 'redchi']
+                    param_str = ", ".join(varied_params[:2]) + (f" + {len(varied_params)-2} more" if len(varied_params) > 2 else "")
+                else:
+                    param_str = "Unknown parameters"
             else:
-                # No data provided, just show model over some wavelength range
-                # You might want to define a default wavelength range here
-                wavelength = np.linspace(1.0, 10.0, 1000)  # Adjust range as needed
-                data_values = np.nan * np.ones_like(wavelength)
-                err = np.nan * np.ones_like(wavelength)
-                best_fit = self.eval(params=params, wl=wavelength)
-                residual = np.nan * np.ones_like(wavelength)
-                chi2 = np.nan
+                fitted_params = [name for name, param in params.items() if param.vary]
+                param_str = ", ".join(fitted_params[:2]) + (f" + {len(fitted_params)-2} more" if len(fitted_params) > 2 else "")
+            
+            # Plot with increasing line width to show progression
+            linewidth = 1 + i * 0.5
+            alpha = 0.6 + i * 0.1
+            
+            ax.plot(wavelength, best_fit, color=colors[i], linewidth=linewidth, alpha=alpha,
+                    label=f"Stage {stage}: {param_str} (χ²={chi2:.3f})" if not np.isnan(chi2) else f"Stage {stage}: {param_str}")
         
-        # Plot settings
-        color = kwargs.pop("color", "seagreen")
-        ecolor = kwargs.pop("ecolor", "0.8")
-        title = kwargs.pop("title", self.cross_section.name)
-        ms = kwargs.pop("ms", 2)
+        ax.set_xlabel("λ [Å]")
+        ax.set_ylabel("Transmission")
+        ax.set_title("Rietveld Refinement Stage Progression")
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+        ax.grid(True, alpha=0.3)
         
-        # Plot data and best-fit/model
-        ax[0].errorbar(wavelength, data_values, err, marker="o", color=color, ms=ms, 
-                    zorder=-1, ecolor=ecolor, label="Data")
-        ax[0].plot(wavelength, best_fit, color="0.2", label=fit_label)
-        ax[0].set_ylabel("Transmission")
-        ax[0].set_title(title)
-        
-        # Plot residuals
-        ax[1].plot(wavelength, residual, color=color)
-        ax[1].set_ylabel("Residuals [1σ]")
-        ax[1].set_xlabel("λ [Å]")
-        
-        # Plot background if requested
-        if plot_bg and self.background:
-            self.background.plot(wl=wavelength, ax=ax[0], params=params, **kwargs)
-            legend_labels = [fit_label, "Background", "Data"]
-        else:
-            legend_labels = [fit_label, "Data"]
-        
-        # Set legend with chi2 value
-        ax[0].legend(legend_labels, fontsize=9, reverse=True, 
-                    title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")
-        
-        # Plot d-spacing lines if requested
-        if plot_dspace:
-            for phase in self.cross_section.phases_data:
-                try:
-                    hkls = self.cross_section.phases_data[phase].info.hklList()
-                except:
-                    continue
-                for hkl in hkls:
-                    hkl = hkl[:3]
-                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
-                    if dspace >= dspace_min:
-                        trans = ax[0].get_xaxis_transform()
-                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
-                        if len(self.cross_section.phases) > 1:
-                            ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}", 
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans, 
-                                    rotation=90, va="top", ha="right")
-                        else:
-                            ax[0].text(dspace*2, dspace_label_pos, f"{hkl}", 
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans, 
-                                    rotation=90, va="top", ha="right")
-        
-        plt.subplots_adjust(hspace=0.05)
-        return ax
+        plt.tight_layout()
+        return fig
 
-    def plot_total_xs(self, plot_bg: bool = True, 
-                    plot_dspace: bool = False, 
-                    dspace_min: float = 1, 
-                    dspace_label_pos: float = 0.99, 
-                    **kwargs):
+    def plot_chi2_progression(self, **kwargs):
         """
-        Plot the results of the total cross-section fit.
-
-        Parameters
-        ----------
-        plot_bg : bool, optional
-            Whether to include the background in the plot, by default True.
-        plot_dspace: bool, optional
-            If True plots the 2*dspace and labels of that material that are larger than dspace_min
-        dspace_min: float, optional
-            The minimal dspace from which to plot the dspacing*2 lines
-        dspace_label_pos: float, optional
-            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure
-        kwargs : dict, optional
-            Additional plot settings like color, marker size, etc.
-
+        Plot the chi-squared progression through Rietveld stages.
+        
         Returns
         -------
-        matplotlib.axes.Axes
-            The axes of the plot.
-
-        Notes
-        -----
-        This function generates a plot showing the total cross-section data, 
-        the best-fit curve, and residuals. If `plot_bg` is True, it will also 
-        plot the background function.
+        matplotlib.figure.Figure
+            Figure showing chi2 progression
         """
-        # Prepare data for cross-section calculation
-        wavelength = self.fit_result.userkws["wl"]
-        if "k" in self.fit_result.params:
-            k = self.fit_result.params['k'].value
-        else:
-            k = 1.
-        if plot_bg and self.background:
-            bg = self.background.function(wavelength,**self.fit_result.params)
-        else:
-            bg = 0.
-        norm = self.fit_result.params['norm'].value
-        n = self.atomic_density
-        thickness = self.fit_result.params['thickness'].value
-
-        # Calculate cross-section data
-        data_xs = -1. / n / thickness * np.log((self.fit_result.data - k * bg) / norm / (1. - bg))
-
-        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))
-
+        if not hasattr(self, "fit_stages") or not self.fit_stages:
+            raise ValueError("No Rietveld stages available. Run fit with method='rietveld' first.")
         
-        # Calculate best fit and residuals for cross-section
-        xs = self.cross_section(wavelength,**self.fit_result.params)  # You'll need to implement this method
-
-        if self.response != None:
-            response = self.response.function(**self.fit_result.params)
-            best_fit = convolve1d(xs,response,0)
-        residual = data_xs - best_fit
-
-        # Plot styling
-        color = kwargs.pop("color", "crimson")
-        title = kwargs.pop("title", self.cross_section.name)
-        ecolor = kwargs.pop("ecolor", "0.8")
-        ms = kwargs.pop("ms", 2)
-
-        # Top subplot: Data and fit
-        ax[0].errorbar(wavelength, data_xs, 
-                    # yerr=1./self.fit_result.weights,  # Assuming similar error handling
-                    marker="o", 
-                    color=color, 
-                    ms=ms, 
-                    zorder=-1, 
-                    ecolor=ecolor, 
-                    label="Cross-section data")
+        stages = list(range(1, len(self.fit_stages) + 1))
+        chi2_values = []
+        stage_labels = []
         
-        ax[0].plot(wavelength, best_fit, color="0.4", label="Best fit")
-        ax[0].plot(wavelength, xs, color="0.2", label="total xs")
-        ax[0].set_ylabel("Total Cross Section [barn/sr]")
-        ax[0].set_title(title)
+        for i, stage in enumerate(stages):
+            stage_result = self.fit_stages[stage - 1]
+            chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
+            chi2_values.append(chi2)
+            
+            # Get stage description from summary if available
+            if hasattr(self, "stages_summary"):
+                stage_col = f"Stage_{stage}"
+                if (stage_col, 'vary') in self.stages_summary.columns:
+                    varied_params = self.stages_summary.loc[
+                        self.stages_summary[(stage_col, 'vary')] == True
+                    ].index.tolist()
+                    # Remove 'redchi' if it's in there
+                    varied_params = [p for p in varied_params if p != 'redchi']
+                    stage_labels.append(", ".join(varied_params[:2]) + (f"+{len(varied_params)-2}" if len(varied_params) > 2 else ""))
+                else:
+                    stage_labels.append(f"Stage {stage}")
+            else:
+                stage_labels.append(f"Stage {stage}")
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Plot chi2 progression
+        ax.plot(stages, chi2_values, 'o-', linewidth=2, markersize=8, color='crimson')
+        
+        # Add value labels on points
+        for i, (stage, chi2) in enumerate(zip(stages, chi2_values)):
+            if not np.isnan(chi2):
+                ax.annotate(f'{chi2:.3f}', (stage, chi2), textcoords="offset points", 
+                        xytext=(0,10), ha='center', fontsize=10)
+        
+        ax.set_xlabel("Refinement Stage")
+        ax.set_ylabel("Reduced χ²")
+        ax.set_title("Rietveld Refinement χ² Progression")
+        ax.grid(True, alpha=0.3)
+        
+        # Add stage parameter labels on x-axis
+        ax.set_xticks(stages)
+        ax.set_xticklabels([f"S{i}\n{label}" for i, label in enumerate(stages, 1)], 
+                        rotation=45, ha='right', fontsize=9)
+        
+        plt.tight_layout()
+        return fig
 
-        # Bottom subplot: Residuals
-        ax[1].plot(wavelength, residual, color=color)
-        ax[1].set_ylabel("Residuals [1σ]")
-        ax[1].set_xlabel("λ [Å]")
-
-        # Background plotting (if enabled)
-        if plot_bg and self.background:
-            self.background.plot(wl=wavelength, ax=ax[0], params=self.fit_result.params, **kwargs)
-            ax[0].legend(["Cross-section data", "Background", "Total cross-section","Best fit"][::-1], 
-                        fontsize=9, 
-                        reverse=True, 
-                        title=f"χ$^2$: {self.fit_result.redchi:.2f}")
-        else:
-            ax[0].legend(["Cross-section data","Total cross-section", "Best fit"][::-1], 
-                        fontsize=9, 
-                        reverse=True, 
-                        title=f"χ$^2$: {self.fit_result.redchi:.2f}")
-
-        # d-spacing plot (if enabled)
-        if plot_dspace:
-            for phase in self.cross_section.phases_data:
-                try:
-                    hkls = self.cross_section.phases_data[phase].info.hklList()
-                except:
-                    continue
-                for hkl in hkls:
-                    hkl = hkl[:3]
-                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
-                    if dspace >= dspace_min:
-                        trans = ax[0].get_xaxis_transform()
-                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
-                        
-                        # Label d-spacing lines
-                        if len(self.cross_section.phases) > 1:
-                            ax[0].text(dspace*2, dspace_label_pos, 
-                                    f"{phase} {hkl}", 
-                                    color="0.2", 
-                                    zorder=-1, 
-                                    fontsize=8, 
-                                    transform=trans, 
-                                    rotation=90, 
-                                    va="top", 
-                                    ha="right")
-                        else:
-                            ax[0].text(dspace*2, dspace_label_pos, 
-                                    f"{hkl}", 
-                                    color="0.2", 
-                                    zorder=-1, 
-                                    fontsize=8, 
-                                    transform=trans, 
-                                    rotation=90, 
-                                    va="top", 
-                                    ha="right")
-
-        plt.subplots_adjust(hspace=0.05)
-        return ax
-
-
-
+    def get_stages_summary_table(self):
+        """
+        Get the stages summary table showing parameter progression through refinement stages.
+        
+        Returns
+        -------
+        pandas.DataFrame
+            Multi-index DataFrame with parameters as rows and stages as columns.
+            Each stage has columns for 'value', 'stderr', 'vary', and 'redchi'.
+        """
+        if not hasattr(self, "stages_summary"):
+            raise ValueError("No stages summary available. Run fit with method='rietveld' first.")
+        
+        return self.stages_summary
 
 
     def interactive_plot(self, data=None, plot_bg=True, plot_dspace=False, 
