@@ -7,6 +7,20 @@ import NCrystal as nc
 from typing import Dict, Union, Optional, List
 from copy import deepcopy
 
+import contextlib
+import io
+import functools
+import sys
+
+def suppress_print(func):
+    """Decorator to suppress all stdout/stderr printing from a function."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()):
+            return func(*args, **kwargs)
+    return wrapper
+
 class CrossSection:
     """
     Represents a combination of cross-sections for crystal materials.
@@ -222,6 +236,7 @@ class CrossSection:
             if kwargs:
                 self._update_ncmat_parameters(material, **kwargs)
 
+    @suppress_print
     def _update_ncmat_parameters(self, material: str, **kwargs):
         """
         Update the virtual material with lattice and extinction parameters
@@ -263,6 +278,7 @@ class CrossSection:
             updated_textdata
         )
 
+    @suppress_print
     def _extinction_info(self, material: str, extinction_lines: str = None, **kwargs) -> str:
         """
         Parse and update extinction parameters, storing them directly in self.materials.
@@ -482,11 +498,13 @@ class CrossSection:
         # replace materials with virtual materials
         self.cfg_string = self.cfg_string.replace("ncmat", "nbragg")
 
+    @suppress_print
     def _load_material_data(self):
         """Load the material data using NCrystal with the phase configuration."""
         if self.cfg_string:
             self.mat_data = nc.load(self.cfg_string)
 
+    @suppress_print
     def _populate_material_data(self):
         """Populate cross section data using NCrystal phases."""
         if not self.cfg_string:
