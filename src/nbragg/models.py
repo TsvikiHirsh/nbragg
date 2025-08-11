@@ -207,7 +207,8 @@ class TransmissionModel(lmfit.Model):
         params : lmfit.Parameters, optional
             Parameters to use for fitting. If None, uses the model's default parameters.
         wlmin, wlmax : float, optional
-            Minimum and maximum wavelength for fitting (ignored for array-like input).
+            Minimum and maximum wavelength for fitting (ignored for array-like input and overridden per stage if
+            `param_groups` specify `"wlmin=..."` or `"wlmax=..."` strings).
         method : str, optional
             Fitting method.  
             - `"leastsq"` (default) or any method supported by `lmfit`.
@@ -218,11 +219,22 @@ class TransmissionModel(lmfit.Model):
             If True, prints detailed fitting information.
         progress_bar : bool, optional
             If True, shows a progress bar for fitting:
-            - For `"rietveld"`: shows stage name and reduced chi² per stage.
+            - For `"rietveld"`: shows stage name, wavelength range, and reduced chi² per stage.
             - For regular fits: shows overall fit progress.
         param_groups : list, dict, or None, optional
             Used only for `"rietveld"`. Groups of parameters to fit in each stage.
-            See `_rietveld_fit` docstring for details.
+            Groups may also contain `"wlmin=..."` and/or `"wlmax=..."` strings to override the wavelength
+            fitting range for that specific stage. For example:
+
+            ```python
+            param_groups = {
+                "Basic": ["basic"],
+                "Background": ["background", "wlmin=3", "wlmax=8"],
+                "Extinction": ["extinction"]
+            }
+            ```
+
+            These per-stage overrides temporarily replace the global `wlmin`/`wlmax` only during the stage.
         **kwargs
             Additional keyword arguments passed to `lmfit.Model.fit`.
 
@@ -242,27 +254,20 @@ class TransmissionModel(lmfit.Model):
         result.plot()
         ```
 
-        **Rietveld-style staged refinement:**
+        **Rietveld-style staged refinement with per-stage wavelength overrides:**
         ```python
         param_groups = {
             "Norm/Thick": ["norm", "thickness"],
-            "Background": ["b0", "b1"],
+            "Background": ["b0", "b1", "wlmin=3", "wlmax=8"],
             "Extinction": ["ext_l", "ext_Gg"]
         }
-        result, summary = model.fit(
+        result = model.fit(
             data_df, method="rietveld",
             param_groups=param_groups,
-            progress_bar=True,
-            return_all_results=True
+            progress_bar=True
         )
-        print(summary)
+        print(result.stages_summary)
         ```
-
-        Notes
-        -----
-        - `"rietveld"` mode is a **staged refinement** approach where parameters are refined in
-        groups, improving stability for complex models.
-        - Progress bars use `tqdm` and will automatically adapt to Jupyter or terminal output.
         """
         # Route to Rietveld if requested
         if method == "rietveld":
@@ -346,33 +351,29 @@ class TransmissionModel(lmfit.Model):
         return fit_result
 
 
-    def _rietveld_fit(self, data, params: "lmfit.Parameters" = None, wlmin:float=1, wlmax:float=8,
+    def _rietveld_fit(self, data, params: "lmfit.Parameters" = None, wlmin: float = 1, wlmax: float = 8,
                     verbose=False, progress_bar=True,
                     param_groups=None,
                     **kwargs):
-        """ Perform Rietveld-style staged fitting.
-        This method allows for staged fitting of parameters, where each stage
-        refines a specific group of parameters while keeping others fixed.
+        """ Perform Rietveld-style staged fitting with optional wlmin/wlmax per stage.
+
         Parameters
         ----------
         data : pandas.DataFrame or Data
             The input data containing wavelength and transmission values.
         params : lmfit.Parameters, optional
-            Initial parameters for the fit. If None, uses the model's default parameters.       
+            Initial parameters for the fit. If None, uses the model's default parameters.
         wlmin : float, optional default=1
-            Minimum wavelength for fitting.
+            Default minimum wavelength for fitting.
         wlmax : float, optional default=8
-            Maximum wavelength for fitting.
+            Default maximum wavelength for fitting.
         verbose : bool, optional
             If True, prints detailed information about each fitting stage.
         progress_bar : bool, optional
             If True, shows a progress bar for each fitting stage.
         param_groups : list, dict, or None, optional - only used for Rietveld fitting
-            Groups of parameters to fit in each stage. Can be:
-            - List of lists: [["norm", "thickness"], ["background", "extinction"]]
-            - List of strings/lists: ["basic", ["b0", "ext_l2"]]
-            - Dict with stage names: {"stage1": ["norm"], "stage2": ["background"]}
-            If None, uses predefined groups.
+            Groups of parameters to fit in each stage. Can contain "wlmin=.." or "wlmax=.." strings
+            to override wavelength bounds for that stage.
         kwargs : dict, optional
             Additional keyword arguments for the fit method, such as weights, method, etc.
 
@@ -381,17 +382,16 @@ class TransmissionModel(lmfit.Model):
         fit_result : lmfit.ModelResult
             The final fit result after all stages.
 
-        fit_result.stages_summary : pandas.DataFrame 
+        fit_result.stages_summary : pandas.DataFrame
             Summary of each fitting stage, including parameter values and reduced chi-squared.
-
-        Notes
-        -----
-        This method is designed for Rietveld-style fitting, where parameters are fitted in stages.
-        It allows for flexible grouping of parameters, enabling users to refine specific aspects of the model iteratively.
         """
+
         from copy import deepcopy
         import sys
         import warnings
+        import re
+        import fnmatch
+        import pandas
         try:
             from tqdm.notebook import tqdm
         except ImportError:
@@ -404,7 +404,7 @@ class TransmissionModel(lmfit.Model):
             "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
             "tof": [p for p in ["L0", "t0"] if p in self.params],
             "response": [p for p in self.params if self.response and p in self.response.params],
-            "weights": [p for p in self.params if re.compile(r"p\d+").match(p) ],
+            "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
             "lattice": [p for p in self.params if p in ["a", "b", "c"]],
             "extinction": [p for p in self.params if p.startswith("ext_")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
@@ -415,18 +415,15 @@ class TransmissionModel(lmfit.Model):
         def resolve_single_param_or_group(item):
             """Resolve a single parameter name or group name to a list of parameters."""
             if item in group_map:
-                # It's a predefined group
                 resolved = group_map[item]
                 if verbose:
                     print(f"  Resolved group '{item}' to: {resolved}")
                 return resolved
             elif item in self.params:
-                # It's a single parameter name
                 if verbose:
                     print(f"  Found parameter: {item}")
                 return [item]
             else:
-                # Check if it matches any parameters with wildcards
                 matching_params = [p for p in self.params.keys() if fnmatch.fnmatch(p, item)]
                 if matching_params:
                     if verbose:
@@ -437,157 +434,180 @@ class TransmissionModel(lmfit.Model):
                     return []
 
         def resolve_group(entry):
-            """Resolve a group entry (string, list, or nested structure) to a flat list of parameters."""
-            if isinstance(entry, str):
-                return resolve_single_param_or_group(entry)
-            elif isinstance(entry, list):
-                # Flatten nested lists
-                resolved = []
-                for item in entry:
-                    if isinstance(item, str):
-                        resolved.extend(resolve_single_param_or_group(item))
-                    elif isinstance(item, list):
-                        # Handle nested lists recursively
-                        resolved.extend(resolve_group(item))
-                    else:
-                        warnings.warn(f"Unexpected item type in group: {type(item)} - {item}")
-                return resolved
-            else:
-                warnings.warn(f"Invalid param_groups entry type: {type(entry)} - {entry}")
-                return []
+            """
+            Resolve a group entry (string, list, or nested structure) to:
+            - A flat list of parameters
+            - A dict of overrides like {'wlmin': float, 'wlmax': float}
+            """
+            params_list = []
+            overrides = {}
 
-        # Handle different input formats for param_groups
+            def process_item(item):
+                nonlocal params_list, overrides
+                if isinstance(item, str):
+                    if item.startswith("wlmin="):
+                        try:
+                            overrides['wlmin'] = float(item.split("=", 1)[1])
+                            if verbose:
+                                print(f"  Override wlmin detected: {overrides['wlmin']}")
+                        except ValueError:
+                            warnings.warn(f"Invalid wlmin value in group: {item}")
+                    elif item.startswith("wlmax="):
+                        try:
+                            overrides['wlmax'] = float(item.split("=", 1)[1])
+                            if verbose:
+                                print(f"  Override wlmax detected: {overrides['wlmax']}")
+                        except ValueError:
+                            warnings.warn(f"Invalid wlmax value in group: {item}")
+                    else:
+                        params_list.extend(resolve_single_param_or_group(item))
+                elif isinstance(item, list):
+                    for subitem in item:
+                        process_item(subitem)
+                else:
+                    warnings.warn(f"Unexpected item type in group: {type(item)} - {item}")
+
+            process_item(entry)
+            return params_list, overrides
+
+        # Handle different input formats for param_groups and parse overrides
         stage_names = []
+        resolved_param_groups = []
+        stage_overrides = []
+
         if param_groups is None:
             # Default groups
-            param_groups = [
+            default_groups = [
                 "basic", "background", "tof", "response",
-                "weights", "lattice", "extinction", "orientation","mosaicity", "temperature",
+                "weights", "lattice", "extinction", "orientation", "mosaicity", "temperature",
             ]
-            resolved_param_groups = [resolve_group(g) for g in param_groups]
-            stage_names = [f"Stage_{i+1}" for i in range(len(param_groups))]
-            
+            for group in default_groups:
+                params_list, overrides = resolve_group(group)
+                if params_list:
+                    resolved_param_groups.append(params_list)
+                    stage_overrides.append(overrides)
+                    stage_names.append(f"Stage_{len(stage_names) + 1}")
+                elif verbose:
+                    print(f"Skipping empty default group: {group}")
+
         elif isinstance(param_groups, dict):
-            # Dictionary format: {"stage_name": ["param1", "param2"], ...}
             stage_names = list(param_groups.keys())
-            resolved_param_groups = [resolve_group(param_groups[stage]) for stage in stage_names]
-            if verbose:
-                print(f"Using custom stage names: {stage_names}")
-                
+            for stage in stage_names:
+                params_list, overrides = resolve_group(param_groups[stage])
+                if params_list:
+                    resolved_param_groups.append(params_list)
+                    stage_overrides.append(overrides)
+                else:
+                    if verbose:
+                        print(f"Skipping empty group: {stage}")
+
         elif isinstance(param_groups, list):
-            # List format: [["param1", "param2"], ["param3"], ...]
-            resolved_param_groups = [resolve_group(g) for g in param_groups]
-            stage_names = [f"Stage_{i+1}" for i in range(len(param_groups))]
-            
+            for i, group in enumerate(param_groups):
+                params_list, overrides = resolve_group(group)
+                if params_list:
+                    resolved_param_groups.append(params_list)
+                    stage_overrides.append(overrides)
+                    stage_names.append(f"Stage_{i + 1}")
+                else:
+                    if verbose:
+                        print(f"Skipping empty group at index {i}")
+
         else:
             raise ValueError("param_groups must be None, a list, or a dictionary")
 
-        # Remove empty groups
-        valid_groups = []
-        valid_names = []
-        for i, group in enumerate(resolved_param_groups):
-            if group:  # Only keep non-empty groups
-                valid_groups.append(group)
-                valid_names.append(stage_names[i])
-            elif verbose:
-                print(f"Skipping empty group: {stage_names[i]}")
-        
-        resolved_param_groups = valid_groups
-        stage_names = valid_names
-
-        if not resolved_param_groups:
+        # Remove any empty groups that slipped through
+        filtered = [(n, g, o) for n, g, o in zip(stage_names, resolved_param_groups, stage_overrides) if g]
+        if not filtered:
             raise ValueError("No valid parameter groups found. Check your parameter names.")
+        stage_names, resolved_param_groups, stage_overrides = zip(*filtered)
 
         if verbose:
-            print(f"\nFitting stages:")
-            for i, (name, group) in enumerate(zip(stage_names, resolved_param_groups)):
-                print(f"  {name}: {group}")
+            print(f"\nFitting stages with possible wavelength overrides:")
+            for i, (name, group, ov) in enumerate(zip(stage_names, resolved_param_groups, stage_overrides)):
+                print(f"  {name}: {group}  overrides: {ov}")
 
-        # Store the resolved param groups for the summary table
+        # Store for summary or introspection
         self._stage_param_groups = resolved_param_groups
         self._stage_names = stage_names
 
-        # Prepare data
-        if isinstance(data, pandas.DataFrame):
-            data = data.query(f"{wlmin} < wavelength < {wlmax}")
-            wavelengths = data["wavelength"].values
-            trans = data["trans"].values
-            weights = kwargs.get("weights", 1. / data["err"].values)
-        elif isinstance(data, Data):
-            data = data.table.query(f"{wlmin} < wavelength < {wlmax}")
-            wavelengths = data["wavelength"].values
-            trans = data["trans"].values
-            weights = kwargs.get("weights", 1. / data["err"].values)
-        else:
-            raise ValueError("Rietveld fitting requires wavelength-based input data.")
-
         params = deepcopy(params or self.params)
 
-        # Use tqdm.notebook for Jupyter environments
+        # Setup tqdm iterator
         try:
             from tqdm.notebook import tqdm as notebook_tqdm
-            # Check if we're in a Jupyter environment
             if 'ipykernel' in sys.modules:
                 iterator = notebook_tqdm(
-                    zip(stage_names, resolved_param_groups), 
-                    desc="Rietveld Fit", 
+                    zip(stage_names, resolved_param_groups, stage_overrides),
+                    desc="Rietveld Fit",
                     disable=not progress_bar,
                     total=len(stage_names)
                 )
             else:
                 iterator = tqdm(
-                    zip(stage_names, resolved_param_groups), 
-                    desc="Rietveld Fit", 
+                    zip(stage_names, resolved_param_groups, stage_overrides),
+                    desc="Rietveld Fit",
                     disable=not progress_bar,
                     total=len(stage_names)
                 )
         except ImportError:
             iterator = tqdm(
-                zip(stage_names, resolved_param_groups), 
-                desc="Rietveld Fit", 
+                zip(stage_names, resolved_param_groups, stage_overrides),
+                desc="Rietveld Fit",
                 disable=not progress_bar,
                 total=len(stage_names)
             )
-        
-        stage_results = []  # Store results
-        stage_summaries = []  # For DataFrame summary
+
+        stage_results = []
+        stage_summaries = []
 
         def extract_pickleable_attributes(fit_result):
-            """Extract only pickleable attributes from fit_result"""
-            # List of commonly pickleable attributes from lmfit ModelResult
             safe_attrs = [
                 'params', 'success', 'residual', 'chisqr', 'redchi', 'aic', 'bic',
                 'nvarys', 'ndata', 'nfev', 'message', 'lmdif_message', 'cov_x',
                 'method', 'flatchain', 'errorbars', 'ci_out'
             ]
-            
-            # Create a simple object to hold the results
+
             class PickleableResult:
-                def __init__(self):
-                    pass
-            
+                pass
+
             result = PickleableResult()
-            
+
             for attr in safe_attrs:
                 if hasattr(fit_result, attr):
                     try:
                         value = getattr(fit_result, attr)
-                        # Test if it's pickleable
                         pickle.dumps(value)
                         setattr(result, attr, value)
                     except (TypeError, ValueError, AttributeError):
-                        # Skip non-pickleable attributes
                         if verbose:
                             print(f"Skipping non-pickleable attribute: {attr}")
                         continue
-            
+
             return result
 
-        for stage_name, group in iterator:
-            stage_num = len(stage_results) + 1
+        for stage_idx, (stage_name, group, overrides) in enumerate(iterator):
+            stage_num = stage_idx + 1
+
+            # Use overrides or fallback to global wlmin, wlmax
+            stage_wlmin = overrides.get('wlmin', wlmin)
+            stage_wlmax = overrides.get('wlmax', wlmax)
 
             if verbose:
-                print(f"\n{stage_name}: Fitting {group}")
+                print(f"\n{stage_name}: Fitting parameters {group} with wavelength range [{stage_wlmin}, {stage_wlmax}]")
+
+            # Filter data for this stage
+            if isinstance(data, pandas.DataFrame):
+                stage_data = data.query(f"{stage_wlmin} < wavelength < {stage_wlmax}")
+                wavelengths = stage_data["wavelength"].values
+                trans = stage_data["trans"].values
+                weights = kwargs.get("weights", 1. / stage_data["err"].values)
+            elif isinstance(data, Data):
+                stage_data = data.table.query(f"{stage_wlmin} < wavelength < {stage_wlmax}")
+                wavelengths = stage_data["wavelength"].values
+                trans = stage_data["trans"].values
+                weights = kwargs.get("weights", 1. / stage_data["err"].values)
+            else:
+                raise ValueError("Rietveld fitting requires wavelength-based input data.")
 
             # Freeze all parameters
             for p in params.values():
@@ -608,7 +628,7 @@ class TransmissionModel(lmfit.Model):
                 warnings.warn(f"No parameters were unfrozen in {stage_name}. Skipping this stage.")
                 continue
 
-            # Fit this stage
+            # Perform fitting
             try:
                 fit_result = super().fit(
                     trans,
@@ -622,17 +642,18 @@ class TransmissionModel(lmfit.Model):
                 warnings.warn(f"Fitting failed in {stage_name}: {e}")
                 continue
 
-            # Extract only pickleable parts
+            # Extract pickleable part
             stripped_result = extract_pickleable_attributes(fit_result)
 
-            # Store results
             stage_results.append(stripped_result)
 
-            # Build summary row
+            # Build summary
             summary = {
                 "stage": stage_num,
                 "stage_name": stage_name,
                 "fitted_params": group,
+                "wlmin": stage_wlmin,
+                "wlmax": stage_wlmax,
                 "redchi": fit_result.redchi
             }
             for name, par in fit_result.params.items():
@@ -641,28 +662,23 @@ class TransmissionModel(lmfit.Model):
                 summary[f"{name}_vary"] = par.vary
             stage_summaries.append(summary)
 
-            # Update tqdm display
             iterator.set_description(f"Stage {stage_num}/{len(stage_names)}")
             iterator.set_postfix({"stage": stage_name, "reduced χ²": f"{fit_result.redchi:.4g}"})
 
-            # Update for next stage
+            # Update params for next stage
             params = fit_result.params
 
             if verbose:
                 print(f"  {stage_name} completed. χ²/dof = {fit_result.redchi:.4f}")
 
-
         if not stage_results:
             raise RuntimeError("No successful fitting stages completed")
 
-        # Final
         self.fit_result = fit_result
         self.fit_stages = stage_results
-        
-        # Call the updated summary table method with stage names
         self.stages_summary = self._create_stages_summary_table_enhanced(stage_results, resolved_param_groups, stage_names)
 
-        # Attach plotting
+        # Attach plotting methods and other attributes
         fit_result.plot = self.plot
         fit_result.plot_total_xs = self.plot_total_xs
         fit_result.plot_stage_progression = self.plot_stage_progression
@@ -676,6 +692,7 @@ class TransmissionModel(lmfit.Model):
         fit_result.stages_summary = self.stages_summary
         fit_result.show_available_params = self.show_available_params
         return fit_result
+
 
     def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None, color=True):
         import pandas as pd
