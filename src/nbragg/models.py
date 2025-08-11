@@ -183,60 +183,33 @@ class TransmissionModel(lmfit.Model):
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + k*bg
         return T
 
-    def fit(self, data, params=None, wlmin:float = 1., wlmax:float = 6., 
-                method:str ="leastsq",
-                xtol: float = None, ftol: float = None, gtol: float = None,
-                **kwargs):
+    def fit(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
+            method: str = "leastsq",
+            xtol: float = None, ftol: float = None, gtol: float = None,
+            verbose: bool = False,
+            progress_bar: bool = False,
+            param_groups: Optional[List[List[str]]] = None,
+            return_all_results: bool = False,
+            **kwargs):
         """
-        Fit the model to the data.
-
-        Parameters
-        ----------
-        data : pandas.DataFrame or nbragg.data.Data
-            The data to fit the model to.
-        params : lmfit.Parameters, optional
-            Initial parameter values for the fit. If None, the current model parameters will be used.
-        wlmin : float, optional
-            The minimum wavelength for fitting, by default 1.0.
-        wlmax : float, optional
-            The maximum wavelength for fitting, by default 6.0.
-        method : str, optional
-            the method name, default is leastsq. For lattice variation the recommended fit method is "nelder", other valid options are "brute","cobyla","powell" or others specified in lmfit.minimize docstring
-        xtol : float, optional
-            Relative tolerance for changes in the parameters. The optimizer stops when the relative
-            changes in parameter values are smaller than `xtol`. Default is None.
-        ftol : float, optional
-            Relative tolerance for the cost function (e.g., sum of squared residuals). The optimizer
-            stops when the relative change in the cost function is smaller than `ftol`. Default is None.
-        gtol : float, optional
-            Tolerance for the gradient of the cost function with respect to the parameters. The optimizer
-            stops when the gradient norm falls below `gtol`. Default is None.
-        kwargs : dict, optional
-            Additional arguments passed to the `lmfit.Model.fit` method.
-
-        Returns
-        -------
-        lmfit.model.ModelResult
-            The result of the fit, containing optimized parameters and fitting statistics.
-
-        Notes
-        -----
-        - This function applies wavelength filtering to the input data based on `wlmin` and `wlmax`,
-        then fits the transmission model to the filtered data.
-        - The `xtol`, `ftol`, and `gtol` parameters are passed to the underlying optimization method 
-        in `lmfit.Model.fit` via the `fit_kws` argument.
-        If not specified, the default tolerances for the optimizer are used.
+        Fit the model to the data, optionally using Rietveld-style staged refinement.
         """
-        # Update fit_kws to include xtol, ftol, gtol
-        fit_kws = kwargs.pop("fit_kws", {})  # Extract existing fit_kws or initialize an empty dict
+        if method == "rietveld":
+            return self._rietveld_fit(
+                data, params, wlmin, wlmax,
+                verbose=verbose,
+                progress_bar=progress_bar,
+                param_groups=param_groups,
+                return_all_results=return_all_results,
+                **kwargs
+            )
+        
+        fit_kws = kwargs.pop("fit_kws", {})
         fit_kws.setdefault("xtol", xtol) if xtol is not None else None
         fit_kws.setdefault("ftol", ftol) if ftol is not None else None
         fit_kws.setdefault("gtol", gtol) if gtol is not None else None
-
-        # Pass fit_kws back into kwargs
         kwargs["fit_kws"] = fit_kws
 
-        # Apply wavelength filtering and weights
         if isinstance(data, pandas.DataFrame):
             data = data.query(f"{wlmin} < wavelength < {wlmax}")
             weights = kwargs.get("weights", 1. / data["err"].values)
@@ -245,7 +218,7 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
-                method = method,
+                method=method,
                 **kwargs
             )
 
@@ -257,31 +230,190 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
-                method = method,
+                method=method,
                 **kwargs
             )
 
         else:
-            # Perform the fit using the parent class's fit method
             fit_result = super().fit(
                 data,
                 params=params or self.params,
-                method = method,
+                method=method,
                 **kwargs
             )
 
-        # Store and modify fit results
         self.fit_result = fit_result
-        fit_result.plot = self.plot  # Modify the plot method
+        fit_result.plot = self.plot
         fit_result.plot_total_xs = self.plot_total_xs
-        if self.response != None:
+        if self.response is not None:
             fit_result.response = self.response
             fit_result.response.params = fit_result.params
-        if self.background != None:
+        if self.background is not None:
             fit_result.background = self.background
 
         return fit_result
-    
+
+    def _rietveld_fit(self, data, params, wlmin, wlmax,
+                    verbose=False, progress_bar=False,
+                    param_groups=None, return_all_results=False,
+                    **kwargs):
+        from copy import deepcopy
+        from tqdm.auto import tqdm
+        import pickle
+
+        # User-friendly group name mapping
+        group_map = {
+            "basic": ["norm", "thickness"],
+            "background": [p for p in self.params if p.startswith("b")],
+            "tof": [p for p in ["L0", "t0"] if p in self.params],
+            "response": [p for p in self.params if p.startswith("resp_")],
+            "weights": [p for p in self.params if p.startswith("weight_")],
+            "lattice": [p for p in self.params if p.startswith("lattice")],
+            "extinction": [p for p in self.params if p.startswith("extinction")],
+            "orientation": [p for p in ["phi", "theta", "eta"] if p in self.params],
+        }
+
+        # Helper to resolve a group entry
+        def resolve_group(entry):
+            if isinstance(entry, str):
+                # If it's a group name
+                if entry in group_map:
+                    return group_map[entry]
+                # If it's a single param name
+                elif entry in self.params:
+                    return [entry]
+                else:
+                    warnings.warn(f"Unknown parameter or group: {entry}")
+                    return []
+            elif isinstance(entry, list):
+                # Recursively resolve each item
+                resolved = []
+                for e in entry:
+                    resolved.extend(resolve_group(e))
+                return resolved
+            else:
+                raise ValueError(f"Invalid param_groups entry: {entry}")
+
+        # Resolve all param_groups
+        if param_groups is None:
+            param_groups = [
+                "basic", "background", "tof", "response",
+                "weights", "lattice", "extinction", "orientation"
+            ]
+        resolved_param_groups = [resolve_group(g) for g in param_groups]
+
+        # Prepare data
+        if isinstance(data, pandas.DataFrame):
+            data = data.query(f"{wlmin} < wavelength < {wlmax}")
+            wavelengths = data["wavelength"].values
+            trans = data["trans"].values
+            weights = kwargs.get("weights", 1. / data["err"].values)
+        elif isinstance(data, Data):
+            data = data.table.query(f"{wlmin} < wavelength < {wlmax}")
+            wavelengths = data["wavelength"].values
+            trans = data["trans"].values
+            weights = kwargs.get("weights", 1. / data["err"].values)
+        else:
+            raise ValueError("Rietveld fitting requires wavelength-based input data.")
+
+        params = deepcopy(params or self.params)
+
+        iterator = tqdm(resolved_param_groups, desc="Rietveld Fit", disable=not progress_bar)
+        stage_results = []  # Store results
+        stage_summaries = []  # For DataFrame summary
+
+        def extract_pickleable_attributes(fit_result):
+            """Extract only pickleable attributes from fit_result"""
+            # List of commonly pickleable attributes from lmfit ModelResult
+            safe_attrs = [
+                'params', 'success', 'residual', 'chisqr', 'redchi', 'aic', 'bic',
+                'nvarys', 'ndata', 'nfev', 'message', 'lmdif_message', 'cov_x',
+                'method', 'flatchain', 'errorbars', 'ci_out'
+            ]
+            
+            # Create a simple object to hold the results
+            class PickleableResult:
+                def __init__(self):
+                    pass
+            
+            result = PickleableResult()
+            
+            for attr in safe_attrs:
+                if hasattr(fit_result, attr):
+                    try:
+                        value = getattr(fit_result, attr)
+                        # Test if it's pickleable
+                        pickle.dumps(value)
+                        setattr(result, attr, value)
+                    except (TypeError, ValueError, AttributeError):
+                        # Skip non-pickleable attributes
+                        if verbose:
+                            print(f"Skipping non-pickleable attribute: {attr}")
+                        continue
+            
+            return result
+
+        for i, group in enumerate(iterator):
+            if verbose:
+                print(f"\nStage {i+1}/{len(resolved_param_groups)}: Fitting {group}")
+
+            # Freeze all
+            for p in params.values():
+                p.vary = False
+            # Unfreeze current group
+            for name in group:
+                if name in params:
+                    params[name].vary = True
+
+            # Fit this stage
+            fit_result = super().fit(
+                trans,
+                params=params,
+                wl=wavelengths,
+                weights=weights,
+                method="leastsq",
+                **kwargs
+            )
+
+            # Extract only pickleable parts
+            stripped_result = extract_pickleable_attributes(fit_result)
+            
+            # Store results
+            stage_results.append(stripped_result)
+
+            # Build summary row
+            summary = {
+                "stage": i+1,
+                "fitted_params": group,
+                "redchi": fit_result.redchi
+            }
+            for name, par in fit_result.params.items():
+                summary[f"{name}_value"] = par.value
+                summary[f"{name}_stderr"] = par.stderr
+                summary[f"{name}_vary"] = par.vary
+            stage_summaries.append(summary)
+
+            # Update for next stage
+            params = fit_result.params
+
+        # Final
+        self.fit_result = fit_result
+        self.all_stage_results = stage_results
+        self.all_stage_summaries = pandas.DataFrame(stage_summaries)
+
+        # Attach plotting
+        fit_result.plot = self.plot
+        fit_result.plot_total_xs = self.plot_total_xs
+        if self.response is not None:
+            fit_result.response = self.response
+            fit_result.response.params = fit_result.params
+        if self.background is not None:
+            fit_result.background = self.background
+
+        if return_all_results:
+            return fit_result, self.all_stage_summaries
+        return fit_result
+
     def plot(self, data=None, plot_bg: bool = True,
             plot_dspace: bool = False, dspace_min: float = 1,
             dspace_label_pos: float = 0.99, **kwargs):
