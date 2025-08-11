@@ -366,7 +366,7 @@ class TransmissionModel(lmfit.Model):
             If True, prints detailed information about each fitting stage.
         progress_bar : bool, optional
             If True, shows a progress bar for each fitting stage.
-        param_groups : list, dict, or None, optional
+        param_groups : list, dict, or None, optional - only used for Rietveld fitting
             Groups of parameters to fit in each stage. Can be:
             - List of lists: [["norm", "thickness"], ["background", "extinction"]]
             - List of strings/lists: ["basic", ["b0", "ext_l2"]]
