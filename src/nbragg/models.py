@@ -15,6 +15,7 @@ import ipywidgets as widgets
 from IPython.display import display
 from matplotlib.patches import Rectangle
 import fnmatch
+import re
 from numpy import log
 
 
@@ -183,60 +184,121 @@ class TransmissionModel(lmfit.Model):
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + k*bg
         return T
 
-    def fit(self, data, params=None, wlmin:float = 1., wlmax:float = 6., 
-                method:str ="leastsq",
-                xtol: float = None, ftol: float = None, gtol: float = None,
-                **kwargs):
+    def fit(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
+            method: str = "least-squares",
+            xtol: float = None, ftol: float = None, gtol: float = None,
+            verbose: bool = False,
+            progress_bar: bool = True,
+            param_groups: Optional[List[List[str]]] = None,
+            **kwargs):
         """
-        Fit the model to the data.
+        Fit the model to data.
+
+        This method supports both:
+        - **Standard single-stage fitting** (default)
+        - **Rietveld-style staged refinement** (`method="rietveld"`)
 
         Parameters
         ----------
-        data : pandas.DataFrame or nbragg.data.Data
-            The data to fit the model to.
+        data : pandas.DataFrame or Data or array-like
+            The input data.  
+            - For `pandas.DataFrame` or `Data`: must have columns `"wavelength"`, `"trans"`, and `"err"`.
+            - For array-like: will be passed directly to `lmfit.Model.fit`.
         params : lmfit.Parameters, optional
-            Initial parameter values for the fit. If None, the current model parameters will be used.
-        wlmin : float, optional
-            The minimum wavelength for fitting, by default 1.0.
-        wlmax : float, optional
-            The maximum wavelength for fitting, by default 6.0.
+            Parameters to use for fitting. If None, uses the model's default parameters.
+        wlmin, wlmax : float, optional
+            Minimum and maximum wavelength for fitting (ignored for array-like input and overridden per stage if
+            `param_groups` specify `"wlmin=..."` or `"wlmax=..."` strings).
         method : str, optional
-            the method name, default is leastsq. For lattice variation the recommended fit method is "nelder", other valid options are "brute","cobyla","powell" or others specified in lmfit.minimize docstring
-        xtol : float, optional
-            Relative tolerance for changes in the parameters. The optimizer stops when the relative
-            changes in parameter values are smaller than `xtol`. Default is None.
-        ftol : float, optional
-            Relative tolerance for the cost function (e.g., sum of squared residuals). The optimizer
-            stops when the relative change in the cost function is smaller than `ftol`. Default is None.
-        gtol : float, optional
-            Tolerance for the gradient of the cost function with respect to the parameters. The optimizer
-            stops when the gradient norm falls below `gtol`. Default is None.
-        kwargs : dict, optional
-            Additional arguments passed to the `lmfit.Model.fit` method.
+            Fitting method.  
+            - `"least-squares"` (default) or any method supported by `lmfit`.
+            - `"rietveld"` will run staged refinement via `_rietveld_fit`.
+        xtol, ftol, gtol : float, optional
+            Convergence tolerances (passed to `lmfit`).
+        verbose : bool, optional
+            If True, prints detailed fitting information.
+        progress_bar : bool, optional
+            If True, shows a progress bar for fitting:
+            - For `"rietveld"`: shows stage name, wavelength range, and reduced chi² per stage.
+            - For regular fits: shows overall fit progress.
+        param_groups : list, dict, or None, optional
+            Used only for `"rietveld"`. Groups of parameters to fit in each stage.
+            Groups may also contain `"wlmin=..."` and/or `"wlmax=..."` strings to override the wavelength
+            fitting range for that specific stage. For example:
+
+            ```python
+            param_groups = {
+                "Basic": ["basic"],
+                "Background": ["background", "wlmin=3", "wlmax=8"],
+                "Extinction": ["extinction"]
+            }
+            ```
+
+            These per-stage overrides temporarily replace the global `wlmin`/`wlmax` only during the stage.
+        **kwargs
+            Additional keyword arguments passed to `lmfit.Model.fit`.
 
         Returns
         -------
         lmfit.model.ModelResult
-            The result of the fit, containing optimized parameters and fitting statistics.
+            The fit result object, with extra methods:
+            - `.plot()` — plot the fit result.
+            - `.plot_total_xs()`, `.plot_stage_progression()`, `.plot_chi2_progression()` for advanced diagnostics.
+            - `.stages_summary` (for `"rietveld"`).
 
-        Notes
-        -----
-        - This function applies wavelength filtering to the input data based on `wlmin` and `wlmax`,
-        then fits the transmission model to the filtered data.
-        - The `xtol`, `ftol`, and `gtol` parameters are passed to the underlying optimization method 
-        in `lmfit.Model.fit` via the `fit_kws` argument.
-        If not specified, the default tolerances for the optimizer are used.
+        Examples
+        --------
+        **Basic fit:**
+        ```python
+        result = model.fit(data_df, wlmin=1.0, wlmax=5.0)
+        result.plot()
+        ```
+
+        **Rietveld-style staged refinement with per-stage wavelength overrides:**
+        ```python
+        param_groups = {
+            "Norm/Thick": ["norm", "thickness"],
+            "Background": ["b0", "b1", "wlmin=3", "wlmax=8"],
+            "Extinction": ["ext_l", "ext_Gg"]
+        }
+        result = model.fit(
+            data_df, method="rietveld",
+            param_groups=param_groups,
+            progress_bar=True
+        )
+        print(result.stages_summary)
+        ```
         """
-        # Update fit_kws to include xtol, ftol, gtol
-        fit_kws = kwargs.pop("fit_kws", {})  # Extract existing fit_kws or initialize an empty dict
-        fit_kws.setdefault("xtol", xtol) if xtol is not None else None
-        fit_kws.setdefault("ftol", ftol) if ftol is not None else None
-        fit_kws.setdefault("gtol", gtol) if gtol is not None else None
+        # Route to Rietveld if requested
+        if method == "rietveld":
+            return self._rietveld_fit(
+                data, params, wlmin, wlmax,
+                verbose=verbose,
+                progress_bar=progress_bar,
+                param_groups=param_groups,
+                **kwargs
+            )
 
-        # Pass fit_kws back into kwargs
+        # Prepare fit kwargs
+        fit_kws = kwargs.pop("fit_kws", {})
+        if xtol is not None: fit_kws.setdefault("xtol", xtol)
+        if ftol is not None: fit_kws.setdefault("ftol", ftol)
+        if gtol is not None: fit_kws.setdefault("gtol", gtol)
         kwargs["fit_kws"] = fit_kws
 
-        # Apply wavelength filtering and weights
+        # Try tqdm for progress
+        try:
+            from tqdm.notebook import tqdm
+        except ImportError:
+            from tqdm.auto import tqdm
+
+        # If progress_bar=True, wrap the fit in tqdm
+        if progress_bar:
+            pbar = tqdm(total=1, desc="Fitting", disable=not progress_bar)
+        else:
+            pbar = None
+
+        # Prepare input data
         if isinstance(data, pandas.DataFrame):
             data = data.query(f"{wlmin} < wavelength < {wlmax}")
             weights = kwargs.get("weights", 1. / data["err"].values)
@@ -245,7 +307,7 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
-                method = method,
+                method=method,
                 **kwargs
             )
 
@@ -257,298 +319,1012 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
-                method = method,
+                method=method,
                 **kwargs
             )
 
         else:
-            # Perform the fit using the parent class's fit method
             fit_result = super().fit(
                 data,
                 params=params or self.params,
-                method = method,
+                method=method,
                 **kwargs
             )
 
-        # Store and modify fit results
+        if pbar:
+            pbar.set_postfix({"redchi": f"{fit_result.redchi:.4g}"})
+            pbar.update(1)
+            pbar.close()
+
+        # Attach results
         self.fit_result = fit_result
-        fit_result.plot = self.plot  # Modify the plot method
+        fit_result.plot = self.plot
         fit_result.plot_total_xs = self.plot_total_xs
-        if self.response != None:
+        fit_result.show_available_params = self.show_available_params
+
+        if self.response is not None:
             fit_result.response = self.response
             fit_result.response.params = fit_result.params
-        if self.background != None:
+        if self.background is not None:
             fit_result.background = self.background
 
         return fit_result
-    
-    def plot(self, data=None, plot_bg: bool = True,
-            plot_dspace: bool = False, dspace_min: float = 1,
-            dspace_label_pos: float = 0.99, **kwargs):
+
+
+    def _rietveld_fit(self, data, params: "lmfit.Parameters" = None, wlmin: float = 1, wlmax: float = 8,
+                    verbose=False, progress_bar=True,
+                    param_groups=None,
+                    **kwargs):
+        """ Perform Rietveld-style staged fitting with optional wlmin/wlmax per stage.
+
+        Parameters
+        ----------
+        data : pandas.DataFrame or Data
+            The input data containing wavelength and transmission values.
+        params : lmfit.Parameters, optional
+            Initial parameters for the fit. If None, uses the model's default parameters.
+        wlmin : float, optional default=1
+            Default minimum wavelength for fitting.
+        wlmax : float, optional default=8
+            Default maximum wavelength for fitting.
+        verbose : bool, optional
+            If True, prints detailed information about each fitting stage.
+        progress_bar : bool, optional
+            If True, shows a progress bar for each fitting stage.
+        param_groups : list, dict, or None, optional - only used for Rietveld fitting
+            Groups of parameters to fit in each stage. Can contain "wlmin=.." or "wlmax=.." strings
+            to override wavelength bounds for that stage.
+        kwargs : dict, optional
+            Additional keyword arguments for the fit method, such as weights, method, etc.
+
+        Returns
+        -------
+        fit_result : lmfit.ModelResult
+            The final fit result after all stages.
+
+        fit_result.stages_summary : pandas.DataFrame
+            Summary of each fitting stage, including parameter values and reduced chi-squared.
         """
-        Plot the results of the fit or model.
+
+        from copy import deepcopy
+        import sys
+        import warnings
+        import re
+        import fnmatch
+        import pandas
+        try:
+            from tqdm.notebook import tqdm
+        except ImportError:
+            from tqdm.auto import tqdm
+        import pickle
+
+        # User-friendly group name mapping
+        group_map = {
+            "basic": ["norm", "thickness"],
+            "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
+            "tof": [p for p in ["L0", "t0"] if p in self.params],
+            "response": [p for p in self.params if self.response and p in self.response.params],
+            "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
+            "lattice": [p for p in self.params if p in ["a", "b", "c"]],
+            "extinction": [p for p in self.params if p.startswith("ext_")],
+            "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
+            "mosaicity": [p for p in self.params if p.startswith("η")],
+            "temperature": [p for p in ["temp"] if p in self.params],
+        }
+
+        def resolve_single_param_or_group(item):
+            """Resolve a single parameter name or group name to a list of parameters."""
+            if item in group_map:
+                resolved = group_map[item]
+                if verbose:
+                    print(f"  Resolved group '{item}' to: {resolved}")
+                return resolved
+            elif item in self.params:
+                if verbose:
+                    print(f"  Found parameter: {item}")
+                return [item]
+            else:
+                matching_params = [p for p in self.params.keys() if fnmatch.fnmatch(p, item)]
+                if matching_params:
+                    if verbose:
+                        print(f"  Pattern '{item}' matched: {matching_params}")
+                    return matching_params
+                else:
+                    warnings.warn(f"Unknown parameter or group: '{item}'. Available parameters: {list(self.params.keys())}")
+                    return []
+
+        def resolve_group(entry):
+            """
+            Resolve a group entry (string, list, or nested structure) to:
+            - A flat list of parameters
+            - A dict of overrides like {'wlmin': float, 'wlmax': float}
+            """
+            params_list = []
+            overrides = {}
+
+            def process_item(item):
+                nonlocal params_list, overrides
+                if isinstance(item, str):
+                    if item.startswith("wlmin="):
+                        try:
+                            overrides['wlmin'] = float(item.split("=", 1)[1])
+                            if verbose:
+                                print(f"  Override wlmin detected: {overrides['wlmin']}")
+                        except ValueError:
+                            warnings.warn(f"Invalid wlmin value in group: {item}")
+                    elif item.startswith("wlmax="):
+                        try:
+                            overrides['wlmax'] = float(item.split("=", 1)[1])
+                            if verbose:
+                                print(f"  Override wlmax detected: {overrides['wlmax']}")
+                        except ValueError:
+                            warnings.warn(f"Invalid wlmax value in group: {item}")
+                    else:
+                        params_list.extend(resolve_single_param_or_group(item))
+                elif isinstance(item, list):
+                    for subitem in item:
+                        process_item(subitem)
+                else:
+                    warnings.warn(f"Unexpected item type in group: {type(item)} - {item}")
+
+            process_item(entry)
+            return params_list, overrides
+
+        # Handle different input formats for param_groups and parse overrides
+        stage_names = []
+        resolved_param_groups = []
+        stage_overrides = []
+
+        if param_groups is None:
+            # Default groups
+            default_groups = [
+                "basic", "background", "tof", "response",
+                "weights", "lattice", "extinction", "orientation", "mosaicity", "temperature",
+            ]
+            for group in default_groups:
+                params_list, overrides = resolve_group(group)
+                if params_list:
+                    resolved_param_groups.append(params_list)
+                    stage_overrides.append(overrides)
+                    stage_names.append(f"Stage_{len(stage_names) + 1}")
+                elif verbose:
+                    print(f"Skipping empty default group: {group}")
+
+        elif isinstance(param_groups, dict):
+            stage_names = list(param_groups.keys())
+            for stage in stage_names:
+                params_list, overrides = resolve_group(param_groups[stage])
+                if params_list:
+                    resolved_param_groups.append(params_list)
+                    stage_overrides.append(overrides)
+                else:
+                    if verbose:
+                        print(f"Skipping empty group: {stage}")
+
+        elif isinstance(param_groups, list):
+            for i, group in enumerate(param_groups):
+                params_list, overrides = resolve_group(group)
+                if params_list:
+                    resolved_param_groups.append(params_list)
+                    stage_overrides.append(overrides)
+                    stage_names.append(f"Stage_{i + 1}")
+                else:
+                    if verbose:
+                        print(f"Skipping empty group at index {i}")
+
+        else:
+            raise ValueError("param_groups must be None, a list, or a dictionary")
+
+        # Remove any empty groups that slipped through
+        filtered = [(n, g, o) for n, g, o in zip(stage_names, resolved_param_groups, stage_overrides) if g]
+        if not filtered:
+            raise ValueError("No valid parameter groups found. Check your parameter names.")
+        stage_names, resolved_param_groups, stage_overrides = zip(*filtered)
+
+        if verbose:
+            print(f"\nFitting stages with possible wavelength overrides:")
+            for i, (name, group, ov) in enumerate(zip(stage_names, resolved_param_groups, stage_overrides)):
+                print(f"  {name}: {group}  overrides: {ov}")
+
+        # Store for summary or introspection
+        self._stage_param_groups = resolved_param_groups
+        self._stage_names = stage_names
+
+        params = deepcopy(params or self.params)
+
+        # Setup tqdm iterator
+        try:
+            from tqdm.notebook import tqdm as notebook_tqdm
+            if 'ipykernel' in sys.modules:
+                iterator = notebook_tqdm(
+                    zip(stage_names, resolved_param_groups, stage_overrides),
+                    desc="Rietveld Fit",
+                    disable=not progress_bar,
+                    total=len(stage_names)
+                )
+            else:
+                iterator = tqdm(
+                    zip(stage_names, resolved_param_groups, stage_overrides),
+                    desc="Rietveld Fit",
+                    disable=not progress_bar,
+                    total=len(stage_names)
+                )
+        except ImportError:
+            iterator = tqdm(
+                zip(stage_names, resolved_param_groups, stage_overrides),
+                desc="Rietveld Fit",
+                disable=not progress_bar,
+                total=len(stage_names)
+            )
+
+        stage_results = []
+        stage_summaries = []
+
+        def extract_pickleable_attributes(fit_result):
+            safe_attrs = [
+                'params', 'success', 'residual', 'chisqr', 'redchi', 'aic', 'bic',
+                'nvarys', 'ndata', 'nfev', 'message', 'lmdif_message', 'cov_x',
+                'method', 'flatchain', 'errorbars', 'ci_out'
+            ]
+
+            class PickleableResult:
+                pass
+
+            result = PickleableResult()
+
+            for attr in safe_attrs:
+                if hasattr(fit_result, attr):
+                    try:
+                        value = getattr(fit_result, attr)
+                        pickle.dumps(value)
+                        setattr(result, attr, value)
+                    except (TypeError, ValueError, AttributeError):
+                        if verbose:
+                            print(f"Skipping non-pickleable attribute: {attr}")
+                        continue
+
+            return result
+
+        for stage_idx, (stage_name, group, overrides) in enumerate(iterator):
+            stage_num = stage_idx + 1
+
+            # Use overrides or fallback to global wlmin, wlmax
+            stage_wlmin = overrides.get('wlmin', wlmin)
+            stage_wlmax = overrides.get('wlmax', wlmax)
+
+            if verbose:
+                print(f"\n{stage_name}: Fitting parameters {group} with wavelength range [{stage_wlmin}, {stage_wlmax}]")
+
+            # Filter data for this stage
+            if isinstance(data, pandas.DataFrame):
+                stage_data = data.query(f"{stage_wlmin} < wavelength < {stage_wlmax}")
+                wavelengths = stage_data["wavelength"].values
+                trans = stage_data["trans"].values
+                weights = kwargs.get("weights", 1. / stage_data["err"].values)
+            elif isinstance(data, Data):
+                stage_data = data.table.query(f"{stage_wlmin} < wavelength < {stage_wlmax}")
+                wavelengths = stage_data["wavelength"].values
+                trans = stage_data["trans"].values
+                weights = kwargs.get("weights", 1. / stage_data["err"].values)
+            else:
+                raise ValueError("Rietveld fitting requires wavelength-based input data.")
+
+            # Freeze all parameters
+            for p in params.values():
+                p.vary = False
+
+            # Unfreeze current group
+            unfrozen_count = 0
+            for name in group:
+                if name in params:
+                    params[name].vary = True
+                    unfrozen_count += 1
+                    if verbose:
+                        print(f"  Unfrozen: {name}")
+                else:
+                    warnings.warn(f"Parameter '{name}' not found in params")
+
+            if unfrozen_count == 0:
+                warnings.warn(f"No parameters were unfrozen in {stage_name}. Skipping this stage.")
+                continue
+
+            # Perform fitting
+            try:
+                fit_result = super().fit(
+                    trans,
+                    params=params,
+                    wl=wavelengths,
+                    weights=weights,
+                    method="leastsq",
+                    **kwargs
+                )
+            except Exception as e:
+                warnings.warn(f"Fitting failed in {stage_name}: {e}")
+                continue
+
+            # Extract pickleable part
+            stripped_result = extract_pickleable_attributes(fit_result)
+
+            stage_results.append(stripped_result)
+
+            # Build summary
+            summary = {
+                "stage": stage_num,
+                "stage_name": stage_name,
+                "fitted_params": group,
+                "wlmin": stage_wlmin,
+                "wlmax": stage_wlmax,
+                "redchi": fit_result.redchi
+            }
+            for name, par in fit_result.params.items():
+                summary[f"{name}_value"] = par.value
+                summary[f"{name}_stderr"] = par.stderr
+                summary[f"{name}_vary"] = par.vary
+            stage_summaries.append(summary)
+
+            iterator.set_description(f"Stage {stage_num}/{len(stage_names)}")
+            iterator.set_postfix({"stage": stage_name, "reduced χ²": f"{fit_result.redchi:.4g}"})
+
+            # Update params for next stage
+            params = fit_result.params
+
+            if verbose:
+                print(f"  {stage_name} completed. χ²/dof = {fit_result.redchi:.4f}")
+
+        if not stage_results:
+            raise RuntimeError("No successful fitting stages completed")
+
+        self.fit_result = fit_result
+        self.fit_stages = stage_results
+        self.stages_summary = self._create_stages_summary_table_enhanced(stage_results, resolved_param_groups, stage_names)
+
+        # Attach plotting methods and other attributes
+        fit_result.plot = self.plot
+        fit_result.plot_total_xs = self.plot_total_xs
+        fit_result.plot_stage_progression = self.plot_stage_progression
+        fit_result.plot_chi2_progression = self.plot_chi2_progression
+        if self.response is not None:
+            fit_result.response = self.response
+            fit_result.response.params = fit_result.params
+        if self.background is not None:
+            fit_result.background = self.background
+
+        fit_result.stages_summary = self.stages_summary
+        fit_result.show_available_params = self.show_available_params
+        return fit_result
+
+
+    def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None, color=True):
+        import pandas as pd
+        import numpy as np
+
+        # --- Build the DataFrame ---
+        all_param_names = list(stage_results[-1].params.keys())
+        stage_data = {}
+        if stage_names is None:
+            stage_names = [f"Stage_{i+1}" for i in range(len(stage_results))]
+
+        for stage_idx, stage_result in enumerate(stage_results):
+            stage_col = stage_names[stage_idx] if stage_idx < len(stage_names) else f"Stage_{stage_idx + 1}"
+            stage_data[stage_col] = {'value': {}, 'stderr': {}, 'vary': {}}
+            varied_in_stage = set(resolved_param_groups[stage_idx])
+
+            for param_name in all_param_names:
+                if param_name in stage_result.params:
+                    param = stage_result.params[param_name]
+                    stage_data[stage_col]['value'][param_name] = param.value
+                    stage_data[stage_col]['stderr'][param_name] = param.stderr if param.stderr is not None else np.nan
+                    stage_data[stage_col]['vary'][param_name] = param_name in varied_in_stage
+                else:
+                    stage_data[stage_col]['value'][param_name] = np.nan
+                    stage_data[stage_col]['stderr'][param_name] = np.nan
+                    stage_data[stage_col]['vary'][param_name] = False
+
+            redchi = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
+            stage_data[stage_col]['value']['redchi'] = redchi
+            stage_data[stage_col]['stderr']['redchi'] = np.nan
+            stage_data[stage_col]['vary']['redchi'] = np.nan
+
+        # Create DataFrame
+        data_for_df = {}
+        for stage_col in stage_data:
+            for metric in ['value', 'stderr', 'vary']:
+                data_for_df[(stage_col, metric)] = stage_data[stage_col][metric]
+
+        df = pd.DataFrame(data_for_df)
+        df.columns = pd.MultiIndex.from_tuples(df.columns, names=['Stage', 'Metric'])
+        all_param_names_with_redchi = all_param_names + ['redchi']
+        df = df.reindex(all_param_names_with_redchi)
+
+        # --- Add initial values column ---
+        initial_values = {}
+        for param_name in all_param_names:
+            initial_values[param_name] = self.params[param_name].value if param_name in self.params else np.nan
+        initial_values['redchi'] = np.nan
+
+        initial_df = pd.DataFrame({('Initial', 'value'): initial_values})
+        df = pd.concat([initial_df, df], axis=1)
+
+        if not color:
+            return df
+
+        styler = df.style
+
+        # 1) Highlight vary=True cells (light blue)
+        vary_cols = [col for col in df.columns if col[1] == 'vary']
+        def highlight_vary(s):
+            return ['background-color: lightblue' if v is True else '' for v in s]
+        for col in vary_cols:
+            styler = styler.apply(highlight_vary, subset=[col], axis=0)
+
+        # 2) Highlight redchi row's value cells (moccasin)
+        def highlight_redchi_row(row):
+            if row.name == 'redchi':
+                return ['background-color: moccasin' if col[1] == 'value' else '' for col in df.columns]
+            return ['' for _ in df.columns]
+        styler = styler.apply(highlight_redchi_row, axis=1)
+
+        # 3) Highlight value cells by fractional change with red hues (ignore <1%)
+        value_cols = [col for col in df.columns if col[1] == 'value']
+
+        # Calculate % absolute change between consecutive columns (Initial → Stage1 → Stage2 ...)
+        changes = pd.DataFrame(index=df.index, columns=value_cols, dtype=float)
+        prev_col = None
+        for col in value_cols:
+            if prev_col is None:
+                # No previous for initial column, so zero changes here
+                changes[col] = 0.0
+            else:
+                prev_vals = df[prev_col].astype(float)
+                curr_vals = df[col].astype(float)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    pct_change = np.abs((curr_vals - prev_vals) / prev_vals) * 100
+                pct_change = pct_change.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+                changes[col] = pct_change
+            prev_col = col
+
+        max_change = changes.max().max()
+        # Normalize by max change, to get values in [0,1]
+        norm_changes = changes / max_change if max_change > 0 else changes
+
+        def red_color(val):
+            # Ignore changes less than 1%
+            if pd.isna(val) or val < 1:
+                return ''
+            # val in [0,1], map to red intensity
+            # 0 -> white (255,255,255)
+            # 1 -> dark red (255,100,100)
+            r = 255
+            g = int(255 - 155 * val)
+            b = int(255 - 155 * val)
+            return f'background-color: rgb({r},{g},{b})'
+
+        for col in value_cols:
+            styler = styler.apply(lambda s: [red_color(v) for v in norm_changes[col]], subset=[col], axis=0)
+
+        return styler
+
+
+
+
+
+    def show_available_params(self, show_groups=True, show_params=True):
+        """
+        Display available parameter groups and individual parameters for Rietveld fitting.
         
         Parameters
         ----------
-        data : object, optional
-            Data object to show alongside the model (useful before performing the fit).
-            Should have wavelength, transmission, and error data accessible.
-        plot_bg : bool, optional
-            Whether to include the background in the plot, by default True.
-        plot_dspace: bool, optional
-            If True plots the 2*dspace and labels of that material that are larger than dspace_min
-        dspace_min: float, optional
-            The minimal dspace from which to plot the dspacing*2 lines
-        dspace_label_pos: float, optional
-            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure
-        kwargs : dict, optional
-            Additional plot settings like color, marker size, etc.
-            
-        Returns
-        -------
-        matplotlib.axes.Axes
-            The axes of the plot.
-            
-        Notes
-        -----
-        This function generates a plot showing the transmission data, the best-fit curve,
-        and residuals. If `plot_bg` is True, it will also plot the background function.
-        Can be used both after fitting (using fit_result) or before fitting (using model params).
+        show_groups : bool, optional
+            If True, show predefined parameter groups
+        show_params : bool, optional
+            If True, show all individual parameters
         """
-        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))
+        if show_groups:
+            print("Available parameter groups:")
+            print("=" * 30)
+
+            group_map = {
+                "basic": ["norm", "thickness"],
+                "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
+                "tof": [p for p in ["L0", "t0"] if p in self.params],
+                "response": [p for p in self.params if self.response and p in self.response.params],
+                "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
+                "lattice": [p for p in self.params if p in ["a", "b", "c"]],
+                "extinction": [p for p in self.params if p.startswith("ext_")],
+                "orientation": [p for p in ["phi", "theta", "eta"] if p in self.params],
+                "temperature": [p for p in ["temp"] if p in self.params],
+            }
+            
+            for group_name, params in group_map.items():
+                if params:  # Only show groups with available parameters
+                    print(f"  '{group_name}': {params}")
+            
+        if show_params:
+            if show_groups:
+                print("\nAll individual parameters:")
+                print("=" * 30)
+            else:
+                print("Available parameters:")
+                print("=" * 20)
+                
+            for param_name, param in self.params.items():
+                vary_status = "vary" if param.vary else "fixed"
+                print(f"  {param_name}: {param.value:.6g} ({vary_status})")
+                
+        print("\nExample usage:")
+        print("=" * 15)
+        print("# Using predefined groups:")
+        print('param_groups = ["basic", "background", "extinction"]')
+        print("\n# Using individual parameters:")
+        print('param_groups = [["norm", "thickness"], ["b0", "ext_l2"]]')
+        print("\n# Using named stages:")
+        print('param_groups = {"scale": ["norm"], "sample": ["thickness", "extinction"]}')
+        print("\n# Mixed approach:")
+        print('param_groups = ["basic", ["b0", "ext_l2"], "lattice"]')
+
+    def plot(self, data=None, plot_bg: bool = True,    
+            plot_dspace: bool = False, dspace_min: float = 1,    
+            dspace_label_pos: float = 0.99, stage: int = None, **kwargs):    
+        """    
+        Plot the results of the fit or model.    
+            
+        Parameters    
+        ----------    
+        data : object, optional    
+            Data object to show alongside the model (useful before performing the fit).    
+            Should have wavelength, transmission, and error data accessible.    
+        plot_bg : bool, optional    
+            Whether to include the background in the plot, by default True.    
+        plot_dspace: bool, optional    
+            If True plots the 2*dspace and labels of that material that are larger than dspace_min    
+        dspace_min: float, optional    
+            The minimal dspace from which to plot the dspacing*2 lines    
+        dspace_label_pos: float, optional    
+            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure    
+        stage: int, optional    
+            If provided, plot results from a specific Rietveld fitting stage (1-indexed).    
+            Only works if Rietveld fitting has been performed.    
+        kwargs : dict, optional    
+            Additional plot settings like color, marker size, etc.    
+                
+        Returns    
+        -------    
+        matplotlib.axes.Axes    
+            The axes of the plot.    
+                
+        Notes    
+        -----    
+        This function generates a plot showing the transmission data, the best-fit curve,    
+        and residuals. If `plot_bg` is True, it will also plot the background function.    
+        Can be used both after fitting (using fit_result) or before fitting (using model params).    
+        """    
+        import matplotlib.pyplot as plt
+        import numpy as np
         
-        # Check if we have fit results or should use model
+        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))    
+            
+        # Determine which results to use
+        if stage is not None and hasattr(self, "fit_stages") and self.fit_stages:
+            # Use specific stage results
+            if stage < 1 or stage > len(self.fit_stages):
+                raise ValueError(f"Stage {stage} not available. Available stages: 1-{len(self.fit_stages)}")
+            
+            # Get stage results
+            stage_result = self.fit_stages[stage - 1]  # Convert to 0-indexed
+            
+            # We need to reconstruct the fit data from the original fit
+            if hasattr(self, "fit_result") and self.fit_result is not None:
+                wavelength = self.fit_result.userkws["wl"]    
+                data_values = self.fit_result.data    
+                err = 1. / self.fit_result.weights    
+            else:
+                raise ValueError("Cannot plot stage results without original fit data")
+                
+            # Use stage parameters to evaluate model
+            params = stage_result.params
+            best_fit = self.eval(params=params, wl=wavelength)
+            residual = (data_values - best_fit) / err
+            chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.sum(residual**2) / (len(data_values) - len(params))
+            fit_label = f"Stage {stage} fit"
+            
+        elif hasattr(self, "fit_result") and self.fit_result is not None:    
+            # Use final fit results    
+            wavelength = self.fit_result.userkws["wl"]    
+            data_values = self.fit_result.data    
+            err = 1. / self.fit_result.weights    
+            best_fit = self.fit_result.best_fit    
+            residual = self.fit_result.residual    
+            params = self.fit_result.params    
+            chi2 = self.fit_result.redchi    
+            fit_label = "Best fit"    
+        else:    
+            # Use model (no fit yet)    
+            fit_label = "Model"    
+            params = self.params  # Assuming model has params attribute    
+                
+            if data is not None:    
+                # Extract data from provided data object    
+                wavelength = data.table.wavelength    
+                data_values = data.table.trans    
+                err = data.table.err    
+                    
+                # Evaluate model at data wavelengths    
+                best_fit = self.eval(params=params, wl=wavelength)    
+                residual = (data_values - best_fit) / err    
+                    
+                # Calculate chi2 for the model    
+                chi2 = np.sum(((data_values - best_fit) / err) ** 2) / (len(data_values) - len(params))    
+            else:    
+                # No data provided, just show model over some wavelength range    
+                wavelength = np.linspace(1.0, 10.0, 1000)  # Adjust range as needed    
+                data_values = np.nan * np.ones_like(wavelength)    
+                err = np.nan * np.ones_like(wavelength)    
+                best_fit = self.eval(params=params, wl=wavelength)    
+                residual = np.nan * np.ones_like(wavelength)    
+                chi2 = np.nan    
+            
+        # Plot settings    
+        color = kwargs.pop("color", "seagreen")    
+        ecolor = kwargs.pop("ecolor", "0.8")    
+        title = kwargs.pop("title", self.cross_section.name)    
+        ms = kwargs.pop("ms", 2)    
+            
+        # Plot data and best-fit/model    
+        ax[0].errorbar(wavelength, data_values, err, marker="o", color=color, ms=ms,     
+                    zorder=-1, ecolor=ecolor, label="Data")    
+        ax[0].plot(wavelength, best_fit, color="0.2", label=fit_label)    
+        ax[0].set_ylabel("Transmission")    
+        ax[0].set_title(title)    
+            
+        # Plot residuals    
+        ax[1].plot(wavelength, residual, color=color)    
+        ax[1].set_ylabel("Residuals [1σ]")    
+        ax[1].set_xlabel("λ [Å]")    
+            
+        # Plot background if requested    
+        if plot_bg and self.background:    
+            self.background.plot(wl=wavelength, ax=ax[0], params=params, **kwargs)    
+            legend_labels = [fit_label, "Background", "Data"]    
+        else:    
+            legend_labels = [fit_label, "Data"]    
+            
+        # Set legend with chi2 value    
+        ax[0].legend(legend_labels, fontsize=9, reverse=True,     
+                    title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")    
+            
+        # Plot d-spacing lines if requested    
+        if plot_dspace:    
+            for phase in self.cross_section.phases_data:    
+                try:    
+                    hkls = self.cross_section.phases_data[phase].info.hklList()    
+                except:    
+                    continue    
+                for hkl in hkls:    
+                    hkl = hkl[:3]    
+                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)    
+                    if dspace >= dspace_min:    
+                        trans = ax[0].get_xaxis_transform()    
+                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")    
+                        if len(self.cross_section.phases) > 1:    
+                            ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}",     
+                                    color="0.2", zorder=-1, fontsize=8, transform=trans,     
+                                    rotation=90, va="top", ha="right")    
+                        else:    
+                            ax[0].text(dspace*2, dspace_label_pos, f"{hkl}",     
+                                    color="0.2", zorder=-1, fontsize=8, transform=trans,     
+                                    rotation=90, va="top", ha="right")    
+            
+        plt.subplots_adjust(hspace=0.05)    
+        return ax    
+
+
+    def plot_total_xs(self, plot_bg: bool = True,     
+                    plot_dspace: bool = False,     
+                    dspace_min: float = 1,     
+                    dspace_label_pos: float = 0.99,     
+                    stage: int = None,
+                    **kwargs):    
+        """    
+        Plot the results of the total cross-section fit.    
+
+        Parameters    
+        ----------    
+        plot_bg : bool, optional    
+            Whether to include the background in the plot, by default True.    
+        plot_dspace: bool, optional    
+            If True plots the 2*dspace and labels of that material that are larger than dspace_min    
+        dspace_min: float, optional    
+            The minimal dspace from which to plot the dspacing*2 lines    
+        dspace_label_pos: float, optional    
+            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure    
+        stage: int, optional    
+            If provided, plot results from a specific Rietveld fitting stage (1-indexed).    
+            Only works if Rietveld fitting has been performed.    
+        kwargs : dict, optional    
+            Additional plot settings like color, marker size, etc.    
+
+        Returns    
+        -------    
+        matplotlib.axes.Axes    
+            The axes of the plot.    
+
+        Notes    
+        -----    
+        This function generates a plot showing the total cross-section data,     
+        the best-fit curve, and residuals. If `plot_bg` is True, it will also     
+        plot the background function.    
+        """    
+        # Determine which parameters to use
+        if stage is not None and hasattr(self, "fit_stages") and self.fit_stages:
+            # Use specific stage results
+            if stage < 1 or stage > len(self.fit_stages):
+                raise ValueError(f"Stage {stage} not available. Available stages: 1-{len(self.fit_stages)}")
+            
+            stage_result = self.fit_stages[stage - 1]  # Convert to 0-indexed
+            params = stage_result.params
+            chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
+            title_suffix = f" (Stage {stage})"
+            
+            # We still need the original wavelength data
+            if not hasattr(self, "fit_result") or self.fit_result is None:
+                raise ValueError("Cannot plot stage cross-section without original fit data")
+            wavelength = self.fit_result.userkws["wl"]
+            data_values = self.fit_result.data
+            
+        elif hasattr(self, "fit_result") and self.fit_result is not None:
+            # Use final fit results
+            params = self.fit_result.params
+            chi2 = self.fit_result.redchi
+            wavelength = self.fit_result.userkws["wl"]
+            data_values = self.fit_result.data
+            title_suffix = ""
+        else:
+            raise ValueError("Cannot plot cross-section without fit results")
+        
+        # Prepare data for cross-section calculation    
+        if "k" in params:    
+            k = params['k'].value    
+        else:    
+            k = 1.    
+        if plot_bg and self.background:    
+            bg = self.background.function(wavelength, **params)    
+        else:    
+            bg = 0.    
+        norm = params['norm'].value    
+        n = self.atomic_density    
+        thickness = params['thickness'].value    
+
+        # Calculate cross-section data    
+        data_xs = -1. / n / thickness * np.log((data_values - k * bg) / norm / (1. - bg))    
+
+        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))    
+
+            
+        # Calculate best fit and residuals for cross-section    
+        xs = self.cross_section(wavelength, **params)  # You'll need to implement this method    
+
+        if self.response != None:    
+            response = self.response.function(**params)    
+            best_fit = convolve1d(xs, response, 0)    
+        else:
+            best_fit = xs
+        residual = data_xs - best_fit    
+
+        # Plot styling    
+        color = kwargs.pop("color", "crimson")    
+        title = kwargs.pop("title", self.cross_section.name)    
+        ecolor = kwargs.pop("ecolor", "0.8")    
+        ms = kwargs.pop("ms", 2)    
+
+        # Top subplot: Data and fit    
+        ax[0].errorbar(wavelength, data_xs,     
+                    # yerr=1./self.fit_result.weights,  # Assuming similar error handling    
+                    marker="o",     
+                    color=color,     
+                    ms=ms,     
+                    zorder=-1,     
+                    ecolor=ecolor,     
+                    label="Cross-section data")    
+            
+        ax[0].plot(wavelength, best_fit, color="0.4", label="Best fit")    
+        ax[0].plot(wavelength, xs, color="0.2", label="total xs")    
+        ax[0].set_ylabel("Total Cross Section [barn/sr]")    
+        ax[0].set_title(title)    
+
+        # Bottom subplot: Residuals    
+        ax[1].plot(wavelength, residual, color=color)    
+        ax[1].set_ylabel("Residuals [1σ]")    
+        ax[1].set_xlabel("λ [Å]")    
+
+        # Background plotting (if enabled)    
+        if plot_bg and self.background:    
+            self.background.plot(wl=wavelength, ax=ax[0], params=params, **kwargs)    
+            ax[0].legend(["Cross-section data", "Background", "Total cross-section","Best fit"][::-1],     
+                        fontsize=9,     
+                        reverse=True,     
+                        title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")    
+        else:    
+            ax[0].legend(["Cross-section data","Total cross-section", "Best fit"][::-1],     
+                        fontsize=9,     
+                        reverse=True,     
+                        title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")    
+
+        # d-spacing plot (if enabled)    
+        if plot_dspace:    
+            for phase in self.cross_section.phases_data:    
+                try:    
+                    hkls = self.cross_section.phases_data[phase].info.hklList()    
+                except:    
+                    continue    
+                for hkl in hkls:    
+                    hkl = hkl[:3]    
+                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)    
+                    if dspace >= dspace_min:    
+                        trans = ax[0].get_xaxis_transform()    
+                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")    
+                            
+                        # Label d-spacing lines    
+                        if len(self.cross_section.phases) > 1:    
+                            ax[0].text(dspace*2, dspace_label_pos,     
+                                    f"{phase} {hkl}",     
+                                    color="0.2",     
+                                    zorder=-1,     
+                                    fontsize=8,     
+                                    transform=trans,     
+                                    rotation=90,     
+                                    va="top",     
+                                    ha="right")    
+                        else:    
+                            ax[0].text(dspace*2, dspace_label_pos,     
+                                    f"{hkl}",     
+                                    color="0.2",     
+                                    zorder=-1,     
+                                    fontsize=8,     
+                                    transform=trans,     
+                                    rotation=90,     
+                                    va="top",     
+                                    ha="right")    
+
+        plt.subplots_adjust(hspace=0.05)    
+        return ax
+
+    def plot_stage_progression(self, stages: list = None, **kwargs):
+        """
+        Plot the progression of Rietveld refinement stages showing how the fit improves.
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if not hasattr(self, "fit_stages") or not self.fit_stages:
+            raise ValueError("No Rietveld stages available. Run fit with method='rietveld' first.")
+
+        if stages is None:
+            stages = list(range(1, len(self.fit_stages) + 1))
+
+        # Original data
         if hasattr(self, "fit_result") and self.fit_result is not None:
-            # Use fit results
             wavelength = self.fit_result.userkws["wl"]
             data_values = self.fit_result.data
             err = 1. / self.fit_result.weights
-            best_fit = self.fit_result.best_fit
-            residual = self.fit_result.residual
-            params = self.fit_result.params
-            chi2 = self.fit_result.redchi
-            fit_label = "Best fit"
         else:
-            # Use model (no fit yet)
-            fit_label = "Model"
-            params = self.params  # Assuming model has params attribute
-            
-            if data is not None:
-                # Extract data from provided data object
-                wavelength = data.table.wavelength
-                data_values = data.table.trans
-                err = data.table.err
-                
-                # Evaluate model at data wavelengths
-                best_fit = self.eval(params=params, wl=wavelength)
-                residual = (data_values - best_fit) / err
-                
-                # Calculate chi2 for the model
-                chi2 = np.sum(((data_values - best_fit) / err) ** 2) / (len(data_values) - len(params))
-            else:
-                # No data provided, just show model over some wavelength range
-                # You might want to define a default wavelength range here
-                wavelength = np.linspace(1.0, 10.0, 1000)  # Adjust range as needed
-                data_values = np.nan * np.ones_like(wavelength)
-                err = np.nan * np.ones_like(wavelength)
-                best_fit = self.eval(params=params, wl=wavelength)
-                residual = np.nan * np.ones_like(wavelength)
-                chi2 = np.nan
-        
-        # Plot settings
-        color = kwargs.pop("color", "seagreen")
-        ecolor = kwargs.pop("ecolor", "0.8")
-        title = kwargs.pop("title", self.cross_section.name)
-        ms = kwargs.pop("ms", 2)
-        
-        # Plot data and best-fit/model
-        ax[0].errorbar(wavelength, data_values, err, marker="o", color=color, ms=ms, 
-                    zorder=-1, ecolor=ecolor, label="Data")
-        ax[0].plot(wavelength, best_fit, color="0.2", label=fit_label)
-        ax[0].set_ylabel("Transmission")
-        ax[0].set_title(title)
-        
-        # Plot residuals
-        ax[1].plot(wavelength, residual, color=color)
-        ax[1].set_ylabel("Residuals [1σ]")
-        ax[1].set_xlabel("λ [Å]")
-        
-        # Plot background if requested
-        if plot_bg and self.background:
-            self.background.plot(wl=wavelength, ax=ax[0], params=params, **kwargs)
-            legend_labels = [fit_label, "Background", "Data"]
-        else:
-            legend_labels = [fit_label, "Data"]
-        
-        # Set legend with chi2 value
-        ax[0].legend(legend_labels, fontsize=9, reverse=True, 
-                    title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")
-        
-        # Plot d-spacing lines if requested
-        if plot_dspace:
-            for phase in self.cross_section.phases_data:
-                try:
-                    hkls = self.cross_section.phases_data[phase].info.hklList()
-                except:
-                    continue
-                for hkl in hkls:
-                    hkl = hkl[:3]
-                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
-                    if dspace >= dspace_min:
-                        trans = ax[0].get_xaxis_transform()
-                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
-                        if len(self.cross_section.phases) > 1:
-                            ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}", 
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans, 
-                                    rotation=90, va="top", ha="right")
-                        else:
-                            ax[0].text(dspace*2, dspace_label_pos, f"{hkl}", 
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans, 
-                                    rotation=90, va="top", ha="right")
-        
-        plt.subplots_adjust(hspace=0.05)
+            raise ValueError("Cannot plot stage progression without original fit data")
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+
+        # Match style: light gray points for data
+        ax.errorbar(wavelength, data_values, err,
+                    marker="o", color="0.6", ms=2, alpha=0.7, zorder=-1,
+                    ecolor="0.85", label="Data")
+
+        # Use consistent style palette
+        colors = plt.cm.plasma(np.linspace(0, 0.85, len(stages)))
+
+        for i, stage in enumerate(stages):
+            if stage < 1 or stage > len(self.fit_stages):
+                continue
+
+            stage_result = self.fit_stages[stage - 1]
+            params = stage_result.params
+            best_fit = self.eval(params=params, wl=wavelength)
+            chi2 = getattr(stage_result, "redchi", np.nan)
+
+            # Get stage name if available
+            stage_name = f"Stage {stage}"
+            if hasattr(self, "stages_summary"):
+                stage_col = f"Stage_{stage}"
+                if (stage_col, "vary") in self.stages_summary.columns:
+                    varied_params = self.stages_summary.loc[
+                        self.stages_summary[(stage_col, "vary")] == True
+                    ].index.tolist()
+                    varied_params = [p for p in varied_params if p != "redchi"]
+                    if varied_params:
+                        stage_name = ", ".join(varied_params[:2]) + (
+                            f" +{len(varied_params)-2}" if len(varied_params) > 2 else ""
+                        )
+
+            ax.plot(wavelength, best_fit,
+                    color=colors[i], lw=1.2 + 0.4 * i,
+                    alpha=0.8,
+                    label=f"{stage_name} (χ²={chi2:.3f})" if not np.isnan(chi2) else stage_name)
+
+        ax.set_xlabel("λ [Å]")
+        ax.set_ylabel("Transmission")
+        ax.set_title("Rietveld Refinement Stage Progression")
+        ax.legend(fontsize=8, frameon=False)
+
+        plt.tight_layout()
         return ax
 
-    def plot_total_xs(self, plot_bg: bool = True, 
-                    plot_dspace: bool = False, 
-                    dspace_min: float = 1, 
-                    dspace_label_pos: float = 0.99, 
-                    **kwargs):
+
+    def plot_chi2_progression(self, **kwargs):
         """
-        Plot the results of the total cross-section fit.
+        Plot the χ² progression through Rietveld stages with stage names on x-axis.
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
 
-        Parameters
-        ----------
-        plot_bg : bool, optional
-            Whether to include the background in the plot, by default True.
-        plot_dspace: bool, optional
-            If True plots the 2*dspace and labels of that material that are larger than dspace_min
-        dspace_min: float, optional
-            The minimal dspace from which to plot the dspacing*2 lines
-        dspace_label_pos: float, optional
-            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure
-        kwargs : dict, optional
-            Additional plot settings like color, marker size, etc.
+        if not hasattr(self, "fit_stages") or not self.fit_stages:
+            raise ValueError("No Rietveld stages available. Run fit with method='rietveld' first.")
 
+        stages = list(range(1, len(self.fit_stages) + 1))
+        chi2_values = []
+        stage_labels = []
+
+        for stage in stages:
+            stage_result = self.fit_stages[stage - 1]
+            chi2 = getattr(stage_result, "redchi", np.nan)
+            chi2_values.append(chi2)
+
+            label = f"Stage {stage}"
+            if hasattr(self, "stages_summary"):
+                stage_col = f"Stage_{stage}"
+                if (stage_col, "vary") in self.stages_summary.columns:
+                    varied_params = self.stages_summary.loc[
+                        self.stages_summary[(stage_col, "vary")] == True
+                    ].index.tolist()
+                    varied_params = [p for p in varied_params if p != "redchi"]
+                    if varied_params:
+                        label = ", ".join(varied_params[:2]) + (
+                            f" +{len(varied_params)-2}" if len(varied_params) > 2 else ""
+                        )
+            stage_labels.append(label)
+
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+
+        ax.plot(stages, chi2_values, marker="o", lw=2, color="seagreen")
+
+        # Annotate each point
+        for stage, chi2 in zip(stages, chi2_values):
+            if not np.isnan(chi2):
+                ax.annotate(f"{chi2:.3f}", (stage, chi2),
+                            textcoords="offset points", xytext=(0, 8),
+                            ha="center", fontsize=8)
+
+        ax.set_xlabel("Refinement Stage")
+        ax.set_ylabel("Reduced χ²")
+        ax.set_title("Rietveld χ² Progression")
+
+        # Stage names at bottom
+        ax.set_xticks(stages)
+        ax.set_xticklabels(stage_labels, rotation=30, ha="right", fontsize=8)
+
+        plt.tight_layout()
+        return ax
+
+    def get_stages_summary_table(self):
+        """
+        Get the stages summary table showing parameter progression through refinement stages.
+        
         Returns
         -------
-        matplotlib.axes.Axes
-            The axes of the plot.
-
-        Notes
-        -----
-        This function generates a plot showing the total cross-section data, 
-        the best-fit curve, and residuals. If `plot_bg` is True, it will also 
-        plot the background function.
+        pandas.DataFrame
+            Multi-index DataFrame with parameters as rows and stages as columns.
+            Each stage has columns for 'value', 'stderr', 'vary', and 'redchi'.
         """
-        # Prepare data for cross-section calculation
-        wavelength = self.fit_result.userkws["wl"]
-        if "k" in self.fit_result.params:
-            k = self.fit_result.params['k'].value
-        else:
-            k = 1.
-        if plot_bg and self.background:
-            bg = self.background.function(wavelength,**self.fit_result.params)
-        else:
-            bg = 0.
-        norm = self.fit_result.params['norm'].value
-        n = self.atomic_density
-        thickness = self.fit_result.params['thickness'].value
-
-        # Calculate cross-section data
-        data_xs = -1. / n / thickness * np.log((self.fit_result.data - k * bg) / norm / (1. - bg))
-
-        fig, ax = plt.subplots(2, 1, sharex=True, height_ratios=[3.5, 1], figsize=(6, 5))
-
+        if not hasattr(self, "stages_summary"):
+            raise ValueError("No stages summary available. Run fit with method='rietveld' first.")
         
-        # Calculate best fit and residuals for cross-section
-        xs = self.cross_section(wavelength,**self.fit_result.params)  # You'll need to implement this method
-
-        if self.response != None:
-            response = self.response.function(**self.fit_result.params)
-            best_fit = convolve1d(xs,response,0)
-        residual = data_xs - best_fit
-
-        # Plot styling
-        color = kwargs.pop("color", "crimson")
-        title = kwargs.pop("title", self.cross_section.name)
-        ecolor = kwargs.pop("ecolor", "0.8")
-        ms = kwargs.pop("ms", 2)
-
-        # Top subplot: Data and fit
-        ax[0].errorbar(wavelength, data_xs, 
-                    # yerr=1./self.fit_result.weights,  # Assuming similar error handling
-                    marker="o", 
-                    color=color, 
-                    ms=ms, 
-                    zorder=-1, 
-                    ecolor=ecolor, 
-                    label="Cross-section data")
-        
-        ax[0].plot(wavelength, best_fit, color="0.4", label="Best fit")
-        ax[0].plot(wavelength, xs, color="0.2", label="total xs")
-        ax[0].set_ylabel("Total Cross Section [barn/sr]")
-        ax[0].set_title(title)
-
-        # Bottom subplot: Residuals
-        ax[1].plot(wavelength, residual, color=color)
-        ax[1].set_ylabel("Residuals [1σ]")
-        ax[1].set_xlabel("λ [Å]")
-
-        # Background plotting (if enabled)
-        if plot_bg and self.background:
-            self.background.plot(wl=wavelength, ax=ax[0], params=self.fit_result.params, **kwargs)
-            ax[0].legend(["Cross-section data", "Background", "Total cross-section","Best fit"][::-1], 
-                        fontsize=9, 
-                        reverse=True, 
-                        title=f"χ$^2$: {self.fit_result.redchi:.2f}")
-        else:
-            ax[0].legend(["Cross-section data","Total cross-section", "Best fit"][::-1], 
-                        fontsize=9, 
-                        reverse=True, 
-                        title=f"χ$^2$: {self.fit_result.redchi:.2f}")
-
-        # d-spacing plot (if enabled)
-        if plot_dspace:
-            for phase in self.cross_section.phases_data:
-                try:
-                    hkls = self.cross_section.phases_data[phase].info.hklList()
-                except:
-                    continue
-                for hkl in hkls:
-                    hkl = hkl[:3]
-                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
-                    if dspace >= dspace_min:
-                        trans = ax[0].get_xaxis_transform()
-                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
-                        
-                        # Label d-spacing lines
-                        if len(self.cross_section.phases) > 1:
-                            ax[0].text(dspace*2, dspace_label_pos, 
-                                    f"{phase} {hkl}", 
-                                    color="0.2", 
-                                    zorder=-1, 
-                                    fontsize=8, 
-                                    transform=trans, 
-                                    rotation=90, 
-                                    va="top", 
-                                    ha="right")
-                        else:
-                            ax[0].text(dspace*2, dspace_label_pos, 
-                                    f"{hkl}", 
-                                    color="0.2", 
-                                    zorder=-1, 
-                                    fontsize=8, 
-                                    transform=trans, 
-                                    rotation=90, 
-                                    va="top", 
-                                    ha="right")
-
-        plt.subplots_adjust(hspace=0.05)
-        return ax
-
-
-
+        return self.stages_summary
 
 
     def interactive_plot(self, data=None, plot_bg=True, plot_dspace=False, 
