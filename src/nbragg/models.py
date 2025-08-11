@@ -185,7 +185,7 @@ class TransmissionModel(lmfit.Model):
         return T
 
     def fit(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
-            method: str = "leastsq",
+            method: str = "least-squares",
             xtol: float = None, ftol: float = None, gtol: float = None,
             verbose: bool = False,
             progress_bar: bool = True,
@@ -211,7 +211,7 @@ class TransmissionModel(lmfit.Model):
             `param_groups` specify `"wlmin=..."` or `"wlmax=..."` strings).
         method : str, optional
             Fitting method.  
-            - `"leastsq"` (default) or any method supported by `lmfit`.
+            - `"least-squares"` (default) or any method supported by `lmfit`.
             - `"rietveld"` will run staged refinement via `_rietveld_fit`.
         xtol, ftol, gtol : float, optional
             Convergence tolerances (passed to `lmfit`).
