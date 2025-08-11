@@ -187,29 +187,112 @@ class TransmissionModel(lmfit.Model):
             method: str = "leastsq",
             xtol: float = None, ftol: float = None, gtol: float = None,
             verbose: bool = False,
-            progress_bar: bool = False,
+            progress_bar: bool = True,
             param_groups: Optional[List[List[str]]] = None,
-            return_all_results: bool = False,
             **kwargs):
         """
-        Fit the model to the data, optionally using Rietveld-style staged refinement.
+        Fit the model to data.
+
+        This method supports both:
+        - **Standard single-stage fitting** (default)
+        - **Rietveld-style staged refinement** (`method="rietveld"`)
+
+        Parameters
+        ----------
+        data : pandas.DataFrame or Data or array-like
+            The input data.  
+            - For `pandas.DataFrame` or `Data`: must have columns `"wavelength"`, `"trans"`, and `"err"`.
+            - For array-like: will be passed directly to `lmfit.Model.fit`.
+        params : lmfit.Parameters, optional
+            Parameters to use for fitting. If None, uses the model's default parameters.
+        wlmin, wlmax : float, optional
+            Minimum and maximum wavelength for fitting (ignored for array-like input).
+        method : str, optional
+            Fitting method.  
+            - `"leastsq"` (default) or any method supported by `lmfit`.
+            - `"rietveld"` will run staged refinement via `_rietveld_fit`.
+        xtol, ftol, gtol : float, optional
+            Convergence tolerances (passed to `lmfit`).
+        verbose : bool, optional
+            If True, prints detailed fitting information.
+        progress_bar : bool, optional
+            If True, shows a progress bar for fitting:
+            - For `"rietveld"`: shows stage name and reduced chi² per stage.
+            - For regular fits: shows overall fit progress.
+        param_groups : list, dict, or None, optional
+            Used only for `"rietveld"`. Groups of parameters to fit in each stage.
+            See `_rietveld_fit` docstring for details.
+        **kwargs
+            Additional keyword arguments passed to `lmfit.Model.fit`.
+
+        Returns
+        -------
+        lmfit.model.ModelResult
+            The fit result object, with extra methods:
+            - `.plot()` — plot the fit result.
+            - `.plot_total_xs()`, `.plot_stage_progression()`, `.plot_chi2_progression()` for advanced diagnostics.
+            - `.stages_summary` (for `"rietveld"`).
+
+        Examples
+        --------
+        **Basic fit:**
+        ```python
+        result = model.fit(data_df, wlmin=1.0, wlmax=5.0)
+        result.plot()
+        ```
+
+        **Rietveld-style staged refinement:**
+        ```python
+        param_groups = {
+            "Norm/Thick": ["norm", "thickness"],
+            "Background": ["b0", "b1"],
+            "Extinction": ["ext_l", "ext_Gg"]
+        }
+        result, summary = model.fit(
+            data_df, method="rietveld",
+            param_groups=param_groups,
+            progress_bar=True,
+            return_all_results=True
+        )
+        print(summary)
+        ```
+
+        Notes
+        -----
+        - `"rietveld"` mode is a **staged refinement** approach where parameters are refined in
+        groups, improving stability for complex models.
+        - Progress bars use `tqdm` and will automatically adapt to Jupyter or terminal output.
         """
+        # Route to Rietveld if requested
         if method == "rietveld":
             return self._rietveld_fit(
                 data, params, wlmin, wlmax,
                 verbose=verbose,
                 progress_bar=progress_bar,
                 param_groups=param_groups,
-                return_all_results=return_all_results,
                 **kwargs
             )
-        
+
+        # Prepare fit kwargs
         fit_kws = kwargs.pop("fit_kws", {})
-        fit_kws.setdefault("xtol", xtol) if xtol is not None else None
-        fit_kws.setdefault("ftol", ftol) if ftol is not None else None
-        fit_kws.setdefault("gtol", gtol) if gtol is not None else None
+        if xtol is not None: fit_kws.setdefault("xtol", xtol)
+        if ftol is not None: fit_kws.setdefault("ftol", ftol)
+        if gtol is not None: fit_kws.setdefault("gtol", gtol)
         kwargs["fit_kws"] = fit_kws
 
+        # Try tqdm for progress
+        try:
+            from tqdm.notebook import tqdm
+        except ImportError:
+            from tqdm.auto import tqdm
+
+        # If progress_bar=True, wrap the fit in tqdm
+        if progress_bar:
+            pbar = tqdm(total=1, desc="Fitting", disable=not progress_bar)
+        else:
+            pbar = None
+
+        # Prepare input data
         if isinstance(data, pandas.DataFrame):
             data = data.query(f"{wlmin} < wavelength < {wlmax}")
             weights = kwargs.get("weights", 1. / data["err"].values)
@@ -242,14 +325,17 @@ class TransmissionModel(lmfit.Model):
                 **kwargs
             )
 
+        if pbar:
+            pbar.set_postfix({"redchi": f"{fit_result.redchi:.4g}"})
+            pbar.update(1)
+            pbar.close()
+
+        # Attach results
         self.fit_result = fit_result
         fit_result.plot = self.plot
         fit_result.plot_total_xs = self.plot_total_xs
-        fit_result.plot_stage_progression = self.plot_stage_progression
-        fit_result.plot_chi2_progression = self.plot_chi2_progression
-        fit_result.self.stages_summary = self.stages_summary
         fit_result.show_available_params = self.show_available_params
-        
+
         if self.response is not None:
             fit_result.response = self.response
             fit_result.response.params = fit_result.params
@@ -257,11 +343,11 @@ class TransmissionModel(lmfit.Model):
             fit_result.background = self.background
 
         return fit_result
-    
 
-    def _rietveld_fit(self, data, params, wlmin, wlmax,
-                    verbose=False, progress_bar=False,
-                    param_groups=None, return_all_results=False,
+
+    def _rietveld_fit(self, data, params: "lmfit.Parameters" = None, wlmin:float=1, wlmax:float=8,
+                    verbose=False, progress_bar=True,
+                    param_groups=None,
                     **kwargs):
         """ Perform Rietveld-style staged fitting.
         This method allows for staged fitting of parameters, where each stage
@@ -272,9 +358,9 @@ class TransmissionModel(lmfit.Model):
             The input data containing wavelength and transmission values.
         params : lmfit.Parameters, optional
             Initial parameters for the fit. If None, uses the model's default parameters.       
-        wlmin : float
+        wlmin : float, optional default=1
             Minimum wavelength for fitting.
-        wlmax : float
+        wlmax : float, optional default=8
             Maximum wavelength for fitting.
         verbose : bool, optional
             If True, prints detailed information about each fitting stage.
@@ -286,9 +372,6 @@ class TransmissionModel(lmfit.Model):
             - List of strings/lists: ["basic", ["b0", "ext_l2"]]
             - Dict with stage names: {"stage1": ["norm"], "stage2": ["background"]}
             If None, uses predefined groups.
-        return_all_results : bool, optional
-            If True, returns all stage results and summaries.
-            If False, returns only the final fit result.
         kwargs : dict, optional
             Additional keyword arguments for the fit method, such as weights, method, etc.
 
@@ -296,10 +379,9 @@ class TransmissionModel(lmfit.Model):
         -------
         fit_result : lmfit.ModelResult
             The final fit result after all stages.
-        stage_results : list of lmfit.ModelResult, optional
-            If `return_all_results` is True, returns a list of results for each fitting stage.
-        stage_summaries : pandas.DataFrame, optional
-            If `return_all_results` is True, returns a DataFrame summarizing each stage's results.
+
+        fit_result.stages_summary : pandas.DataFrame 
+            Summary of each fitting stage, including parameter values and reduced chi-squared.
 
         Notes
         -----
@@ -501,14 +583,14 @@ class TransmissionModel(lmfit.Model):
 
         for stage_name, group in iterator:
             stage_num = len(stage_results) + 1
-            
+
             if verbose:
                 print(f"\n{stage_name}: Fitting {group}")
 
             # Freeze all parameters
             for p in params.values():
                 p.vary = False
-                
+
             # Unfreeze current group
             unfrozen_count = 0
             for name in group:
@@ -519,7 +601,7 @@ class TransmissionModel(lmfit.Model):
                         print(f"  Unfrozen: {name}")
                 else:
                     warnings.warn(f"Parameter '{name}' not found in params")
-            
+
             if unfrozen_count == 0:
                 warnings.warn(f"No parameters were unfrozen in {stage_name}. Skipping this stage.")
                 continue
@@ -540,7 +622,7 @@ class TransmissionModel(lmfit.Model):
 
             # Extract only pickleable parts
             stripped_result = extract_pickleable_attributes(fit_result)
-            
+
             # Store results
             stage_results.append(stripped_result)
 
@@ -557,11 +639,16 @@ class TransmissionModel(lmfit.Model):
                 summary[f"{name}_vary"] = par.vary
             stage_summaries.append(summary)
 
+            # Update tqdm display
+            iterator.set_description(f"Stage {stage_num}/{len(stage_names)}")
+            iterator.set_postfix({"stage": stage_name, "reduced χ²": f"{fit_result.redchi:.4g}"})
+
             # Update for next stage
             params = fit_result.params
-            
+
             if verbose:
                 print(f"  {stage_name} completed. χ²/dof = {fit_result.redchi:.4f}")
+
 
         if not stage_results:
             raise RuntimeError("No successful fitting stages completed")
@@ -584,8 +671,8 @@ class TransmissionModel(lmfit.Model):
         if self.background is not None:
             fit_result.background = self.background
 
-        if return_all_results:
-            return fit_result, self.stages_summary
+        fit_result.stages_summary = self.stages_summary
+        fit_result.show_available_params = self.show_available_params
         return fit_result
 
 
