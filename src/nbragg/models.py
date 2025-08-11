@@ -677,90 +677,118 @@ class TransmissionModel(lmfit.Model):
         fit_result.show_available_params = self.show_available_params
         return fit_result
 
-
-    def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None):
-        """
-        Create a summary table showing parameter progression through refinement stages.
-        
-        Parameters
-        ----------
-        stage_results : list
-            List of fit results from each stage
-        resolved_param_groups : list
-            The resolved parameter groups used for fitting stages
-        stage_names : list, optional
-            Custom names for each stage. If None, uses "Stage_1", "Stage_2", etc.
-            
-        Returns
-        -------
-        pandas.DataFrame
-            Multi-index DataFrame with parameters as rows and stages as columns.
-            Each stage has columns for 'value', 'stderr', 'vary', and the table includes redchi.
-        """
+    def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None, color=True):
         import pandas as pd
         import numpy as np
-        
-        # Get all parameter names from the final stage
+
+        # --- Build the DataFrame ---
         all_param_names = list(stage_results[-1].params.keys())
-        
-        # Create data structure for the table
         stage_data = {}
-        
-        # Use custom stage names if provided
         if stage_names is None:
             stage_names = [f"Stage_{i+1}" for i in range(len(stage_results))]
-        
+
         for stage_idx, stage_result in enumerate(stage_results):
             stage_col = stage_names[stage_idx] if stage_idx < len(stage_names) else f"Stage_{stage_idx + 1}"
-            
-            # Initialize stage data
-            stage_data[stage_col] = {
-                'value': {},
-                'stderr': {},
-                'vary': {}
-            }
-            
-            # Get the parameters that were varied in this stage
+            stage_data[stage_col] = {'value': {}, 'stderr': {}, 'vary': {}}
             varied_in_stage = set(resolved_param_groups[stage_idx])
-            
-            # Fill in parameter data
+
             for param_name in all_param_names:
                 if param_name in stage_result.params:
                     param = stage_result.params[param_name]
                     stage_data[stage_col]['value'][param_name] = param.value
                     stage_data[stage_col]['stderr'][param_name] = param.stderr if param.stderr is not None else np.nan
-                    # Set vary based on whether this parameter was varied in THIS stage
                     stage_data[stage_col]['vary'][param_name] = param_name in varied_in_stage
                 else:
-                    # Parameter not in this stage
                     stage_data[stage_col]['value'][param_name] = np.nan
                     stage_data[stage_col]['stderr'][param_name] = np.nan
                     stage_data[stage_col]['vary'][param_name] = False
-            
-            # Add redchi for this stage
+
             redchi = stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan
             stage_data[stage_col]['value']['redchi'] = redchi
-            stage_data[stage_col]['stderr']['redchi'] = np.nan  # redchi doesn't have stderr
-            stage_data[stage_col]['vary']['redchi'] = np.nan    # redchi doesn't have vary flag
-        
-        # Convert to DataFrame with multi-index columns
+            stage_data[stage_col]['stderr']['redchi'] = np.nan
+            stage_data[stage_col]['vary']['redchi'] = np.nan
+
+        # Create DataFrame
         data_for_df = {}
-        
         for stage_col in stage_data:
             for metric in ['value', 'stderr', 'vary']:
                 data_for_df[(stage_col, metric)] = stage_data[stage_col][metric]
-        
-        # Create the DataFrame
+
         df = pd.DataFrame(data_for_df)
-        
-        # Set multi-index for columns
         df.columns = pd.MultiIndex.from_tuples(df.columns, names=['Stage', 'Metric'])
-        
-        # Add redchi as the last row
         all_param_names_with_redchi = all_param_names + ['redchi']
         df = df.reindex(all_param_names_with_redchi)
-        
-        return df
+
+        # --- Add initial values column ---
+        initial_values = {}
+        for param_name in all_param_names:
+            initial_values[param_name] = self.params[param_name].value if param_name in self.params else np.nan
+        initial_values['redchi'] = np.nan
+
+        initial_df = pd.DataFrame({('Initial', 'value'): initial_values})
+        df = pd.concat([initial_df, df], axis=1)
+
+        if not color:
+            return df
+
+        styler = df.style
+
+        # 1) Highlight vary=True cells (light blue)
+        vary_cols = [col for col in df.columns if col[1] == 'vary']
+        def highlight_vary(s):
+            return ['background-color: lightblue' if v is True else '' for v in s]
+        for col in vary_cols:
+            styler = styler.apply(highlight_vary, subset=[col], axis=0)
+
+        # 2) Highlight redchi row's value cells (moccasin)
+        def highlight_redchi_row(row):
+            if row.name == 'redchi':
+                return ['background-color: moccasin' if col[1] == 'value' else '' for col in df.columns]
+            return ['' for _ in df.columns]
+        styler = styler.apply(highlight_redchi_row, axis=1)
+
+        # 3) Highlight value cells by fractional change with red hues (ignore <1%)
+        value_cols = [col for col in df.columns if col[1] == 'value']
+
+        # Calculate % absolute change between consecutive columns (Initial → Stage1 → Stage2 ...)
+        changes = pd.DataFrame(index=df.index, columns=value_cols, dtype=float)
+        prev_col = None
+        for col in value_cols:
+            if prev_col is None:
+                # No previous for initial column, so zero changes here
+                changes[col] = 0.0
+            else:
+                prev_vals = df[prev_col].astype(float)
+                curr_vals = df[col].astype(float)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    pct_change = np.abs((curr_vals - prev_vals) / prev_vals) * 100
+                pct_change = pct_change.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+                changes[col] = pct_change
+            prev_col = col
+
+        max_change = changes.max().max()
+        # Normalize by max change, to get values in [0,1]
+        norm_changes = changes / max_change if max_change > 0 else changes
+
+        def red_color(val):
+            # Ignore changes less than 1%
+            if pd.isna(val) or val < 1:
+                return ''
+            # val in [0,1], map to red intensity
+            # 0 -> white (255,255,255)
+            # 1 -> dark red (255,100,100)
+            r = 255
+            g = int(255 - 155 * val)
+            b = int(255 - 155 * val)
+            return f'background-color: rgb({r},{g},{b})'
+
+        for col in value_cols:
+            styler = styler.apply(lambda s: [red_color(v) for v in norm_changes[col]], subset=[col], axis=0)
+
+        return styler
+
+
+
 
 
     def show_available_params(self, show_groups=True, show_params=True):
