@@ -18,21 +18,20 @@ import fnmatch
 import re
 from numpy import log
 
-
 class TransmissionModel(lmfit.Model):
     def __init__(self, cross_section, 
-                        params: "lmfit.Parameters" = None,
-                        response: str = "jorgensen",
-                        background: str = "polynomial3",
-                        tof_length: float = 9,
-                        vary_weights: bool = None, 
-                        vary_background: bool = None, 
-                        vary_tof: bool = None,
-                        vary_response: bool = None,
-                        vary_orientation: bool = None,
-                        vary_lattice: bool = None,
-                        vary_extinction: bool = None,
-                        **kwargs):
+                 params: "lmfit.Parameters" = None,
+                 response: str = "jorgensen",
+                 background: str = "polynomial3",
+                 tof_length: float = 9,
+                 vary_weights: bool = None, 
+                 vary_background: bool = None, 
+                 vary_tof: bool = None,
+                 vary_response: bool = None,
+                 vary_orientation: bool = None,
+                 vary_lattice: bool = None,
+                 vary_extinction: bool = None,
+                 **kwargs):
         """
         Initialize the TransmissionModel, a subclass of lmfit.Model.
 
@@ -57,9 +56,9 @@ class TransmissionModel(lmfit.Model):
         vary_orientation : bool, optional
             If True, allows the orientation parameters (θ,ϕ,η) to vary during fitting.
         vary_lattice: bool, optional
-            It True, allows the lattice parameters of the material to be varied 
+            If True, allows the lattice parameters of the material to be varied 
         vary_extinction: bool, optional
-            It True, allows the extinction parameters of the material to be varied (requires the CrysExtn plugin to be installed)
+            If True, allows the extinction parameters of the material to be varied (requires the CrysExtn plugin to be installed)
         kwargs : dict, optional
             Additional keyword arguments for model and background parameters.
 
@@ -72,14 +71,14 @@ class TransmissionModel(lmfit.Model):
 
         # make a new instance of the cross section
         self.cross_section = CrossSection(cross_section,
-                                          name=cross_section.name,
-                                          total_weight=cross_section.total_weight)
+                                         name=cross_section.name,
+                                         total_weight=cross_section.total_weight)
         # update atomic density
         self.cross_section.atomic_density = cross_section.atomic_density                                          
         self._materials = self.cross_section.materials
         self.tof_length = tof_length
 
-        if params!=None:
+        if params != None:
             self.params = params.copy()
         else:
             self.params = lmfit.Parameters()
@@ -90,26 +89,24 @@ class TransmissionModel(lmfit.Model):
         if vary_weights is not None:
             self.params += self._make_weight_params(vary=vary_weights)
         if vary_tof is not None:
-            self.params += self._make_tof_params(vary=vary_tof,**kwargs)
+            self.params += self._make_tof_params(vary=vary_tof, **kwargs)
         if vary_lattice is not None:
             self.params += self._make_lattice_params(vary=vary_lattice)
         if vary_extinction is not None:
             self.params += self._make_extinction_params(vary=vary_extinction)
 
-
         self.response = None
         if vary_response is not None:
-            self.response = Response(kind=response,vary=vary_response)
+            self.response = Response(kind=response, vary=vary_response)
             if list(self.response.params.keys())[0] in self.params:
                 for param_name in self.params.keys():
                     self.params[param_name].vary = vary_response 
             else:
                 self.params += self.response.params
 
-
         self.background = None
         if vary_background is not None:
-            self.background = Background(kind=background,vary=vary_background)
+            self.background = Background(kind=background, vary=vary_background)
             if "b0" in self.params:
                 for param_name in self.background.params.keys():
                     self.params[param_name].vary = vary_background 
@@ -120,12 +117,8 @@ class TransmissionModel(lmfit.Model):
         if vary_orientation is not None:
             self.params += self._make_orientation_params(vary=vary_orientation)
 
-
         # set the total atomic weight n [atoms/barn-cm]
         self.atomic_density = self.cross_section.atomic_density
-
-
-        
 
     def transmission(self, wl: np.ndarray, thickness: float = 1, norm: float = 1., **kwargs):
         """
@@ -156,17 +149,16 @@ class TransmissionModel(lmfit.Model):
         
         where `sigma` is the cross-section, `bg` is the background function, and `n` is the total atomic weight.
         """
-        verbose = kwargs.get("verbose",None)
+        verbose = kwargs.get("verbose", None)
         if verbose:
             print(kwargs)
         E = NC.wl2ekin(wl)
-        E = self._tof_correction(E,**kwargs)
+        E = self._tof_correction(E, **kwargs)
         wl = NC.ekin2wl(E)
 
         if self.background != None:
-            k = kwargs.get("k",1.) # sample dependent background factor (k*B)
-            bg = self.background.function(wl,**kwargs)
-            
+            k = kwargs.get("k", 1.) # sample dependent background factor (k*B)
+            bg = self.background.function(wl, **kwargs)
         else:
             k = 1.
             bg = 0.
@@ -174,30 +166,26 @@ class TransmissionModel(lmfit.Model):
         n = self.atomic_density
 
         # Transmission function
-
-        xs = self.cross_section(wl,**kwargs)
+        xs = self.cross_section(wl, **kwargs)
 
         if self.response != None:
             response = self.response.function(**kwargs)
-            xs = convolve1d(xs,response,0)
+            xs = convolve1d(xs, response, 0)
 
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + k*bg
         return T
 
     def fit(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
-            method: str = "least-squares",
             xtol: float = None, ftol: float = None, gtol: float = None,
-            verbose: bool = False,
-            progress_bar: bool = True,
-            param_groups: Optional[List[List[str]]] = None,
+            verbose: bool = False, progress_bar: bool = True,
+            stages: Optional[List[List[str]]] = None,
             **kwargs):
         """
         Fit the model to data.
 
-        This method supports multiple fitting approaches:
-        - **Standard single-stage fitting** (default)
-        - **True Rietveld-style refinement** (`method="rietveld"`) - parameters accumulate across stages
-        - **Staged sequential refinement** (`method="staged"`) - parameters are frozen after each stage
+        This method supports both single-stage and multi-stage fitting:
+        - **Single-stage fitting**: When `stages` is None or contains a single group, performs a standard fit with all specified parameters varying.
+        - **Multi-stage fitting**: When `stages` contains multiple groups, performs a Rietveld-style refinement where parameters accumulate across stages.
 
         Parameters
         ----------
@@ -209,27 +197,23 @@ class TransmissionModel(lmfit.Model):
             Parameters to use for fitting. If None, uses the model's default parameters.
         wlmin, wlmax : float, optional
             Minimum and maximum wavelength for fitting (ignored for array-like input and overridden per stage if
-            `param_groups` specify `"wlmin=..."` or `"wlmax=..."` strings).
-        method : str, optional
-            Fitting method:
-            - `"least-squares"` (default) or any method supported by `lmfit` - single-stage fitting
-            - `"rietveld"` - true Rietveld refinement where parameters accumulate across stages
-            - `"staged"` - sequential staged refinement where parameters are frozen after each stage
+            `stages` specify `"wlmin=..."` or `"wlmax=..."` strings).
         xtol, ftol, gtol : float, optional
             Convergence tolerances (passed to `lmfit`).
         verbose : bool, optional
             If True, prints detailed fitting information.
         progress_bar : bool, optional
             If True, shows a progress bar for fitting:
-            - For `"rietveld"` and `"staged"`: shows stage name, wavelength range, and reduced chi² per stage.
-            - For regular fits: shows overall fit progress.
-        param_groups : list, dict, or None, optional
-            Used only for `"rietveld"` and `"staged"`. Groups of parameters to fit in each stage.
+            - For multi-stage fits: shows stage name, wavelength range, and reduced chi² per stage.
+            - For single-stage fits: shows overall fit progress.
+        stages : list, dict, or None, optional
+            Groups of parameters to fit in each stage. If None or a single group, performs a single-stage fit.
+            If multiple groups, performs a multi-stage fit with accumulative parameters.
             Groups may also contain `"wlmin=..."` and/or `"wlmax=..."` strings to override the wavelength
             fitting range for that specific stage. For example:
 
             ```python
-            param_groups = {
+            stages = {
                 "Basic": ["basic"],
                 "Background": ["background", "wlmin=3", "wlmax=8"],
                 "Extinction": ["extinction"]
@@ -246,54 +230,38 @@ class TransmissionModel(lmfit.Model):
             The fit result object, with extra methods:
             - `.plot()` — plot the fit result.
             - `.plot_total_xs()`, `.plot_stage_progression()`, `.plot_chi2_progression()` for advanced diagnostics.
-            - `.stages_summary` (for `"rietveld"` and `"staged"`).
+            - `.stages_summary` (for multi-stage fits).
 
         Examples
         --------
-        **Basic fit:**
+        **Single-stage fit:**
         ```python
         result = model.fit(data_df, wlmin=1.0, wlmax=5.0)
         result.plot()
         ```
 
-        **True Rietveld-style refinement (parameters accumulate):**
+        **Multi-stage refinement (parameters accumulate):**
         ```python
-        param_groups = {
+        stages = {
             "Scale": ["norm", "thickness"],
             "Background": ["b0", "b1", "wlmin=3", "wlmax=8"],
             "Extinction": ["ext_l", "ext_Gg"]
         }
         result = model.fit(
-            data_df, method="rietveld",
-            param_groups=param_groups,
-            progress_bar=True
-        )
-        print(result.stages_summary)
-        ```
-
-        **Staged sequential refinement (parameters frozen after each stage):**
-        ```python
-        param_groups = {
-            "Scale": ["norm", "thickness"],
-            "Background": ["b0", "b1"],
-            "Extinction": ["ext_l", "ext_Gg"]
-        }
-        result = model.fit(
-            data_df, method="staged",
-            param_groups=param_groups,
+            data_df,
+            stages=stages,
             progress_bar=True
         )
         print(result.stages_summary)
         ```
         """
-        # Route to multi-stage fitting if requested
-        if method in ["rietveld", "staged"]:
+        # Route to multi-stage fitting if multiple stages are provided
+        if stages and (isinstance(stages, (list, dict)) and len(stages) > 1):
             return self._multistage_fit(
                 data, params, wlmin, wlmax,
-                method=method,
                 verbose=verbose,
                 progress_bar=progress_bar,
-                param_groups=param_groups,
+                stages=stages,
                 **kwargs
             )
 
@@ -325,10 +293,9 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
-                method=method,
+                method="leastsq",
                 **kwargs
             )
-
         elif isinstance(data, Data):
             data = data.table.query(f"{wlmin} < wavelength < {wlmax}")
             weights = kwargs.get("weights", 1. / data["err"].values)
@@ -337,15 +304,14 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
-                method=method,
+                method="leastsq",
                 **kwargs
             )
-
         else:
             fit_result = super().fit(
                 data,
                 params=params or self.params,
-                method=method,
+                method="leastsq",
                 **kwargs
             )
 
@@ -368,17 +334,12 @@ class TransmissionModel(lmfit.Model):
 
         return fit_result
 
-
     def _multistage_fit(self, data, params: "lmfit.Parameters" = None, wlmin: float = 1, wlmax: float = 8,
-                    method: str = "rietveld",
-                    verbose=False, progress_bar=True,
-                    param_groups=None,
-                    **kwargs):
+                        verbose=False, progress_bar=True,
+                        stages=None,
+                        **kwargs):
         """ 
-        Perform multi-stage fitting with two different strategies:
-        
-        - "rietveld": True Rietveld refinement where parameters accumulate across stages
-        - "staged": Sequential staged refinement where parameters are frozen after each stage
+        Perform multi-stage fitting with accumulative Rietveld-style refinement.
         
         Parameters
         ----------
@@ -390,13 +351,11 @@ class TransmissionModel(lmfit.Model):
             Default minimum wavelength for fitting.
         wlmax : float, optional default=8
             Default maximum wavelength for fitting.
-        method : str, optional
-            Fitting method: "rietveld" (accumulative) or "staged" (sequential).
         verbose : bool, optional
             If True, prints detailed information about each fitting stage.
         progress_bar : bool, optional
             If True, shows a progress bar for each fitting stage.
-        param_groups : list, dict, or None, optional
+        stages : list, dict, or None, optional
             Groups of parameters to fit in each stage. Can contain "wlmin=.." or "wlmax=.." strings
             to override wavelength bounds for that stage.
         kwargs : dict, optional
@@ -410,7 +369,6 @@ class TransmissionModel(lmfit.Model):
         fit_result.stages_summary : pandas.DataFrame
             Summary of each fitting stage, including parameter values and reduced chi-squared.
         """
-
         from copy import deepcopy
         import sys
         import warnings
@@ -422,9 +380,6 @@ class TransmissionModel(lmfit.Model):
         except ImportError:
             from tqdm.auto import tqdm
         import pickle
-
-        if method not in ["rietveld", "staged"]:
-            raise ValueError(f"Invalid multi-stage method: {method}. Use 'rietveld' or 'staged'.")
 
         # User-friendly group name mapping
         group_map = {
@@ -498,12 +453,12 @@ class TransmissionModel(lmfit.Model):
             process_item(entry)
             return params_list, overrides
 
-        # Handle different input formats for param_groups and parse overrides
+        # Handle different input formats for stages and parse overrides
         stage_names = []
-        resolved_param_groups = []
+        resolved_stages = []
         stage_overrides = []
 
-        if param_groups is None:
+        if stages is None:
             # Default groups
             default_groups = [
                 "basic", "background", "tof", "response",
@@ -512,53 +467,52 @@ class TransmissionModel(lmfit.Model):
             for group in default_groups:
                 params_list, overrides = resolve_group(group)
                 if params_list:
-                    resolved_param_groups.append(params_list)
+                    resolved_stages.append(params_list)
                     stage_overrides.append(overrides)
                     stage_names.append(f"Stage_{len(stage_names) + 1}")
                 elif verbose:
                     print(f"Skipping empty default group: {group}")
 
-        elif isinstance(param_groups, dict):
-            stage_names = list(param_groups.keys())
+        elif isinstance(stages, dict):
+            stage_names = list(stages.keys())
             for stage in stage_names:
-                params_list, overrides = resolve_group(param_groups[stage])
+                params_list, overrides = resolve_group(stages[stage])
                 if params_list:
-                    resolved_param_groups.append(params_list)
+                    resolved_stages.append(params_list)
                     stage_overrides.append(overrides)
                 else:
                     if verbose:
-                        print(f"Skipping empty group: {stage}")
+                        print(f"Skipping empty stage: {stage}")
 
-        elif isinstance(param_groups, list):
-            for i, group in enumerate(param_groups):
+        elif isinstance(stages, list):
+            for i, group in enumerate(stages):
                 params_list, overrides = resolve_group(group)
                 if params_list:
-                    resolved_param_groups.append(params_list)
+                    resolved_stages.append(params_list)
                     stage_overrides.append(overrides)
                     stage_names.append(f"Stage_{i + 1}")
                 else:
                     if verbose:
-                        print(f"Skipping empty group at index {i}")
+                        print(f"Skipping empty stage at index {i}")
 
         else:
-            raise ValueError("param_groups must be None, a list, or a dictionary")
+            raise ValueError("stages must be None, a list, or a dictionary")
 
         # Remove any empty groups that slipped through
-        filtered = [(n, g, o) for n, g, o in zip(stage_names, resolved_param_groups, stage_overrides) if g]
+        filtered = [(n, g, o) for n, g, o in zip(stage_names, resolved_stages, stage_overrides) if g]
         if not filtered:
             raise ValueError("No valid parameter groups found. Check your parameter names.")
-        stage_names, resolved_param_groups, stage_overrides = zip(*filtered)
+        stage_names, resolved_stages, stage_overrides = zip(*filtered)
 
         if verbose:
-            refinement_type = "True Rietveld (accumulative)" if method == "rietveld" else "Staged sequential"
-            print(f"\n{refinement_type} fitting stages with possible wavelength overrides:")
-            for i, (name, group, ov) in enumerate(zip(stage_names, resolved_param_groups, stage_overrides)):
+            print(f"\nRietveld-style fitting stages with possible wavelength overrides:")
+            for i, (name, group, ov) in enumerate(zip(stage_names, resolved_stages, stage_overrides)):
                 print(f"  {name}: {group}  overrides: {ov}")
 
         # Store for summary or introspection
-        self._stage_param_groups = resolved_param_groups
+        self._stage_param_groups = resolved_stages
         self._stage_names = stage_names
-        self._fitting_method = method
+        self._fitting_method = "rietveld"
 
         params = deepcopy(params or self.params)
 
@@ -567,29 +521,29 @@ class TransmissionModel(lmfit.Model):
             from tqdm.notebook import tqdm as notebook_tqdm
             if 'ipykernel' in sys.modules:
                 iterator = notebook_tqdm(
-                    zip(stage_names, resolved_param_groups, stage_overrides),
-                    desc=f"{'Rietveld' if method == 'rietveld' else 'Staged'} Fit",
+                    zip(stage_names, resolved_stages, stage_overrides),
+                    desc="Rietveld Fit",
                     disable=not progress_bar,
                     total=len(stage_names)
                 )
             else:
                 iterator = tqdm(
-                    zip(stage_names, resolved_param_groups, stage_overrides),
-                    desc=f"{'Rietveld' if method == 'rietveld' else 'Staged'} Fit",
+                    zip(stage_names, resolved_stages, stage_overrides),
+                    desc="Rietveld Fit",
                     disable=not progress_bar,
                     total=len(stage_names)
                 )
         except ImportError:
             iterator = tqdm(
-                zip(stage_names, resolved_param_groups, stage_overrides),
-                desc=f"{'Rietveld' if method == 'rietveld' else 'Staged'} Fit",
+                zip(stage_names, resolved_stages, stage_overrides),
+                desc="Rietveld Fit",
                 disable=not progress_bar,
                 total=len(stage_names)
             )
 
         stage_results = []
         stage_summaries = []
-        cumulative_params = set()  # Track parameters that have been refined (for rietveld method)
+        cumulative_params = set()  # Track parameters that have been refined
 
         def extract_pickleable_attributes(fit_result):
             safe_attrs = [
@@ -640,50 +594,30 @@ class TransmissionModel(lmfit.Model):
             else:
                 raise ValueError("Multi-stage fitting requires wavelength-based input data.")
 
-            # Set parameter vary status based on method
-            if method == "rietveld":
-                # True Rietveld: accumulate parameters across stages
-                # Add new parameters to the cumulative set
-                cumulative_params.update(group)
-                
-                # Freeze all parameters first
-                for p in params.values():
-                    p.vary = False
-                
-                # Unfreeze all parameters that have been introduced so far
-                unfrozen_count = 0
-                for name in cumulative_params:
-                    if name in params:
-                        params[name].vary = True
-                        unfrozen_count += 1
-                        if verbose and name in group:
-                            print(f"  New parameter: {name}")
-                        elif verbose:
-                            print(f"  Continuing: {name}")
-                    else:
-                        if name in group:  # Only warn for new parameters
-                            warnings.warn(f"Parameter '{name}' not found in params")
-                
-                if verbose:
-                    print(f"  Total active parameters: {unfrozen_count}")
-                    
-            elif method == "staged":
-                # Staged: only current group parameters vary (original behavior)
-                # Freeze all parameters
-                for p in params.values():
-                    p.vary = False
-
-                # Unfreeze current group
-                unfrozen_count = 0
-                for name in group:
-                    if name in params:
-                        params[name].vary = True
-                        unfrozen_count += 1
-                        if verbose:
-                            print(f"  Unfrozen: {name}")
-                    else:
+            # Accumulative refinement: parameters from all previous stages plus current stage vary
+            cumulative_params.update(group)
+            
+            # Freeze all parameters first
+            for p in params.values():
+                p.vary = False
+            
+            # Unfreeze all parameters that have been introduced so far
+            unfrozen_count = 0
+            for name in cumulative_params:
+                if name in params:
+                    params[name].vary = True
+                    unfrozen_count += 1
+                    if verbose and name in group:
+                        print(f"  New parameter: {name}")
+                    elif verbose:
+                        print(f"  Continuing: {name}")
+                else:
+                    if name in group:  # Only warn for new parameters
                         warnings.warn(f"Parameter '{name}' not found in params")
-
+            
+            if verbose:
+                print(f"  Total active parameters: {unfrozen_count}")
+                    
             if unfrozen_count == 0:
                 warnings.warn(f"No parameters were unfrozen in {stage_name}. Skipping this stage.")
                 continue
@@ -707,32 +641,24 @@ class TransmissionModel(lmfit.Model):
 
             stage_results.append(stripped_result)
 
-            # Build summary - track which parameters varied in this stage
-            if method == "rietveld":
-                # For Rietveld, all cumulative parameters are marked as varying
-                varied_params = list(cumulative_params)
-            else:
-                # For staged, only current group parameters varied
-                varied_params = group
-                
+            # Build summary
             summary = {
                 "stage": stage_num,
                 "stage_name": stage_name,
-                "fitted_params": group,  # New parameters introduced this stage
-                "active_params": varied_params,  # All parameters that varied this stage
+                "fitted_params": group,
+                "active_params": list(cumulative_params),
                 "wlmin": stage_wlmin,
                 "wlmax": stage_wlmax,
                 "redchi": fit_result.redchi,
-                "method": method
+                "method": "rietveld"
             }
             for name, par in fit_result.params.items():
                 summary[f"{name}_value"] = par.value
                 summary[f"{name}_stderr"] = par.stderr
-                summary[f"{name}_vary"] = name in varied_params  # Mark as varied if it was active
+                summary[f"{name}_vary"] = name in cumulative_params
             stage_summaries.append(summary)
 
-            method_display = "Rietveld" if method == "rietveld" else "Staged"
-            iterator.set_description(f"{method_display} {stage_num}/{len(stage_names)}")
+            iterator.set_description(f"Rietveld {stage_num}/{len(stage_names)}")
             iterator.set_postfix({"stage": stage_name, "reduced χ²": f"{fit_result.redchi:.4g}"})
 
             # Update params for next stage
@@ -747,7 +673,7 @@ class TransmissionModel(lmfit.Model):
         self.fit_result = fit_result
         self.fit_stages = stage_results
         self.stages_summary = self._create_stages_summary_table_enhanced(
-            stage_results, resolved_param_groups, stage_names, method=method
+            stage_results, resolved_stages, stage_names, method="rietveld"
         )
 
         # Attach plotting methods and other attributes
@@ -765,9 +691,8 @@ class TransmissionModel(lmfit.Model):
         fit_result.show_available_params = self.show_available_params
         return fit_result
 
-
-    def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None, 
-                                            method="rietveld", color=True):
+    def _create_stages_summary_table_enhanced(self, stage_results, resolved_stages, stage_names=None, 
+                                             method="rietveld", color=True):
         import pandas as pd
         import numpy as np
 
@@ -777,20 +702,15 @@ class TransmissionModel(lmfit.Model):
         if stage_names is None:
             stage_names = [f"Stage_{i+1}" for i in range(len(stage_results))]
 
-        cumulative_params = set()  # Track cumulative parameters for Rietveld method
+        cumulative_params = set()  # Track cumulative parameters
 
         for stage_idx, stage_result in enumerate(stage_results):
             stage_col = stage_names[stage_idx] if stage_idx < len(stage_names) else f"Stage_{stage_idx + 1}"
             stage_data[stage_col] = {'value': {}, 'stderr': {}, 'vary': {}}
             
-            # Determine which parameters varied in this stage
-            if method == "rietveld":
-                # For Rietveld: accumulate parameters
-                cumulative_params.update(resolved_param_groups[stage_idx])
-                varied_in_stage = cumulative_params.copy()
-            else:
-                # For staged: only current group
-                varied_in_stage = set(resolved_param_groups[stage_idx])
+            # Accumulative parameters
+            cumulative_params.update(resolved_stages[stage_idx])
+            varied_in_stage = cumulative_params.copy()
 
             for param_name in all_param_names:
                 if param_name in stage_result.params:
@@ -833,20 +753,12 @@ class TransmissionModel(lmfit.Model):
 
         styler = df.style
 
-        # 1) Highlight vary=True cells with different colors for different methods
+        # 1) Highlight vary=True cells with light green for Rietveld
         vary_cols = [col for col in df.columns if col[1] == 'vary']
-        if method == "rietveld":
-            # Light green for Rietveld (accumulative)
-            def highlight_vary_rietveld(s):
-                return ['background-color: lightgreen' if v is True else '' for v in s]
-            for col in vary_cols:
-                styler = styler.apply(highlight_vary_rietveld, subset=[col], axis=0)
-        else:
-            # Light blue for staged (sequential)
-            def highlight_vary_staged(s):
-                return ['background-color: lightblue' if v is True else '' for v in s]
-            for col in vary_cols:
-                styler = styler.apply(highlight_vary_staged, subset=[col], axis=0)
+        def highlight_vary_rietveld(s):
+            return ['background-color: lightgreen' if v is True else '' for v in s]
+        for col in vary_cols:
+            styler = styler.apply(highlight_vary_rietveld, subset=[col], axis=0)
 
         # 2) Highlight redchi row's value cells (moccasin)
         def highlight_redchi_row(row):
@@ -858,12 +770,11 @@ class TransmissionModel(lmfit.Model):
         # 3) Highlight value cells by fractional change with red hues (ignore <1%)
         value_cols = [col for col in df.columns if col[1] == 'value']
 
-        # Calculate % absolute change between consecutive columns (Initial → Stage1 → Stage2 ...)
+        # Calculate % absolute change between consecutive columns
         changes = pd.DataFrame(index=df.index, columns=value_cols, dtype=float)
         prev_col = None
         for col in value_cols:
             if prev_col is None:
-                # No previous for initial column, so zero changes here
                 changes[col] = 0.0
             else:
                 prev_vals = df[prev_col].astype(float)
@@ -875,16 +786,11 @@ class TransmissionModel(lmfit.Model):
             prev_col = col
 
         max_change = changes.max().max()
-        # Normalize by max change, to get values in [0,1]
         norm_changes = changes / max_change if max_change > 0 else changes
 
         def red_color(val):
-            # Ignore changes less than 1%
             if pd.isna(val) or val < 1:
                 return ''
-            # val in [0,1], map to red intensity
-            # 0 -> white (255,255,255)
-            # 1 -> dark red (255,100,100)
             r = 255
             g = int(255 - 155 * val)
             b = int(255 - 155 * val)
@@ -895,13 +801,9 @@ class TransmissionModel(lmfit.Model):
 
         return styler
 
-
-
-
-
     def show_available_params(self, show_groups=True, show_params=True):
         """
-        Display available parameter groups and individual parameters for Rietveld fitting.
+        Display available parameter groups and individual parameters for fitting.
         
         Parameters
         ----------
@@ -927,7 +829,7 @@ class TransmissionModel(lmfit.Model):
             }
             
             for group_name, params in group_map.items():
-                if params:  # Only show groups with available parameters
+                if params:
                     print(f"  '{group_name}': {params}")
             
         if show_params:
@@ -944,18 +846,16 @@ class TransmissionModel(lmfit.Model):
                 
         print("\nExample usage:")
         print("=" * 15)
-        print("# Using predefined groups:")
-        print('param_groups = ["basic", "background", "extinction"]')
-        print("\n# Using individual parameters:")
-        print('param_groups = [["norm", "thickness"], ["b0", "ext_l2"]]')
-        print("\n# Using named stages:")
-        print('param_groups = {"scale": ["norm"], "sample": ["thickness", "extinction"]}')
+        print("# Single-stage fit (all parameters vary):")
+        print('stages = ["basic", "background", "extinction"]')
+        print("\n# Multi-stage fit (accumulative refinement):")
+        print('stages = {"scale": ["norm"], "sample": ["thickness", "extinction"], "lattice": ["lattice"]}')
         print("\n# Mixed approach:")
-        print('param_groups = ["basic", ["b0", "ext_l2"], "lattice"]')
+        print('stages = ["basic", ["b0", "ext_l2"], "lattice"]')
 
     def plot(self, data=None, plot_bg: bool = True,    
-            plot_dspace: bool = False, dspace_min: float = 1,    
-            dspace_label_pos: float = 0.99, stage: int = None, **kwargs):    
+             plot_dspace: bool = False, dspace_min: float = 1,    
+             dspace_label_pos: float = 0.99, stage: int = None, **kwargs):    
         """    
         Plot the results of the fit or model.    
             
@@ -973,8 +873,8 @@ class TransmissionModel(lmfit.Model):
         dspace_label_pos: float, optional    
             The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure    
         stage: int, optional    
-            If provided, plot results from a specific Rietveld fitting stage (1-indexed).    
-            Only works if Rietveld fitting has been performed.    
+            If provided, plot results from a specific fitting stage (1-indexed).    
+            Only works if multi-stage fitting has been performed.    
         kwargs : dict, optional    
             Additional plot settings like color, marker size, etc.    
                 
@@ -1003,7 +903,7 @@ class TransmissionModel(lmfit.Model):
             # Get stage results
             stage_result = self.fit_stages[stage - 1]  # Convert to 0-indexed
             
-            # We need to reconstruct the fit data from the original fit
+            # Reconstruct fit data from original fit
             if hasattr(self, "fit_result") and self.fit_result is not None:
                 wavelength = self.fit_result.userkws["wl"]    
                 data_values = self.fit_result.data    
@@ -1062,7 +962,7 @@ class TransmissionModel(lmfit.Model):
             
         # Plot data and best-fit/model    
         ax[0].errorbar(wavelength, data_values, err, marker="o", color=color, ms=ms,     
-                    zorder=-1, ecolor=ecolor, label="Data")    
+                       zorder=-1, ecolor=ecolor, label="Data")    
         ax[0].plot(wavelength, best_fit, color="0.2", label=fit_label)    
         ax[0].set_ylabel("Transmission")    
         ax[0].set_title(title)    
@@ -1081,7 +981,7 @@ class TransmissionModel(lmfit.Model):
             
         # Set legend with chi2 value    
         ax[0].legend(legend_labels, fontsize=9, reverse=True,     
-                    title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")    
+                     title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")    
             
         # Plot d-spacing lines if requested    
         if plot_dspace:    
@@ -1098,12 +998,12 @@ class TransmissionModel(lmfit.Model):
                         ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")    
                         if len(self.cross_section.phases) > 1:    
                             ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}",     
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans,     
-                                    rotation=90, va="top", ha="right")    
+                                      color="0.2", zorder=-1, fontsize=8, transform=trans,     
+                                      rotation=90, va="top", ha="right")    
                         else:    
                             ax[0].text(dspace*2, dspace_label_pos, f"{hkl}",     
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans,     
-                                    rotation=90, va="top", ha="right")    
+                                      color="0.2", zorder=-1, fontsize=8, transform=trans,     
+                                      rotation=90, va="top", ha="right")    
             
         plt.subplots_adjust(hspace=0.05)    
         return ax    
@@ -1162,11 +1062,11 @@ class TransmissionModel(lmfit.Model):
         return E * (L0 / self.tof_length) + t0
 
     def plot_total_xs(self, plot_bg: bool = True,     
-                    plot_dspace: bool = False,     
-                    dspace_min: float = 1,     
-                    dspace_label_pos: float = 0.99,     
-                    stage: int = None,
-                    **kwargs):    
+                      plot_dspace: bool = False,     
+                      dspace_min: float = 1,     
+                      dspace_label_pos: float = 0.99,     
+                      stage: int = None,
+                      **kwargs):    
         """    
         Plot the results of the total cross-section fit.    
 
@@ -1181,8 +1081,8 @@ class TransmissionModel(lmfit.Model):
         dspace_label_pos: float, optional    
             The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure    
         stage: int, optional    
-            If provided, plot results from a specific Rietveld fitting stage (1-indexed).    
-            Only works if Rietveld fitting has been performed.    
+            If provided, plot results from a specific fitting stage (1-indexed).    
+            Only works if multi-stage fitting has been performed.    
         kwargs : dict, optional    
             Additional plot settings like color, marker size, etc.    
                 
@@ -1374,7 +1274,7 @@ class TransmissionModel(lmfit.Model):
             Each stage has columns for 'value', 'stderr', 'vary', and 'redchi'.
         """
         if not hasattr(self, "stages_summary"):
-            raise ValueError("No stages summary available. Run fit with method='rietveld' first.")
+            raise ValueError("No stages summary available. Run fit with multiple stages first.")
         
         return self.stages_summary
 
