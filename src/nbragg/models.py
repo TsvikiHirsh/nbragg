@@ -176,7 +176,7 @@ class TransmissionModel(lmfit.Model):
         return T
 
     def fit(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
-            xtol: float = None, ftol: float = None, gtol: float = None,
+            method: str = "leastsq", xtol: float = None, ftol: float = None, gtol: float = None,
             verbose: bool = False, progress_bar: bool = True,
             stages: Optional[List[List[str]]] = None,
             **kwargs):
@@ -198,6 +198,10 @@ class TransmissionModel(lmfit.Model):
         wlmin, wlmax : float, optional
             Minimum and maximum wavelength for fitting (ignored for array-like input and overridden per stage if
             `stages` specify `"wlmin=..."` or `"wlmax=..."` strings).
+        method : str, optional
+            Minimization method for fitting (e.g., "leastsq", "nelder", "least-squares"), by default "leastsq".
+            Passed to `lmfit.Modelമ
+
         xtol, ftol, gtol : float, optional
             Convergence tolerances (passed to `lmfit`).
         verbose : bool, optional
@@ -234,9 +238,9 @@ class TransmissionModel(lmfit.Model):
 
         Examples
         --------
-        **Single-stage fit:**
+        **Single-stage fit with custom minimization method:**
         ```python
-        result = model.fit(data_df, wlmin=1.0, wlmax=5.0)
+        result = model.fit(data_df, wlmin=1.0, wlmax=5.0, method="nelder")
         result.plot()
         ```
 
@@ -250,6 +254,7 @@ class TransmissionModel(lmfit.Model):
         result = model.fit(
             data_df,
             stages=stages,
+            method="leastsq",
             progress_bar=True
         )
         print(result.stages_summary)
@@ -259,6 +264,7 @@ class TransmissionModel(lmfit.Model):
         if stages and (isinstance(stages, (list, dict)) and len(stages) > 1):
             return self._multistage_fit(
                 data, params, wlmin, wlmax,
+                method=method,
                 verbose=verbose,
                 progress_bar=progress_bar,
                 stages=stages,
@@ -293,7 +299,7 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
-                method="leastsq",
+                method=method,
                 **kwargs
             )
         elif isinstance(data, Data):
@@ -304,14 +310,14 @@ class TransmissionModel(lmfit.Model):
                 params=params or self.params,
                 weights=weights,
                 wl=data["wavelength"].values,
-                method="leastsq",
+                method=method,
                 **kwargs
             )
         else:
             fit_result = super().fit(
                 data,
                 params=params or self.params,
-                method="leastsq",
+                method=method,
                 **kwargs
             )
 
@@ -335,7 +341,7 @@ class TransmissionModel(lmfit.Model):
         return fit_result
 
     def _multistage_fit(self, data, params: "lmfit.Parameters" = None, wlmin: float = 1, wlmax: float = 8,
-                        verbose=False, progress_bar=True,
+                        method: str = "leastsq", verbose=False, progress_bar=True,
                         stages=None,
                         **kwargs):
         """ 
@@ -351,6 +357,8 @@ class TransmissionModel(lmfit.Model):
             Default minimum wavelength for fitting.
         wlmax : float, optional default=8
             Default maximum wavelength for fitting.
+        method : str, optional
+            Minimization method for fitting (e.g., "leastsq", "nelder", "least-squares"), by default "leastsq".
         verbose : bool, optional
             If True, prints detailed information about each fitting stage.
         progress_bar : bool, optional
@@ -629,7 +637,7 @@ class TransmissionModel(lmfit.Model):
                     params=params,
                     wl=wavelengths,
                     weights=weights,
-                    method="leastsq",
+                    method=method,
                     **kwargs
                 )
             except Exception as e:
@@ -650,7 +658,7 @@ class TransmissionModel(lmfit.Model):
                 "wlmin": stage_wlmin,
                 "wlmax": stage_wlmax,
                 "redchi": fit_result.redchi,
-                "method": "rietveld"
+                "method": method
             }
             for name, par in fit_result.params.items():
                 summary[f"{name}_value"] = par.value
@@ -673,7 +681,7 @@ class TransmissionModel(lmfit.Model):
         self.fit_result = fit_result
         self.fit_stages = stage_results
         self.stages_summary = self._create_stages_summary_table_enhanced(
-            stage_results, resolved_stages, stage_names, method="rietveld"
+            stage_results, resolved_stages, stage_names, method=method
         )
 
         # Attach plotting methods and other attributes
@@ -1277,7 +1285,6 @@ class TransmissionModel(lmfit.Model):
             raise ValueError("No stages summary available. Run fit with multiple stages first.")
         
         return self.stages_summary
-
 
     def interactive_plot(self, data=None, plot_bg=True, plot_dspace=False, 
                         dspace_min=1.0, dspace_label_pos=0.99, **kwargs):
