@@ -368,8 +368,22 @@ class TransmissionModel(lmfit.Model):
         ----------
         value : str or dict
             If str, must be "all" to use all vary=True parameters.
-            If dict, keys are stage names, values are stage definitions ("all" or list of parameters/groups).
+            If dict, keys are stage names, values are stage definitions ("all", a valid group name, or a list of parameters/groups).
         """
+        # Define valid group names from group_map
+        group_map = {
+            "basic": ["norm", "thickness"],
+            "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
+            "tof": [p for p in ["L0", "t0"] if p in self.params],
+            "response": [p for p in self.params if self.response and p in self.response.params],
+            "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
+            "lattice": [p for p in self.params if p in ["a", "b", "c"] or p.startswith("a_") or p.startswith("b_") or p.startswith("c_")],
+            "extinction": [p for p in self.params if p.startswith("ext_")],
+            "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
+            "mosaicity": [p for p in self.params if p.startswith("η")],
+            "temperature": [p for p in ["temp"] if p in self.params],
+        }
+        
         if isinstance(value, str):
             if value != "all":
                 raise ValueError("If stages is a string, it must be 'all'")
@@ -379,12 +393,15 @@ class TransmissionModel(lmfit.Model):
             for stage_name, stage_def in value.items():
                 if not isinstance(stage_name, str):
                     raise ValueError(f"Stage names must be strings, got {type(stage_name)}")
-                if not (isinstance(stage_def, str) and stage_def == "all") and not isinstance(stage_def, list):
-                    raise ValueError(f"Stage definition for '{stage_name}' must be 'all' or a list, got {type(stage_def)}")
-                if isinstance(stage_def, list):
+                if isinstance(stage_def, str):
+                    if stage_def != "all" and stage_def not in group_map:
+                        raise ValueError(f"Stage definition for '{stage_name}' must be 'all' or a valid group name, got '{stage_def}'")
+                elif isinstance(stage_def, list):
                     for param in stage_def:
                         if not isinstance(param, str):
                             raise ValueError(f"Parameters in stage '{stage_name}' must be strings, got {type(param)}")
+                else:
+                    raise ValueError(f"Stage definition for '{stage_name}' must be 'all', a valid group name, or a list, got {type(stage_def)}")
             self._stages = value
         else:
             raise ValueError(f"Stages must be a string ('all') or dict, got {type(value)}")
