@@ -4,6 +4,8 @@ name: Upload Python Package
 on:
   release:
     types: [published]
+  push:
+    branches: [main]  # Remove this after testing
 
 permissions:
   contents: read
