@@ -5,8 +5,8 @@
 </p>
 
 [![Documentation Status](https://readthedocs.org/projects/nbragg/badge/?version=latest)](https://nbragg.readthedocs.io/en/latest/?badge=latest)
-<!-- [![PyPI version][pypi-version]][pypi-link]
-[![PyPI platforms][pypi-platforms]][pypi-link] -->
+[![PyPI version][pypi-version]][pypi-link]
+
 
 nbragg is a package designed for fitting neutron Bragg edge data using NCrystal cross-sections. This tool provides a straightforward way to analyze neutron transmission through polycrystalline materials, leveraging Bragg edges to extract information on material structure and composition.
 
