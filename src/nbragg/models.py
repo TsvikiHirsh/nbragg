@@ -9,7 +9,7 @@ import NCrystal as NC
 import pandas
 import matplotlib.pyplot as plt
 from copy import deepcopy 
-from typing import List, Optional
+from typing import List, Optional, Union, Dict
 import warnings
 import ipywidgets as widgets
 from IPython.display import display
@@ -21,18 +21,18 @@ from numpy import log
 
 class TransmissionModel(lmfit.Model):
     def __init__(self, cross_section, 
-                        params: "lmfit.Parameters" = None,
-                        response: str = "jorgensen",
-                        background: str = "polynomial3",
-                        tof_length: float = 9,
-                        vary_weights: bool = None, 
-                        vary_background: bool = None, 
-                        vary_tof: bool = None,
-                        vary_response: bool = None,
-                        vary_orientation: bool = None,
-                        vary_lattice: bool = None,
-                        vary_extinction: bool = None,
-                        **kwargs):
+                params: "lmfit.Parameters" = None,
+                response: str = "jorgensen",
+                background: str = "polynomial3",
+                tof_length: float = 9,
+                vary_weights: bool = None, 
+                vary_background: bool = None, 
+                vary_tof: bool = None,
+                vary_response: bool = None,
+                vary_orientation: bool = None,
+                vary_lattice: bool = None,
+                vary_extinction: bool = None,
+                **kwargs):
         """
         Initialize the TransmissionModel, a subclass of lmfit.Model.
 
@@ -57,59 +57,58 @@ class TransmissionModel(lmfit.Model):
         vary_orientation : bool, optional
             If True, allows the orientation parameters (θ,ϕ,η) to vary during fitting.
         vary_lattice: bool, optional
-            It True, allows the lattice parameters of the material to be varied 
+            If True, allows the lattice parameters of the material to be varied 
         vary_extinction: bool, optional
-            It True, allows the extinction parameters of the material to be varied (requires the CrysExtn plugin to be installed)
+            If True, allows the extinction parameters of the material to be varied (requires the CrysExtn plugin to be installed)
         kwargs : dict, optional
             Additional keyword arguments for model and background parameters.
 
         Notes
         -----
         This model calculates the transmission function as a combination of 
-        cross-section, response function, and background.
+        cross-section, response function, and background. The fitting stages are automatically
+        populated based on the vary_* parameters.
         """
         super().__init__(self.transmission, **kwargs)
 
         # make a new instance of the cross section
         self.cross_section = CrossSection(cross_section,
-                                          name=cross_section.name,
-                                          total_weight=cross_section.total_weight)
+                                        name=cross_section.name,
+                                        total_weight=cross_section.total_weight)
         # update atomic density
         self.cross_section.atomic_density = cross_section.atomic_density                                          
         self._materials = self.cross_section.materials
         self.tof_length = tof_length
 
-        if params!=None:
+        if params is not None:
             self.params = params.copy()
         else:
             self.params = lmfit.Parameters()
         if "thickness" not in self.params and "norm" not in self.params:
             self.params += self._make_basic_params()
         if "temp" not in self.params:
-            self.params += self._make_temperature_params() # add temperature params to fit
+            self.params += self._make_temperature_params()
         if vary_weights is not None:
             self.params += self._make_weight_params(vary=vary_weights)
         if vary_tof is not None:
-            self.params += self._make_tof_params(vary=vary_tof,**kwargs)
+            self.params += self._make_tof_params(vary=vary_tof, **kwargs)
         if vary_lattice is not None:
             self.params += self._make_lattice_params(vary=vary_lattice)
         if vary_extinction is not None:
             self.params += self._make_extinction_params(vary=vary_extinction)
 
-
         self.response = None
         if vary_response is not None:
-            self.response = Response(kind=response,vary=vary_response)
+            self.response = Response(kind=response, vary=vary_response)
             if list(self.response.params.keys())[0] in self.params:
                 for param_name in self.params.keys():
                     self.params[param_name].vary = vary_response 
             else:
                 self.params += self.response.params
 
-
         self.background = None
         if vary_background is not None:
-            self.background = Background(kind=background,vary=vary_background)
+            self.background = Background(kind=background, vary=vary_background)
             if "b0" in self.params:
                 for param_name in self.background.params.keys():
                     self.params[param_name].vary = vary_background 
@@ -120,12 +119,28 @@ class TransmissionModel(lmfit.Model):
         if vary_orientation is not None:
             self.params += self._make_orientation_params(vary=vary_orientation)
 
-
         # set the total atomic weight n [atoms/barn-cm]
         self.atomic_density = self.cross_section.atomic_density
 
+        # Initialize stages based on vary_* parameters
+        self._stages = {}
+        possible_stages = [
+            "basic", "background", "tof", "lattice",
+            "weights", "response", "extinction"
+        ]
+        vary_flags = {
+            "basic": True,  # Always include basic parameters
+            "background": vary_background,
+            "tof": vary_tof,
+            "lattice": vary_lattice,
+            "weights": vary_weights,
+            "response": vary_response,
+            "extinction": vary_extinction
+        }
+        for stage in possible_stages:
+            if vary_flags[stage] is True:
+                self._stages[stage] = stage
 
-        
 
     def transmission(self, wl: np.ndarray, thickness: float = 1, norm: float = 1., **kwargs):
         """
@@ -183,109 +198,80 @@ class TransmissionModel(lmfit.Model):
 
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + k*bg
         return T
-
+    
     def fit(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
-            method: str = "least-squares",
+            method: str = "rietveld",
             xtol: float = None, ftol: float = None, gtol: float = None,
             verbose: bool = False,
             progress_bar: bool = True,
-            param_groups: Optional[List[List[str]]] = None,
+            stages: Optional[Union[str, Dict[str, Union[str, List[str]]]]] = None,
             **kwargs):
         """
         Fit the model to data.
 
         This method supports multiple fitting approaches:
-        - **Standard single-stage fitting** (default)
-        - **True Rietveld-style refinement** (`method="rietveld"`) - parameters accumulate across stages
+        - **Standard single-stage fitting** (`method="least-squares"`)
+        - **True Rietveld-style refinement** (`method="rietveld"`, default) - parameters accumulate across stages
         - **Staged sequential refinement** (`method="staged"`) - parameters are frozen after each stage
 
         Parameters
         ----------
         data : pandas.DataFrame or Data or array-like
-            The input data.  
-            - For `pandas.DataFrame` or `Data`: must have columns `"wavelength"`, `"trans"`, and `"err"`.
-            - For array-like: will be passed directly to `lmfit.Model.fit`.
+            The input data.
         params : lmfit.Parameters, optional
             Parameters to use for fitting. If None, uses the model's default parameters.
         wlmin, wlmax : float, optional
-            Minimum and maximum wavelength for fitting (ignored for array-like input and overridden per stage if
-            `param_groups` specify `"wlmin=..."` or `"wlmax=..."` strings).
+            Minimum and maximum wavelength for fitting.
         method : str, optional
-            Fitting method:
-            - `"least-squares"` (default) or any method supported by `lmfit` - single-stage fitting
-            - `"rietveld"` - true Rietveld refinement where parameters accumulate across stages
-            - `"staged"` - sequential staged refinement where parameters are frozen after each stage
+            Fitting method: "least-squares", "rietveld", or "staged" (default is "rietveld").
         xtol, ftol, gtol : float, optional
             Convergence tolerances (passed to `lmfit`).
         verbose : bool, optional
             If True, prints detailed fitting information.
         progress_bar : bool, optional
-            If True, shows a progress bar for fitting:
-            - For `"rietveld"` and `"staged"`: shows stage name, wavelength range, and reduced chi² per stage.
-            - For regular fits: shows overall fit progress.
-        param_groups : list, dict, or None, optional
-            Used only for `"rietveld"` and `"staged"`. Groups of parameters to fit in each stage.
-            Groups may also contain `"wlmin=..."` and/or `"wlmax=..."` strings to override the wavelength
-            fitting range for that specific stage. For example:
-
-            ```python
-            param_groups = {
-                "Basic": ["basic"],
-                "Background": ["background", "wlmin=3", "wlmax=8"],
-                "Extinction": ["extinction"]
-            }
-            ```
-
-            These per-stage overrides temporarily replace the global `wlmin`/`wlmax` only during the stage.
+            If True, shows a progress bar for fitting.
+        stages : str or dict, optional
+            Fitting stages. Can be "all" or a dictionary of stage definitions.
+            If None, uses self.stages.
         **kwargs
             Additional keyword arguments passed to `lmfit.Model.fit`.
 
         Returns
         -------
         lmfit.model.ModelResult
-            The fit result object, with extra methods:
-            - `.plot()` — plot the fit result.
-            - `.plot_total_xs()`, `.plot_stage_progression()`, `.plot_chi2_progression()` for advanced diagnostics.
-            - `.stages_summary` (for `"rietveld"` and `"staged"`).
+            The fit result object.
 
         Examples
         --------
-        **Basic fit:**
-        ```python
-        result = model.fit(data_df, wlmin=1.0, wlmax=5.0)
-        result.plot()
-        ```
+        >>> import nbragg
+        >>> # Create a sample cross-section, data and model
+        >>> xs = nbragg.CrossSection(...)  # Assume a valid CrossSection
+        >>> data = nbragg.Data(...)  # Assume valid Data
+        >>> model = nbragg.TransmissionModel(xs, vary_background=True, vary_weights=True)
 
-        **True Rietveld-style refinement (parameters accumulate):**
-        ```python
-        param_groups = {
-            "Scale": ["norm", "thickness"],
-            "Background": ["b0", "b1", "wlmin=3", "wlmax=8"],
-            "Extinction": ["ext_l", "ext_Gg"]
-        }
-        result = model.fit(
-            data_df, method="rietveld",
-            param_groups=param_groups,
-            progress_bar=True
-        )
-        print(result.stages_summary)
-        ```
-
-        **Staged sequential refinement (parameters frozen after each stage):**
-        ```python
-        param_groups = {
-            "Scale": ["norm", "thickness"],
-            "Background": ["b0", "b1"],
-            "Extinction": ["ext_l", "ext_Gg"]
-        }
-        result = model.fit(
-            data_df, method="staged",
-            param_groups=param_groups,
-            progress_bar=True
-        )
-        print(result.stages_summary)
-        ```
+        # Default Rietveld fitting with automatic stages
+        >>> result = model.fit(data)
+        
+        # Single-stage fitting with all vary=True parameters
+        >>> result = model.fit(data, stages="all")
+        
+        # Custom stages for Rietveld fitting
+        >>> stages = {"background": "background", "scale": ["norm", "thickness"]}
+        >>> result = model.fit(data, stages=stages)
+        
+        # Set custom stages on the model and fit
+        >>> model.stages = {"stage1": ["b0", "b1"], "stage2": "all"}
+        >>> result = model.fit(data)
         """
+        # Handle stages argument
+        if stages is not None:
+            if isinstance(stages, str) and stages == "all":
+                stages = {"all": "all"}
+            elif not isinstance(stages, dict):
+                raise ValueError("Stages must be 'all' or a dictionary")
+        else:
+            stages = self.stages
+
         # Route to multi-stage fitting if requested
         if method in ["rietveld", "staged"]:
             return self._multistage_fit(
@@ -293,7 +279,7 @@ class TransmissionModel(lmfit.Model):
                 method=method,
                 verbose=verbose,
                 progress_bar=progress_bar,
-                param_groups=param_groups,
+                stages=stages,
                 **kwargs
             )
 
@@ -367,13 +353,120 @@ class TransmissionModel(lmfit.Model):
             fit_result.background = self.background
 
         return fit_result
+    
+    @property
+    def stages(self) -> Dict[str, Union[str, List[str]]]:
+        """Get the current fitting stages."""
+        return self._stages
 
+    @stages.setter
+    def stages(self, value: Union[str, Dict[str, Union[str, List[str]]]]):
+        """
+        Set the fitting stages.
+
+        Parameters
+        ----------
+        value : str or dict
+            If str, must be "all" to use all vary=True parameters.
+            If dict, keys are stage names, values are stage definitions ("all" or list of parameters/groups).
+        """
+        if isinstance(value, str):
+            if value != "all":
+                raise ValueError("If stages is a string, it must be 'all'")
+            self._stages = {"all": "all"}
+        elif isinstance(value, dict):
+            # Validate stage definitions
+            for stage_name, stage_def in value.items():
+                if not isinstance(stage_name, str):
+                    raise ValueError(f"Stage names must be strings, got {type(stage_name)}")
+                if not (isinstance(stage_def, str) and stage_def == "all") and not isinstance(stage_def, list):
+                    raise ValueError(f"Stage definition for '{stage_name}' must be 'all' or a list, got {type(stage_def)}")
+                if isinstance(stage_def, list):
+                    for param in stage_def:
+                        if not isinstance(param, str):
+                            raise ValueError(f"Parameters in stage '{stage_name}' must be strings, got {type(param)}")
+            self._stages = value
+        else:
+            raise ValueError(f"Stages must be a string ('all') or dict, got {type(value)}")
+
+    def _repr_html_(self):
+        """HTML representation for Jupyter, including parameters and stages tables."""
+        from IPython.display import HTML
+        import pandas as pd
+
+        # Parameters table
+        param_data = []
+        for name, param in self.params.items():
+            param_data.append({
+                'Parameter': name,
+                'Value': f"{param.value:.6g}",
+                'Vary': param.vary,
+                'Min': f"{param.min:.6g}" if param.min is not None else '-inf',
+                'Max': f"{param.max:.6g}" if param.max is not None else 'inf',
+                'Expr': param.expr if param.expr else ''
+            })
+        param_df = pd.DataFrame(param_data)
+        param_html = param_df.to_html(index=False, classes='table table-striped', border=0)
+
+        # Stages table
+        stage_data = []
+        for stage_name, stage_def in self.stages.items():
+            if stage_def == "all":
+                params = [p for p in self.params if self.params[p].vary]
+            else:
+                params = self._get_stage_parameters(stage_def)
+            stage_data.append({
+                'Stage': stage_name,
+                'Parameters': ', '.join(params)
+            })
+        stage_df = pd.DataFrame(stage_data)
+        stage_html = stage_df.to_html(index=False, classes='table table-striped', border=0)
+
+        html = f"""
+        <div>
+            <h4>TransmissionModel: {self.cross_section.name}</h4>
+            <h5>Parameters</h5>
+            {param_html}
+            <h5>Fitting Stages</h5>
+            {stage_html}
+        </div>
+        """
+        return html
+
+    def _get_stage_parameters(self, stage_def: Union[str, List[str]]) -> List[str]:
+        """Helper method to get parameters associated with a stage definition."""
+        group_map = {
+            "basic": ["norm", "thickness"],
+            "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
+            "tof": [p for p in ["L0", "t0"] if p in self.params],
+            "response": [p for p in self.params if self.response and p in self.response.params],
+            "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
+            "lattice": [p for p in self.params if p in ["a", "b", "c"] or p.startswith("a_") or p.startswith("b_") or p.startswith("c_")],
+            "extinction": [p for p in self.params if p.startswith("ext_")],
+            "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
+            "mosaicity": [p for p in self.params if p.startswith("η")],
+            "temperature": [p for p in ["temp"] if p in self.params],
+        }
+        if stage_def == "all":
+            return [p for p in self.params if self.params[p].vary]
+        if isinstance(stage_def, str):
+            return group_map.get(stage_def, [stage_def] if stage_def in self.params else [])
+        params = []
+        for item in stage_def:
+            if item in group_map:
+                params.extend(group_map[item])
+            elif item in self.params:
+                params.append(item)
+            else:
+                matching_params = [p for p in self.params.keys() if fnmatch.fnmatch(p, item)]
+                params.extend(matching_params)
+        return list(dict.fromkeys(params))  # Remove duplicates while preserving order
 
     def _multistage_fit(self, data, params: "lmfit.Parameters" = None, wlmin: float = 1, wlmax: float = 8,
-                    method: str = "rietveld",
-                    verbose=False, progress_bar=True,
-                    param_groups=None,
-                    **kwargs):
+                        method: str = "staged",
+                        verbose=False, progress_bar=True,
+                        stages=None,
+                        **kwargs):
         """ 
         Perform multi-stage fitting with two different strategies:
         
@@ -391,26 +484,21 @@ class TransmissionModel(lmfit.Model):
         wlmax : float, optional default=8
             Default maximum wavelength for fitting.
         method : str, optional
-            Fitting method: "rietveld" (accumulative) or "staged" (sequential).
+            Fitting method: "rietveld" or "staged".
         verbose : bool, optional
             If True, prints detailed information about each fitting stage.
         progress_bar : bool, optional
             If True, shows a progress bar for each fitting stage.
-        param_groups : list, dict, or None, optional
-            Groups of parameters to fit in each stage. Can contain "wlmin=.." or "wlmax=.." strings
-            to override wavelength bounds for that stage.
+        stages : dict, optional
+            Dictionary of stage definitions. If None, uses self.stages.
         kwargs : dict, optional
-            Additional keyword arguments for the fit method, such as weights, method, etc.
+            Additional keyword arguments for the fit method.
 
         Returns
         -------
         fit_result : lmfit.ModelResult
             The final fit result after all stages.
-
-        fit_result.stages_summary : pandas.DataFrame
-            Summary of each fitting stage, including parameter values and reduced chi-squared.
         """
-
         from copy import deepcopy
         import sys
         import warnings
@@ -433,7 +521,7 @@ class TransmissionModel(lmfit.Model):
             "tof": [p for p in ["L0", "t0"] if p in self.params],
             "response": [p for p in self.params if self.response and p in self.response.params],
             "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
-            "lattice": [p for p in self.params if p in ["a", "b", "c"]],
+            "lattice": [p for p in self.params if p in ["a", "b", "c"] or p.startswith("a_") or p.startswith("b_") or p.startswith("c_")],
             "extinction": [p for p in self.params if p.startswith("ext_")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
             "mosaicity": [p for p in self.params if p.startswith("η")],
@@ -442,7 +530,9 @@ class TransmissionModel(lmfit.Model):
 
         def resolve_single_param_or_group(item):
             """Resolve a single parameter name or group name to a list of parameters."""
-            if item in group_map:
+            if item == "all":
+                return [p for p in self.params if self.params[p].vary]
+            elif item in group_map:
                 resolved = group_map[item]
                 if verbose:
                     print(f"  Resolved group '{item}' to: {resolved}")
@@ -463,9 +553,7 @@ class TransmissionModel(lmfit.Model):
 
         def resolve_group(entry):
             """
-            Resolve a group entry (string, list, or nested structure) to:
-            - A flat list of parameters
-            - A dict of overrides like {'wlmin': float, 'wlmax': float}
+            Resolve a group entry to a flat list of parameters and overrides.
             """
             params_list = []
             overrides = {}
@@ -498,65 +586,38 @@ class TransmissionModel(lmfit.Model):
             process_item(entry)
             return params_list, overrides
 
-        # Handle different input formats for param_groups and parse overrides
+        # Handle stages input
         stage_names = []
-        resolved_param_groups = []
+        resolved_stages = []
         stage_overrides = []
 
-        if param_groups is None:
-            # Default groups
-            default_groups = [
-                "basic", "background", "tof", "response",
-                "weights", "lattice", "extinction", "orientation", "mosaicity", "temperature",
-            ]
-            for group in default_groups:
-                params_list, overrides = resolve_group(group)
-                if params_list:
-                    resolved_param_groups.append(params_list)
-                    stage_overrides.append(overrides)
-                    stage_names.append(f"Stage_{len(stage_names) + 1}")
-                elif verbose:
-                    print(f"Skipping empty default group: {group}")
-
-        elif isinstance(param_groups, dict):
-            stage_names = list(param_groups.keys())
+        if isinstance(stages, dict):
+            stage_names = list(stages.keys())
             for stage in stage_names:
-                params_list, overrides = resolve_group(param_groups[stage])
-                if params_list:
-                    resolved_param_groups.append(params_list)
+                params_list, overrides = resolve_group(stages[stage])
+                if params_list or stages[stage] == "all":
+                    resolved_stages.append(params_list)
                     stage_overrides.append(overrides)
                 else:
                     if verbose:
-                        print(f"Skipping empty group: {stage}")
-
-        elif isinstance(param_groups, list):
-            for i, group in enumerate(param_groups):
-                params_list, overrides = resolve_group(group)
-                if params_list:
-                    resolved_param_groups.append(params_list)
-                    stage_overrides.append(overrides)
-                    stage_names.append(f"Stage_{i + 1}")
-                else:
-                    if verbose:
-                        print(f"Skipping empty group at index {i}")
-
+                        print(f"Skipping empty stage: {stage}")
         else:
-            raise ValueError("param_groups must be None, a list, or a dictionary")
+            raise ValueError("Stages must be a dictionary")
 
-        # Remove any empty groups that slipped through
-        filtered = [(n, g, o) for n, g, o in zip(stage_names, resolved_param_groups, stage_overrides) if g]
+        # Remove any empty stages
+        filtered = [(n, g, o) for n, g, o in zip(stage_names, resolved_stages, stage_overrides) if g or stages[n] == "all"]
         if not filtered:
-            raise ValueError("No valid parameter groups found. Check your parameter names.")
-        stage_names, resolved_param_groups, stage_overrides = zip(*filtered)
+            raise ValueError("No valid stages found. Check your stage definitions.")
+        stage_names, resolved_stages, stage_overrides = zip(*filtered)
 
         if verbose:
             refinement_type = "True Rietveld (accumulative)" if method == "rietveld" else "Staged sequential"
             print(f"\n{refinement_type} fitting stages with possible wavelength overrides:")
-            for i, (name, group, ov) in enumerate(zip(stage_names, resolved_param_groups, stage_overrides)):
-                print(f"  {name}: {group}  overrides: {ov}")
+            for i, (name, group, ov) in enumerate(zip(stage_names, resolved_stages, stage_overrides)):
+                print(f"  {name}: {group if group else 'all vary=True parameters'}  overrides: {ov}")
 
         # Store for summary or introspection
-        self._stage_param_groups = resolved_param_groups
+        self._stage_param_groups = resolved_stages
         self._stage_names = stage_names
         self._fitting_method = method
 
@@ -567,21 +628,21 @@ class TransmissionModel(lmfit.Model):
             from tqdm.notebook import tqdm as notebook_tqdm
             if 'ipykernel' in sys.modules:
                 iterator = notebook_tqdm(
-                    zip(stage_names, resolved_param_groups, stage_overrides),
+                    zip(stage_names, resolved_stages, stage_overrides),
                     desc=f"{'Rietveld' if method == 'rietveld' else 'Staged'} Fit",
                     disable=not progress_bar,
                     total=len(stage_names)
                 )
             else:
                 iterator = tqdm(
-                    zip(stage_names, resolved_param_groups, stage_overrides),
+                    zip(stage_names, resolved_stages, stage_overrides),
                     desc=f"{'Rietveld' if method == 'rietveld' else 'Staged'} Fit",
                     disable=not progress_bar,
                     total=len(stage_names)
                 )
         except ImportError:
             iterator = tqdm(
-                zip(stage_names, resolved_param_groups, stage_overrides),
+                zip(stage_names, resolved_stages, stage_overrides),
                 desc=f"{'Rietveld' if method == 'rietveld' else 'Staged'} Fit",
                 disable=not progress_bar,
                 total=len(stage_names)
@@ -624,7 +685,8 @@ class TransmissionModel(lmfit.Model):
             stage_wlmax = overrides.get('wlmax', wlmax)
 
             if verbose:
-                print(f"\n{stage_name}: Fitting parameters {group} with wavelength range [{stage_wlmin}, {stage_wlmax}]")
+                group_display = group if group else "all vary=True parameters"
+                print(f"\n{stage_name}: Fitting parameters {group_display} with wavelength range [{stage_wlmin}, {stage_wlmax}]")
 
             # Filter data for this stage
             if isinstance(data, pandas.DataFrame):
@@ -643,8 +705,7 @@ class TransmissionModel(lmfit.Model):
             # Set parameter vary status based on method
             if method == "rietveld":
                 # True Rietveld: accumulate parameters across stages
-                # Add new parameters to the cumulative set
-                cumulative_params.update(group)
+                cumulative_params.update(group if group else [p for p in self.params if self.params[p].vary])
                 
                 # Freeze all parameters first
                 for p in params.values():
@@ -656,26 +717,25 @@ class TransmissionModel(lmfit.Model):
                     if name in params:
                         params[name].vary = True
                         unfrozen_count += 1
-                        if verbose and name in group:
+                        if verbose and (name in group or not group):
                             print(f"  New parameter: {name}")
                         elif verbose:
                             print(f"  Continuing: {name}")
                     else:
-                        if name in group:  # Only warn for new parameters
+                        if name in group or not group:  # Only warn for new parameters
                             warnings.warn(f"Parameter '{name}' not found in params")
                 
                 if verbose:
                     print(f"  Total active parameters: {unfrozen_count}")
                     
             elif method == "staged":
-                # Staged: only current group parameters vary (original behavior)
-                # Freeze all parameters
+                # Staged: only current group parameters vary
                 for p in params.values():
                     p.vary = False
 
-                # Unfreeze current group
                 unfrozen_count = 0
-                for name in group:
+                active_params = group if group else [p for p in self.params if self.params[p].vary]
+                for name in active_params:
                     if name in params:
                         params[name].vary = True
                         unfrozen_count += 1
@@ -707,19 +767,17 @@ class TransmissionModel(lmfit.Model):
 
             stage_results.append(stripped_result)
 
-            # Build summary - track which parameters varied in this stage
+            # Build summary
             if method == "rietveld":
-                # For Rietveld, all cumulative parameters are marked as varying
                 varied_params = list(cumulative_params)
             else:
-                # For staged, only current group parameters varied
-                varied_params = group
+                varied_params = group if group else [p for p in self.params if self.params[p].vary]
                 
             summary = {
                 "stage": stage_num,
                 "stage_name": stage_name,
-                "fitted_params": group,  # New parameters introduced this stage
-                "active_params": varied_params,  # All parameters that varied this stage
+                "fitted_params": group if group else ["all vary=True"],
+                "active_params": varied_params,
                 "wlmin": stage_wlmin,
                 "wlmax": stage_wlmax,
                 "redchi": fit_result.redchi,
@@ -728,7 +786,7 @@ class TransmissionModel(lmfit.Model):
             for name, par in fit_result.params.items():
                 summary[f"{name}_value"] = par.value
                 summary[f"{name}_stderr"] = par.stderr
-                summary[f"{name}_vary"] = name in varied_params  # Mark as varied if it was active
+                summary[f"{name}_vary"] = name in varied_params
             stage_summaries.append(summary)
 
             method_display = "Rietveld" if method == "rietveld" else "Staged"
@@ -747,7 +805,7 @@ class TransmissionModel(lmfit.Model):
         self.fit_result = fit_result
         self.fit_stages = stage_results
         self.stages_summary = self._create_stages_summary_table_enhanced(
-            stage_results, resolved_param_groups, stage_names, method=method
+            stage_results, resolved_stages, stage_names, method=method
         )
 
         # Attach plotting methods and other attributes
