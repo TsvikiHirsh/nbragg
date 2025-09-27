@@ -31,7 +31,8 @@ dependencies = [
   "numpy",
   "lmfit",
   "setuptools",
-  "ncrystal"
+  "ncrystal",
+  "tqdm"
 ]
 
 [project.optional-dependencies]
