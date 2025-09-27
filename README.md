@@ -1,8 +1,4 @@
-
-
 # nbragg
-
-
 
 <p align="center">
   <img src="docs/source/_static/nbragg_logo.png" alt="nbragg logo" width="200"/>
@@ -19,6 +15,7 @@ nbragg is a package designed for fitting neutron Bragg edge data using NCrystal 
 - **Flexible Cross-Section Calculations**: Interfaces with NCrystal to fetch cross-sections for crystalline materials.
 - **Built-In Tools for Response and Background Functions**: Includes predefined models for instrument response (e.g., Jorgensen, square) and background components (polynomial functions).
 - **LMFit Integration**: Allows flexible, nonlinear fitting of experimental data using the powerful lmfit library.
+- **Rietveld-type analysis**: Enables iterative, parametric refinement of Bragg edge data using the Rietveld method, accumulating parameters across stages for robust fitting.
 - **Pythonic API**: Simple-to-use, yet flexible enough for custom modeling.
 - **Plotting Utilities**: Provides ready-to-use plotting functions for easy visualization of results.
 - **Bragg Edge Analysis**: Perform Bragg edge fitting to extract information such as d-spacing, strain, and texture.
@@ -46,7 +43,7 @@ Here's a quick example to get started:
 ```python
 import nbragg
 data = nbragg.Data.from_transmission("iron_powder.csv")                         # read data
-xs = nbragg.CrossSection.from_material("Fe_sg229_Iron-alpha.ncmat")             # define sample
+xs = nbragg.CrossSection(iron="Fe_sg229_Iron-alpha.ncmat")                      # define sample
 model = nbragg.TransmissionModel(xs, vary_background=True, vary_response=True)  # define model
 result = model.fit(data)                                                        # perform fit
 result.plot()                                                                   # plot results
@@ -56,7 +53,7 @@ result.plot()                                                                   
 
 ## Tutorials and Documentation
 
-For more detailed examples and advanced usage, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the [Jupyter notebook tutorial](notebooks/nbragg_tutorial.ipynb).
+For more detailed examples and advanced usage, including custom stage definitions and Rietveld fitting, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the updated [Jupyter notebook tutorial](notebooks/nbragg_tutorial.ipynb).
 
 ## License
 
