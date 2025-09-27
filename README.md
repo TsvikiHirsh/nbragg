@@ -22,18 +22,10 @@ nbragg is a package designed for fitting neutron Bragg edge data using NCrystal 
 
 ## Installation
 
-To install from the source:
+To install use:
 
 ```bash
-git clone https://github.com/TsvikiHirsh/nbragg
-cd nbragg
-pip install .
-```
-
-Alternatively, you can install directly using pip:
-
-```bash
-pip install git+https://github.com/TsvikiHirsh/nbragg.git
+pip install nbragg
 ```
 
 ## Usage
