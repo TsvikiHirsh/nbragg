@@ -126,7 +126,7 @@ class TransmissionModel(lmfit.Model):
         self._stages = {}
         possible_stages = [
             "basic", "background", "tof", "lattice",
-            "weights", "response", "extinction"
+            "mosaicity", "orientation", "weights", "response", "extinction"
         ]
         vary_flags = {
             "basic": True,  # Always include basic parameters
@@ -135,7 +135,9 @@ class TransmissionModel(lmfit.Model):
             "lattice": vary_lattice,
             "weights": vary_weights,
             "response": vary_response,
-            "extinction": vary_extinction
+            "extinction": vary_extinction,
+            "mosaicity": vary_orientation,
+            "orientation": vary_orientation,
         }
         for stage in possible_stages:
             if vary_flags[stage] is True:
