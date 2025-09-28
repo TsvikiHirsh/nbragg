@@ -1,7 +1,7 @@
 # nbragg
 
 <p align="center">
-  <img src="docs/source/_static/nbragg_logo.png" alt="nbragg logo" width="200"/>
+  <img src="https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/docs/source/_static/nbragg_logo.png" alt="nbragg logo" width="200"/>
 </p>
 
 [![Documentation Status](https://readthedocs.org/projects/nbragg/badge/?version=latest)](https://nbragg.readthedocs.io/en/latest/?badge=latest)
@@ -41,11 +41,11 @@ result = model.fit(data)                                                        
 result.plot()                                                                   # plot results
 ```
 
-![Fit Results](notebooks/fit_results.png)
+![Fit Results](https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/notebooks/fit_results.png)
 
 ## Tutorials and Documentation
 
-For more detailed examples and advanced usage, including custom stage definitions and Rietveld fitting, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the updated [Jupyter notebook tutorial](notebooks/nbragg_tutorial.ipynb).
+For more detailed examples and advanced usage, including custom stage definitions and Rietveld fitting, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the updated [Jupyter notebook tutorial](https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/nbragg_tutorial.ipynb).
 
 ## License
 
