@@ -244,6 +244,23 @@ class CrossSection:
             if kwargs:
                 self._update_ncmat_parameters(material, **kwargs)
 
+    def update(self):
+        """
+        Update the CrossSection object after modifying self.materials.
+        Reprocesses material parameters, updates virtual materials, and reloads data.
+        """
+        # Update virtual materials with current parameters
+        for material in self.materials:
+            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_tilt'] if self.materials[material].get(key) is not None}
+            if kwargs:
+                self._update_ncmat_parameters(material, **kwargs)
+        
+        # Update weights and data
+        self._set_weights()
+        self._generate_cfg_string()
+        self._load_material_data()
+        self._populate_material_data()
+
     @suppress_print
     def _update_ncmat_parameters(self, material: str, **kwargs):
         """
@@ -297,6 +314,8 @@ class CrossSection:
         - User kwargs (ext_l, ext_Gg, ext_L, ext_tilt, ext_method) override file values.
         - Missing values are filled with defaults.
         - Only one @CUSTOM_CRYSEXTN section is allowed.
+        - Validates ext_method and ext_tilt against supported NCrystal values.
+        - Ensures ext_l, ext_Gg, ext_L are positive.
         """
         mat_path = self.materials[material]["mat"]
         mat_data = nc.load(mat_path)
@@ -315,21 +334,35 @@ class CrossSection:
         # Define default extinction parameters
         defaults = {
             'ext_method': 'BC_pure',
-            'ext_l': 10.0,
-            'ext_Gg': 1000.0,
+            'ext_l': 2500.0,
+            'ext_Gg': 150.0,
             'ext_L': 100000.0,
-            'ext_tilt': 'Gauss'
+            'ext_tilt': 'Gauss'  # Default to 'Gauss' for Fe_sg225_Iron-gamma.ncmat
         }
+
+        # Supported extinction methods and tilt distributions
+        supported_methods = ['Sabine_uncorr', 'Sabine_corr', 'BC_pure', 'BC_mix', 'RED_orig', 'RED']
+        supported_tilts = ['Gauss', 'Lorentz', 'Fresnel']
 
         # Parse extinction lines from NCMAT (if present)
         if extinction_lines:
             try:
                 method, l, Gg, L, tilt = extinction_lines.strip().split()
+                # Validate ext_method
+                if method not in supported_methods:
+                    method = defaults['ext_method']
+                # Validate ext_tilt
+                if tilt not in supported_tilts:
+                    tilt = defaults['ext_tilt']
+                # Ensure numeric parameters are positive
+                l = float(l) if float(l) > 0 else defaults['ext_l']
+                Gg = float(Gg) if float(Gg) > 0 else defaults['ext_Gg']
+                L = float(L) if float(L) > 0 else defaults['ext_L']
                 parsed = {
                     'ext_method': method,
-                    'ext_l': float(l),
-                    'ext_Gg': float(Gg),
-                    'ext_L': float(L),
+                    'ext_l': l,
+                    'ext_Gg': Gg,
+                    'ext_L': L,
                     'ext_tilt': tilt
                 }
                 # Initialize extinction dict with file values
@@ -357,7 +390,13 @@ class CrossSection:
             ('ext_tilt', 'tilt')
         ]:
             if key in kwargs and kwargs[key] is not None:
-                value = float(kwargs[key]) if key not in ['ext_method', 'ext_tilt'] else kwargs[key]
+                value = kwargs[key]
+                if key == 'ext_method' and value not in supported_methods:
+                    value = defaults['ext_method']  # Use default if invalid
+                elif key == 'ext_tilt' and value not in supported_tilts:
+                    value = defaults['ext_tilt']  # Use default if invalid
+                elif key not in ['ext_method', 'ext_tilt']:
+                    value = float(value) if float(value) > 0 else defaults[key]  # Ensure positive
                 self.extinction[material][target_key] = value
                 self.materials[material][key] = value
 
@@ -388,8 +427,6 @@ class CrossSection:
             )
 
         return ""
-
-
 
     def _resolve_material(self, material: str) -> str:
         """Resolve material specification to filename."""
