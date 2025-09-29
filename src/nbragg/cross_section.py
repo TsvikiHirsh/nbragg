@@ -150,7 +150,7 @@ class CrossSection:
     
     def _create_virtual_materials(self):
         """
-        Process NCMAT files by creating individual templates for each material and adding @CUSTOM_CRYSEXTN if ext_ parameters are provided.
+        Process NCMAT files by creating individual templates for each material, preserving or updating @CUSTOM_CRYSEXTN sections.
         """
         # Initialize dictionaries to store material-specific data
         self.textdata = {}
@@ -172,7 +172,7 @@ class CrossSection:
                 elif cell_start is not None and line.strip().startswith('@'):
                     cell_end = i
                     break
-
+            
             # Find @CUSTOM_CRYSEXTN section
             ext_start = None
             ext_end = None
@@ -189,41 +189,43 @@ class CrossSection:
             cell_start = len(lines) if cell_start is None else cell_start
             cell_end = len(lines) if cell_end is None else cell_end
 
-            # Determine template creation strategy based on section order
+            # Create template based on section order
             if cell_start < ext_start:
-                # @CELL section appears first
+                # @CELL section appears before @CUSTOM_CRYSEXTN or no extinction section
                 pre_cell_lines = lines[:cell_start + 1]
-                post_cell_lines = lines[cell_end:ext_start + 1]
-                post_ext_lines = lines[ext_end:] if ext_end else []
+                post_cell_lines = lines[cell_end:ext_start]
+                ext_lines = lines[ext_start:ext_end] if ext_start < len(lines) else []
+                post_ext_lines = lines[ext_end:] if ext_end < len(lines) else []
                 
                 self.datatemplate[material] = '\n'.join(
                     pre_cell_lines + 
                     ['**cell_section**'] + 
                     post_cell_lines + 
-                    ['**extinction_section**'] + 
+                    (['@CUSTOM_CRYSEXTN', '**extinction_section**'] if ext_lines else ['**extinction_section**']) + 
                     post_ext_lines
                 )
             else:
-                # @CUSTOM_CRYSEXTN section appears first or is absent
-                pre_ext_lines = lines[:ext_start + 1]
-                post_ext_lines = lines[ext_end:cell_start + 1]
-                post_cell_lines = lines[cell_end:] if cell_end else []
+                # @CUSTOM_CRYSEXTN section appears before @CELL or no cell section
+                pre_ext_lines = lines[:ext_start]
+                ext_lines = lines[ext_start:ext_end] if ext_start < len(lines) else []
+                post_ext_lines = lines[ext_end:cell_start]
+                post_cell_lines = lines[cell_end:] if cell_end < len(lines) else []
                 
                 self.datatemplate[material] = '\n'.join(
                     pre_ext_lines + 
-                    ['**extinction_section**'] + 
+                    (['@CUSTOM_CRYSEXTN', '**extinction_section**'] if ext_lines else ['**extinction_section**']) + 
                     post_ext_lines + 
                     ['**cell_section**'] + 
                     post_cell_lines
                 )
 
             # Handle extinction information
-            ext_lines = lines[ext_start + 1:ext_end] if ext_start < len(lines) and ext_start + 1 < ext_end else []
+            ext_lines_content = lines[ext_start + 1:ext_end] if ext_start < len(lines) and ext_start + 1 < ext_end and lines[ext_start + 1].strip() else []
             has_ext_params = any(self.materials[material].get(key) is not None for key in ['ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_tilt'])
             
-            if ext_lines and ext_lines[0].strip():
+            if ext_lines_content:
                 # Existing @CUSTOM_CRYSEXTN section in NCMAT
-                self._extinction_info(material, extinction_lines=ext_lines[0])
+                self._extinction_info(material, extinction_lines=ext_lines_content[0])
             elif has_ext_params:
                 # No @CUSTOM_CRYSEXTN in NCMAT, but ext_ parameters provided
                 self._extinction_info(material)
@@ -245,8 +247,8 @@ class CrossSection:
     @suppress_print
     def _update_ncmat_parameters(self, material: str, **kwargs):
         """
-        Update the virtual material with lattice and extinction parameters
-        
+        Update the virtual material with lattice and extinction parameters.
+
         Args:
             material (str): Name of the material to update
             **kwargs: Additional parameters to update (e.g., a, b, c, ext_l, ext_Gg, ext_L, ext_tilt)
@@ -257,21 +259,21 @@ class CrossSection:
 
         # Update material parameters if provided in kwargs
         for key in ['ext_l', 'ext_Gg', 'ext_L', 'ext_tilt', 'ext_method', 'a', 'b', 'c']:
-            if key in kwargs:
-                self.materials[material][key] = float(kwargs[key]) if key != 'ext_method' and key != "ext_tilt" else kwargs[key]
+            if key in kwargs and kwargs[key] is not None:
+                self.materials[material][key] = float(kwargs[key]) if key not in ['ext_method', 'ext_tilt'] else kwargs[key]
 
         # Update cell information
         updated_cells = self._cell_info(material, **kwargs)
         
         # Handle extinction information
-        updated_ext = self._extinction_info(material, **kwargs) if material in self.extinction or any(kwargs.get(key) for key in ['ext_l', 'ext_Gg', 'ext_L', 'ext_tilt', 'ext_method']) else ""
+        updated_ext = self._extinction_info(material, **kwargs) if any(kwargs.get(key) for key in ['ext_l', 'ext_Gg', 'ext_L', 'ext_tilt', 'ext_method']) or material in self.extinction else ""
         
         # Create the updated material text using the material-specific template
         updated_textdata = self.datatemplate[material].replace(
             "**cell_section**", 
             updated_cells
         ).replace(
-            "**extinction_section**", 
+            "@CUSTOM_CRYSEXTN\n**extinction_section**" if "@CUSTOM_CRYSEXTN" in self.datatemplate[material] else "**extinction_section**", 
             "@CUSTOM_CRYSEXTN\n" + updated_ext if updated_ext else ""
         )
         
@@ -291,14 +293,15 @@ class CrossSection:
         Extinction is only valid if the material has crystallographic structure info.
 
         Rules:
-        - If the NCMAT file already contains @CUSTOM_CRYSEXTN, do not add another block.
+        - If the NCMAT file already contains @CUSTOM_CRYSEXTN, update its values with user kwargs.
         - User kwargs (ext_l, ext_Gg, ext_L, ext_tilt, ext_method) override file values.
         - Missing values are filled with defaults.
+        - Only one @CUSTOM_CRYSEXTN section is allowed.
         """
         mat_path = self.materials[material]["mat"]
         mat_data = nc.load(mat_path)
 
-        # --- 0. Check if material has structure info ---
+        # Check if material has structure info
         try:
             _ = mat_data.info.structure_info
             has_structure = True
@@ -312,13 +315,13 @@ class CrossSection:
         # Define default extinction parameters
         defaults = {
             'ext_method': 'BC_pure',
-            'ext_l': 2500.0,
-            'ext_Gg': 150.0,
+            'ext_l': 10.0,
+            'ext_Gg': 1000.0,
             'ext_L': 100000.0,
             'ext_tilt': 'Gauss'
         }
 
-        # --- 1. Parse extinction lines from NCMAT (if present) ---
+        # Parse extinction lines from NCMAT (if present)
         if extinction_lines:
             try:
                 method, l, Gg, L, tilt = extinction_lines.strip().split()
@@ -342,10 +345,10 @@ class CrossSection:
                     if self.materials[material].get(k) is None:
                         self.materials[material][k] = v
             except ValueError:
-                # malformed block, ignore
+                # Malformed block, ignore
                 self.extinction[material] = {}
 
-        # --- 2. Apply kwargs (user overrides) ---
+        # Apply kwargs (user overrides)
         for key, target_key in [
             ('ext_method', 'method'),
             ('ext_l', 'l'),
@@ -353,15 +356,13 @@ class CrossSection:
             ('ext_L', 'L'),
             ('ext_tilt', 'tilt')
         ]:
-            if key in kwargs:
-                value = kwargs[key]
-                if key not in ['ext_method', 'ext_tilt'] and value is not None:
-                    value = float(value)
+            if key in kwargs and kwargs[key] is not None:
+                value = float(kwargs[key]) if key not in ['ext_method', 'ext_tilt'] else kwargs[key]
                 self.extinction[material][target_key] = value
                 self.materials[material][key] = value
 
-        # --- 3. Apply defaults if extinction is requested ---
-        if any(self.materials[material].get(k) is not None for k in defaults.keys()):
+        # Apply defaults if extinction is requested
+        if has_structure and any(self.materials[material].get(k) is not None for k in defaults.keys()):
             for k, d in defaults.items():
                 if self.materials[material].get(k) is None:
                     self.materials[material][k] = d
@@ -373,17 +374,11 @@ class CrossSection:
                 'tilt': self.materials[material]['ext_tilt']
             })
 
-        # --- 4. Decide whether to return an extinction block ---
+        # Return formatted extinction block only if the material is crystalline
         if not has_structure:
-            # Non-crystalline → extinction meaningless
-            return ""
-
-        if extinction_lines:
-            # File already had a @CUSTOM_CRYSEXTN → don’t duplicate
             return ""
 
         if self.extinction[material].get('method'):
-            # Generate new block only if file had none
             return (
                 f"  {self.extinction[material]['method']}  "
                 f"{self.extinction[material]['l']:.4f}  "
@@ -393,7 +388,6 @@ class CrossSection:
             )
 
         return ""
-
 
 
 
