@@ -309,13 +309,32 @@ class CrossSection:
         Parse and update extinction parameters, storing them directly in self.materials.
         Extinction is only valid if the material has crystallographic structure info.
 
+        @CUSTOM_CRYSEXTN formats (from CrysExtn plugin source code):
+        - Sabine_uncorr  l  G  L  rect/tri
+        - Sabine_corr    l  g  L
+        - BC_mix         l  g  L  Gauss/Lorentz/Fresnel
+        - BC_pure        l  g  L  Gauss/Lorentz/Fresnel
+        - BC_mod         l  g  L  Gauss/Lorentz/Fresnel
+        - CR             l  g  L
+        - RED_orig       l  R  T
+        - RED            l  R  T  c
+
+        Where:
+        - l: crystallite size/path length (Å)
+        - g/G: mosaicity parameter (1/rad)  
+        - L: grain size/path length (Å)
+        - rect/tri: tilt distribution (for Sabine_uncorr only)
+        - Gauss/Lorentz/Fresnel: orientation method for A(θ) and B(θ) (for BC models only)
+
+        The distribution parameter meaning depends on the model:
+        - Sabine_uncorr: rect/tri controls tilt distribution between mosaic blocks
+        - BC models: Gauss/Lorentz/Fresnel controls orientation/calculation method
+
         Rules:
-        - If the NCMAT file already contains @CUSTOM_CRYSEXTN, update its values with user kwargs.
-        - User kwargs (ext_l, ext_Gg, ext_L, ext_tilt, ext_method) override file values.
+        - User kwargs (ext_method, ext_l, ext_g, ext_L, ext_dist) override file values.
         - Missing values are filled with defaults.
-        - Only one @CUSTOM_CRYSEXTN section is allowed.
-        - Validates ext_method and ext_tilt against supported NCrystal values.
-        - Ensures ext_l, ext_Gg, ext_L are positive.
+        - Validates ext_method and ext_dist against supported values.
+        - Ensures ext_l, ext_g, ext_L are positive.
         """
         mat_path = self.materials[material]["mat"]
         mat_data = nc.load(mat_path)
@@ -334,69 +353,115 @@ class CrossSection:
         # Define default extinction parameters
         defaults = {
             'ext_method': 'BC_pure',
-            'ext_l': 2500.0,
-            'ext_Gg': 150.0,
-            'ext_L': 100000.0,
-            'ext_tilt': 'Gauss'  # Default to 'Gauss' for Fe_sg225_Iron-gamma.ncmat
+            'ext_l': 2500.0,      # crystallite size/path length (Å)
+            'ext_g': 150.0,       # mosaicity parameter (1/rad)
+            'ext_L': 100000.0,    # grain size/path length (Å)
+            'ext_dist': 'Gauss'   # distribution: rect/tri for Sabine_uncorr, Gauss/Lorentz/Fresnel for BC
         }
 
-        # Supported extinction methods and tilt distributions
-        supported_methods = ['Sabine_uncorr', 'Sabine_corr', 'BC_pure', 'BC_mix', 'RED_orig', 'RED']
-        supported_tilts = ['Gauss', 'Lorentz', 'Fresnel']
+        # Supported extinction methods
+        supported_methods = ['Sabine_uncorr', 'Sabine_corr', 'BC_mix', 'BC_pure', 'BC_mod', 'CR', 'RED_orig', 'RED']
+        # Methods that require distribution parameter
+        methods_with_dist = ['Sabine_uncorr', 'BC_mix', 'BC_pure', 'BC_mod']
+        # Valid distributions for each method type
+        sabine_distributions = ['rect', 'tri']
+        bc_distributions = ['Gauss', 'Lorentz', 'Fresnel']
 
         # Parse extinction lines from NCMAT (if present)
         if extinction_lines:
             try:
-                method, l, Gg, L, tilt = extinction_lines.strip().split()
-                # Validate ext_method
+                parts = extinction_lines.strip().split()
+                
+                if len(parts) < 4:
+                    raise ValueError(f"Expected at least 4 parameters, got {len(parts)}")
+                
+                method = parts[0]
+                
+                # Validate method
                 if method not in supported_methods:
                     method = defaults['ext_method']
-                # Validate ext_tilt
-                if tilt not in supported_tilts:
-                    tilt = defaults['ext_tilt']
-                # Ensure numeric parameters are positive
-                l = float(l) if float(l) > 0 else defaults['ext_l']
-                Gg = float(Gg) if float(Gg) > 0 else defaults['ext_Gg']
-                L = float(L) if float(L) > 0 else defaults['ext_L']
+                
+                # Parse numeric parameters (always at indices 1, 2, 3)
+                l = float(parts[1]) if float(parts[1]) > 0 else defaults['ext_l']
+                g = float(parts[2]) if float(parts[2]) > 0 else defaults['ext_g']
+                L = float(parts[3]) if float(parts[3]) > 0 else defaults['ext_L']
+                
+                # Parse distribution parameter if present (index 4)
+                dist = None
+                if method in methods_with_dist:
+                    if len(parts) >= 5:
+                        dist = parts[4]
+                        # Validate distribution based on method
+                        if method == 'Sabine_uncorr':
+                            if dist not in sabine_distributions:
+                                dist = 'rect'  # Default for Sabine_uncorr
+                        elif method in ['BC_mix', 'BC_pure', 'BC_mod']:
+                            if dist not in bc_distributions:
+                                dist = 'Gauss'  # Default for BC models
+                    else:
+                        # Method requires distribution but none provided
+                        dist = 'rect' if method == 'Sabine_uncorr' else 'Gauss'
+                
                 parsed = {
                     'ext_method': method,
                     'ext_l': l,
-                    'ext_Gg': Gg,
+                    'ext_g': g,
                     'ext_L': L,
-                    'ext_tilt': tilt
+                    'ext_dist': dist
                 }
+                
                 # Initialize extinction dict with file values
                 self.extinction[material].update({
                     'method': parsed['ext_method'],
                     'l': parsed['ext_l'],
-                    'Gg': parsed['ext_Gg'],
+                    'g': parsed['ext_g'],
                     'L': parsed['ext_L'],
-                    'tilt': parsed['ext_tilt']
+                    'dist': parsed['ext_dist']
                 })
+                
                 # Mirror into self.materials (unless user overrides)
                 for k, v in parsed.items():
                     if self.materials[material].get(k) is None:
                         self.materials[material][k] = v
-            except ValueError:
-                # Malformed block, ignore
+                        
+            except (ValueError, IndexError) as e:
+                # Malformed block, log warning and ignore
+                import warnings
+                warnings.warn(f"Could not parse extinction line for {material}: {e}")
                 self.extinction[material] = {}
 
         # Apply kwargs (user overrides)
         for key, target_key in [
             ('ext_method', 'method'),
             ('ext_l', 'l'),
-            ('ext_Gg', 'Gg'),
+            ('ext_g', 'g'),
             ('ext_L', 'L'),
-            ('ext_tilt', 'tilt')
+            ('ext_dist', 'dist')
         ]:
             if key in kwargs and kwargs[key] is not None:
                 value = kwargs[key]
-                if key == 'ext_method' and value not in supported_methods:
-                    value = defaults['ext_method']  # Use default if invalid
-                elif key == 'ext_tilt' and value not in supported_tilts:
-                    value = defaults['ext_tilt']  # Use default if invalid
-                elif key not in ['ext_method', 'ext_tilt']:
-                    value = float(value) if float(value) > 0 else defaults[key]  # Ensure positive
+                
+                if key == 'ext_method':
+                    if value not in supported_methods:
+                        value = defaults['ext_method']
+                elif key == 'ext_dist':
+                    # Validate distribution based on current method
+                    current_method = self.materials[material].get('ext_method', defaults['ext_method'])
+                    if current_method == 'Sabine_uncorr':
+                        if value not in sabine_distributions:
+                            value = 'rect'
+                    elif current_method in ['BC_mix', 'BC_pure', 'BC_mod']:
+                        if value not in bc_distributions:
+                            value = 'Gauss'
+                elif key in ['ext_l', 'ext_g', 'ext_L']:
+                    # Numeric parameters - ensure positive
+                    try:
+                        value = float(value)
+                        if value <= 0:
+                            value = defaults[key]
+                    except (ValueError, TypeError):
+                        value = defaults[key]
+                
                 self.extinction[material][target_key] = value
                 self.materials[material][key] = value
 
@@ -405,12 +470,23 @@ class CrossSection:
             for k, d in defaults.items():
                 if self.materials[material].get(k) is None:
                     self.materials[material][k] = d
+            
+            # Update extinction dict
+            method = self.materials[material]['ext_method']
+            
+            # Set appropriate default dist based on method
+            if method in methods_with_dist and self.materials[material].get('ext_dist') is None:
+                if method == 'Sabine_uncorr':
+                    self.materials[material]['ext_dist'] = 'rect'
+                else:  # BC models
+                    self.materials[material]['ext_dist'] = 'Gauss'
+            
             self.extinction[material].update({
-                'method': self.materials[material]['ext_method'],
+                'method': method,
                 'l': float(self.materials[material]['ext_l']),
-                'Gg': float(self.materials[material]['ext_Gg']),
+                'g': float(self.materials[material]['ext_g']),
                 'L': float(self.materials[material]['ext_L']),
-                'tilt': self.materials[material]['ext_tilt']
+                'dist': self.materials[material].get('ext_dist') if method in methods_with_dist else None
             })
 
         # Return formatted extinction block only if the material is crystalline
@@ -418,13 +494,19 @@ class CrossSection:
             return ""
 
         if self.extinction[material].get('method'):
-            return (
-                f"  {self.extinction[material]['method']}  "
+            method = self.extinction[material]['method']
+            line = (
+                f"  {method}  "
                 f"{self.extinction[material]['l']:.4f}  "
-                f"{self.extinction[material]['Gg']:.4f}  "
-                f"{self.extinction[material]['L']:.4f}  "
-                f"{self.extinction[material]['tilt']}"
+                f"{self.extinction[material]['g']:.4f}  "
+                f"{self.extinction[material]['L']:.4f}"
             )
+            
+            # Add distribution parameter if method requires it
+            if method in methods_with_dist and self.extinction[material].get('dist'):
+                line += f"  {self.extinction[material]['dist']}"
+            
+            return line
 
         return ""
 
