@@ -150,7 +150,7 @@ class CrossSection:
     
     def _create_virtual_materials(self):
         """
-        Process NCMAT files by creating individual templates for each material
+        Process NCMAT files by creating individual templates for each material and adding @CUSTOM_CRYSEXTN if ext_ parameters are provided.
         """
         # Initialize dictionaries to store material-specific data
         self.textdata = {}
@@ -204,7 +204,7 @@ class CrossSection:
                     post_ext_lines
                 )
             else:
-                # @CUSTOM_CRYSEXTN section appears first
+                # @CUSTOM_CRYSEXTN section appears first or is absent
                 pre_ext_lines = lines[:ext_start + 1]
                 post_ext_lines = lines[ext_end:cell_start + 1]
                 post_cell_lines = lines[cell_end:] if cell_end else []
@@ -217,13 +217,19 @@ class CrossSection:
                     post_cell_lines
                 )
 
-            # Handle extinction information if present in NCMAT or self.materials
+            # Handle extinction information
             ext_lines = lines[ext_start + 1:ext_end] if ext_start < len(lines) and ext_start + 1 < ext_end else []
+            has_ext_params = any(self.materials[material].get(key) is not None for key in ['ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_tilt'])
+            
             if ext_lines and ext_lines[0].strip():
+                # Existing @CUSTOM_CRYSEXTN section in NCMAT
                 self._extinction_info(material, extinction_lines=ext_lines[0])
-            elif any(self.materials[material].get(key) is not None for key in ['ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_tilt']):
-                # If extinction parameters are already in self.materials, use them
+            elif has_ext_params:
+                # No @CUSTOM_CRYSEXTN in NCMAT, but ext_ parameters provided
                 self._extinction_info(material)
+            else:
+                # No extinction information; apply defaults if needed later
+                self.extinction[material] = {}
 
             # Save original rawdata in nbragg file name
             nc.registerInMemoryFileData(
@@ -266,7 +272,7 @@ class CrossSection:
             updated_cells
         ).replace(
             "**extinction_section**", 
-            updated_ext
+            "@CUSTOM_CRYSEXTN\n" + updated_ext if updated_ext else ""
         )
         
         # Update the textdata for this specific material
@@ -282,91 +288,114 @@ class CrossSection:
     def _extinction_info(self, material: str, extinction_lines: str = None, **kwargs) -> str:
         """
         Parse and update extinction parameters, storing them directly in self.materials.
+        Extinction is only valid if the material has crystallographic structure info.
 
-        Args:
-            material (str): Material name
-            extinction_lines (str, optional): Text data from the extinction custom section
-            **kwargs: Parameters to update (e.g., ext_l, ext_Gg, ext_L, ext_tilt, ext_method)
-
-        Returns:
-            str: Formatted extinction information string
+        Rules:
+        - If the NCMAT file already contains @CUSTOM_CRYSEXTN, do not add another block.
+        - User kwargs (ext_l, ext_Gg, ext_L, ext_tilt, ext_method) override file values.
+        - Missing values are filled with defaults.
         """
+        mat_path = self.materials[material]["mat"]
+        mat_data = nc.load(mat_path)
+
+        # --- 0. Check if material has structure info ---
+        try:
+            _ = mat_data.info.structure_info
+            has_structure = True
+        except Exception:
+            has_structure = False
+
         # Initialize extinction dictionary if not present
         if material not in self.extinction:
             self.extinction[material] = {}
 
-        # Parse extinction lines if provided (from NCMAT file)
+        # Define default extinction parameters
+        defaults = {
+            'ext_method': 'BC_pure',
+            'ext_l': 2500.0,
+            'ext_Gg': 150.0,
+            'ext_L': 100000.0,
+            'ext_tilt': 'Gauss'
+        }
+
+        # --- 1. Parse extinction lines from NCMAT (if present) ---
         if extinction_lines:
             try:
                 method, l, Gg, L, tilt = extinction_lines.strip().split()
-                self.extinction[material].update({
-                    'method': method,
-                    'l': float(l),
-                    'Gg': float(Gg),
-                    'L': float(L),
-                    'tilt': tilt
-                })
-                # Update self.materials with NCMAT values, preserving any user-provided values
-                current_values = {
-                    'ext_method': self.materials[material].get('ext_method'),
-                    'ext_l': self.materials[material].get('ext_l'),
-                    'ext_Gg': self.materials[material].get('ext_Gg'),
-                    'ext_L': self.materials[material].get('ext_L'),
-                    'ext_tilt': self.materials[material].get('ext_tilt')
+                parsed = {
+                    'ext_method': method,
+                    'ext_l': float(l),
+                    'ext_Gg': float(Gg),
+                    'ext_L': float(L),
+                    'ext_tilt': tilt
                 }
-                self.materials[material].update({
-                    'ext_method': current_values['ext_method'] if current_values['ext_method'] is not None else method,
-                    'ext_l': current_values['ext_l'] if current_values['ext_l'] is not None else float(l),
-                    'ext_Gg': current_values['ext_Gg'] if current_values['ext_Gg'] is not None else float(Gg),
-                    'ext_L': current_values['ext_L'] if current_values['ext_L'] is not None else float(L),
-                    'ext_tilt': current_values['ext_tilt'] if current_values['ext_tilt'] is not None else tilt
+                # Initialize extinction dict with file values
+                self.extinction[material].update({
+                    'method': parsed['ext_method'],
+                    'l': parsed['ext_l'],
+                    'Gg': parsed['ext_Gg'],
+                    'L': parsed['ext_L'],
+                    'tilt': parsed['ext_tilt']
                 })
+                # Mirror into self.materials (unless user overrides)
+                for k, v in parsed.items():
+                    if self.materials[material].get(k) is None:
+                        self.materials[material][k] = v
             except ValueError:
+                # malformed block, ignore
                 self.extinction[material] = {}
-                # Set defaults in self.materials if no user-provided values exist
-                if all(self.materials[material].get(key) is None for key in ['ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_tilt']):
-                    self.materials[material].update({
-                        'ext_method': None,
-                        'ext_l': None,
-                        'ext_Gg': None,
-                        'ext_L': None,
-                        'ext_tilt': None
-                    })
 
-        # Update extinction parameters from kwargs (e.g., from user modifications)
-        for key, target_key in [('ext_method', 'method'), ('ext_l', 'l'), ('ext_Gg', 'Gg'), ('ext_L', 'L'), ('ext_tilt', 'tilt')]:
+        # --- 2. Apply kwargs (user overrides) ---
+        for key, target_key in [
+            ('ext_method', 'method'),
+            ('ext_l', 'l'),
+            ('ext_Gg', 'Gg'),
+            ('ext_L', 'L'),
+            ('ext_tilt', 'tilt')
+        ]:
             if key in kwargs:
-                value = float(kwargs[key]) if key != 'ext_method' and key != 'ext_tilt' else kwargs[key]
+                value = kwargs[key]
+                if key not in ['ext_method', 'ext_tilt'] and value is not None:
+                    value = float(value)
                 self.extinction[material][target_key] = value
                 self.materials[material][key] = value
 
-        # Use self.materials values if available, otherwise apply defaults
-        if any(self.materials[material].get(key) is not None for key in ['ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_tilt']):
+        # --- 3. Apply defaults if extinction is requested ---
+        if any(self.materials[material].get(k) is not None for k in defaults.keys()):
+            for k, d in defaults.items():
+                if self.materials[material].get(k) is None:
+                    self.materials[material][k] = d
             self.extinction[material].update({
-                'method': self.materials[material].get('ext_method', 'BC_pure'),
-                'l': float(self.materials[material].get('ext_l', 0.0)),
-                'Gg': float(self.materials[material].get('ext_Gg', 0.0)),
-                'L': float(self.materials[material].get('ext_L', 0.0)),
-                'tilt': self.materials[material].get('ext_tilt', 'Gauss')
+                'method': self.materials[material]['ext_method'],
+                'l': float(self.materials[material]['ext_l']),
+                'Gg': float(self.materials[material]['ext_Gg']),
+                'L': float(self.materials[material]['ext_L']),
+                'tilt': self.materials[material]['ext_tilt']
             })
-        else:
-            # Apply defaults if no values are provided
-            defaults = {'method': 'BC_pure', 'l': 0.0, 'Gg': 0.0, 'L': 0.0, 'tilt': 'Gauss'}
-            for key, value in defaults.items():
-                if key not in self.extinction[material]:
-                    self.extinction[material][key] = value
-                    self.materials[material][f'ext_{key}'] = value
 
-        # Format the extinction line if extinction parameters are defined
+        # --- 4. Decide whether to return an extinction block ---
+        if not has_structure:
+            # Non-crystalline → extinction meaningless
+            return ""
+
+        if extinction_lines:
+            # File already had a @CUSTOM_CRYSEXTN → don’t duplicate
+            return ""
+
         if self.extinction[material].get('method'):
-            method = self.extinction[material]['method']
-            l = self.extinction[material]['l']
-            Gg = self.extinction[material]['Gg']
-            L = self.extinction[material]['L']
-            tilt = self.extinction[material]['tilt']
-            return f"  {method}  {l:.4f}  {Gg:.4f}  {L:.4f}  {tilt}"
-        
+            # Generate new block only if file had none
+            return (
+                f"  {self.extinction[material]['method']}  "
+                f"{self.extinction[material]['l']:.4f}  "
+                f"{self.extinction[material]['Gg']:.4f}  "
+                f"{self.extinction[material]['L']:.4f}  "
+                f"{self.extinction[material]['tilt']}"
+            )
+
         return ""
+
+
+
 
     def _resolve_material(self, material: str) -> str:
         """Resolve material specification to filename."""
@@ -788,9 +817,6 @@ class CrossSection:
             'dir2': dir2
         }
 
-        
-
-
     @classmethod
     def _normalize_mtex_vector(cls, vector):
         """Normalize a vector to unit length."""
@@ -948,20 +974,28 @@ class CrossSection:
         
         # If no information available, return None
         return None
+    
+    def _cell_info(self, material, **kwargs):
+        """
+        Retrieve crystallographic cell information if available,
+        otherwise return an empty string.
+        """
+        mat_path = self.materials[material]["mat"]
 
-    def _cell_info(self, material: str, **kwargs) -> str:
-        """
-        Parse crystal cell information and format it for specific output.
-        
-        Args:
-            material (str): Material name
-            kwargs (optional): Updates to a, b, c parameters in units of Å
-        
-        Returns:
-            str: Formatted cell information string
-        """
-        # Load material data directly from NCMAT file to avoid phases_data dependency
-        mat_data = nc.load(self.materials[material]["mat"].replace("ncmat", "nbragg"))
-        cell_dict = mat_data.info.structure_info
+        # Always load original NCMAT file (not the virtual nbragg)
+        mat_data = nc.load(mat_path)
+
+        # Try to get structure info
+        try:
+            cell_dict = mat_data.info.structure_info
+        except Exception:
+            # No structure info available (e.g., amorphous or molecular material)
+            return ""
+
+        # Apply overrides from kwargs
         cell_dict.update(**kwargs)
-        return f"  lengths {cell_dict['a']:.4f}  {cell_dict['b']:.4f}  {cell_dict['c']:.4f}  \n  angles {cell_dict['alpha']:.4f}  {cell_dict['beta']:.4f}  {cell_dict['gamma']:.4f}"
+
+        return (
+            f"  lengths {cell_dict['a']:.4f}  {cell_dict['b']:.4f}  {cell_dict['c']:.4f}  \n"
+            f"  angles {cell_dict['alpha']:.4f}  {cell_dict['beta']:.4f}  {cell_dict['gamma']:.4f}"
+        )
