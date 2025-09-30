@@ -676,6 +676,7 @@ class CrossSection:
         xs = mat.scatter.xsect(wl=wl, direction=(0,0,1)) + mat.absorption.xsect(wl=wl, direction=(0,0,1))
         return np.nan_to_num(xs,0.)
 
+    @suppress_print
     def __call__(self, wl: np.ndarray, **kwargs):
         """
         Update configuration if parameters change and return cross-section.
@@ -683,12 +684,12 @@ class CrossSection:
         Args:
             wl: Wavelength array
             **kwargs: Material-specific parameters in format:
-                     η1, η2, ... for mosaic spread of materials 1, 2, ...
-                     θ1, θ2, ... for theta values of materials 1, 2, ...
-                     ϕ1, ϕ2, ... for phi values of materials 1, 2, ...
-                     temp1, temp2, ... for temperatures of materials 1, 2, ...
-                     a1, a2, ... for lattice parameter of materials 1, 2 ...
-                     ext_l1, ext_Gg1, ext_L1, ext_tilt1 ... for extinction params
+                    η1, η2, ... for mosaic spread of materials 1, 2, ...
+                    θ1, θ2, ... for theta values of materials 1, 2, ...
+                    ϕ1, ϕ2, ... for phi values of materials 1, 2, ...
+                    temp1, temp2, ... for temperatures of materials 1, 2, ...
+                    a1, a2, ... for lattice parameter of materials 1, 2 ...
+                    ext_l1, ext_Gg1, ext_L1, ext_tilt1, ext_method1 ... for extinction params
         """
         updated = False
         # Check for parameter updates
@@ -697,7 +698,7 @@ class CrossSection:
             spec = self.materials[name]
             
             # Check for material-specific parameters
-            temp_key = f"temp" # all phase temperatures are updated to the same value
+            temp_key = f"temp"  # all phase temperatures are updated to the same value
             mos_key = f"η{i}"
             theta_key = f"θ{i}"
             phi_key = f"ϕ{i}"
@@ -708,48 +709,82 @@ class CrossSection:
             ext_Gg_key = f"ext_Gg{i}"
             ext_L_key = f"ext_L{i}"
             ext_tilt_key = f"ext_tilt{i}"
+            ext_method_key = f"ext_method{i}"
             
+            # Update temperature
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
                 spec['temp'] = kwargs[temp_key]
                 updated = True
+            
+            # Update mosaic spread
             if mos_key in kwargs and kwargs[mos_key] != spec['mos']:
                 spec['mos'] = kwargs[mos_key]
                 updated = True
+            
+            # Update theta
             if theta_key in kwargs and kwargs[theta_key] != spec['theta']:
                 spec['theta'] = kwargs[theta_key]
                 updated = True
+            
+            # Update phi
             if phi_key in kwargs and kwargs[phi_key] != spec['phi']:
                 spec['phi'] = kwargs[phi_key]
                 updated = True
+            
+            # Update phase weight
             phase_name = name.replace("-", "")
             if phase_name in kwargs and kwargs[phase_name] != spec["weight"]:
                 spec['weight'] = kwargs[phase_name]
                 updated = True
+            
+            # Update lattice parameters
             if lata_key in kwargs:
                 self._update_ncmat_parameters(name,
                                             a=kwargs[lata_key],
                                             b=kwargs[latb_key],
                                             c=kwargs[latc_key])
                 updated = True
-            elif "a" in kwargs: # for single phase materials
+            elif "a" in kwargs:  # for single phase materials
                 self._update_ncmat_parameters(name,
                                             a=kwargs["a"],
                                             b=kwargs["b"],
                                             c=kwargs["c"])
                 updated = True
-            if ext_l_key in kwargs:
-                self._update_ncmat_parameters(name,
-                                            ext_l=kwargs[ext_l_key],
-                                            ext_Gg=kwargs[ext_Gg_key],
-                                            ext_L=kwargs[ext_L_key],
-                                            ext_tilt=kwargs.get(ext_tilt_key, spec.get('ext_tilt', 'Gauss')))
+            
+            # Update extinction parameters
+            if ext_l_key in kwargs or ext_Gg_key in kwargs or ext_L_key in kwargs or ext_tilt_key in kwargs or ext_method_key in kwargs:
+                ext_params = {}
+                if ext_l_key in kwargs:
+                    ext_params['ext_l'] = kwargs[ext_l_key]
+                elif ext_l_key not in kwargs and ext_Gg_key in kwargs:
+                    ext_params['ext_l'] = spec.get('ext_l', 2500.0)  # Default from _extinction_info
+                if ext_Gg_key in kwargs:
+                    ext_params['ext_Gg'] = kwargs[ext_Gg_key]
+                if ext_L_key in kwargs:
+                    ext_params['ext_L'] = kwargs[ext_L_key]
+                elif ext_L_key not in kwargs and (ext_l_key in kwargs or ext_Gg_key in kwargs):
+                    ext_params['ext_L'] = spec.get('ext_L', 100000.0)  # Default from _extinction_info
+                if ext_tilt_key in kwargs:
+                    ext_params['ext_tilt'] = kwargs[ext_tilt_key]
+                if ext_method_key in kwargs:
+                    ext_params['ext_method'] = kwargs[ext_method_key]
+                self._update_ncmat_parameters(name, **ext_params)
                 updated = True
-            elif "ext_l" in kwargs: # for single phase materials
-                self._update_ncmat_parameters(name,
-                                            ext_l=kwargs["ext_l"],
-                                            ext_Gg=kwargs["ext_Gg"],
-                                            ext_L=kwargs["ext_L"],
-                                            ext_tilt=kwargs.get("ext_tilt", spec.get('ext_tilt', 'Gauss')))
+            elif "ext_l" in kwargs:  # for single phase materials
+                ext_params = {}
+                if "ext_l" in kwargs:
+                    ext_params['ext_l'] = kwargs["ext_l"]
+                if "ext_Gg" in kwargs:
+                    ext_params['ext_Gg'] = kwargs["ext_Gg"]
+                if "ext_L" in kwargs:
+                    ext_params['ext_L'] = kwargs["ext_L"]
+                else:
+                    ext_params['ext_L'] = spec.get('ext_L', 100000.0)  # Default
+                if "ext_tilt" in kwargs:
+                    ext_params['ext_tilt'] = kwargs["ext_tilt"]
+                if "ext_method" in kwargs:
+                    ext_params['ext_method'] = kwargs["ext_method"]
+                self._update_ncmat_parameters(name, **ext_params)
                 updated = True
 
         if updated:
@@ -757,7 +792,6 @@ class CrossSection:
             self._generate_cfg_string()
             self._load_material_data()
             self._populate_material_data()
-            
 
         return self._calculate_cross_section(wl, self.mat_data)
     
