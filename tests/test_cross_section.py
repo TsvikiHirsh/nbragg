@@ -2,6 +2,7 @@ import unittest
 import numpy as np
 from nbragg import CrossSection
 from nbragg.utils import materials as materials_dict
+import os
 
 class TestCrossSection(unittest.TestCase):
     def test_cross_section_init_with_materials_dict(self):
@@ -135,12 +136,202 @@ class TestCrossSection(unittest.TestCase):
         self.assertEqual(xs.materials['iron_gamma']['mat'], 'Fe_sg225_Iron-gamma.ncmat')
         self.assertEqual(xs.materials['iron_alpha']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
 
+    def test_cross_section_with_extinction_single(self):
+        """Test initialization with extinction parameters for single material."""
+        xs = CrossSection({
+            'iron': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'ext_l': 100.0,
+                'ext_Gg': 1000.0,
+                'ext_L': 100000.0,
+                'ext_method': 'Sabine_corr'
+            }
+        })
+        
+        self.assertEqual(xs.materials['iron']['ext_l'], 100.0)
+        self.assertEqual(xs.materials['iron']['ext_Gg'], 1000.0)
+        self.assertEqual(xs.materials['iron']['ext_L'], 100000.0)
+        self.assertEqual(xs.materials['iron']['ext_method'], 'Sabine_corr')
+        
+        # Verify textdata contains correct @CUSTOM_CRYSEXTN line
+        textdata = xs.textdata['iron']
+        self.assertIn('@CUSTOM_CRYSEXTN', textdata)
+        self.assertIn('Sabine_corr  100.0000  1000.0000  100000.0000', textdata)
+
+    def test_cross_section_with_extinction_multiphase(self):
+        """Test initialization with extinction parameters for multiple materials."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'ext_l': 100.0,
+                'ext_Gg': 1000.0,
+                'ext_L': 100000.0,
+                'ext_tilt': 'Gauss',
+                'ext_method': 'BC_pure',
+                'weight': 0.0275
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'ext_l': 50.0,
+                'ext_Gg': 150.0,
+                'ext_L': 100000.0,
+                'ext_method': 'Sabine_corr',
+                'weight': 1 - 0.0275
+            }
+        })
+        
+        # Verify alpha parameters
+        self.assertEqual(xs.materials['alpha']['ext_l'], 100.0)
+        self.assertEqual(xs.materials['alpha']['ext_Gg'], 1000.0)
+        self.assertEqual(xs.materials['alpha']['ext_L'], 100000.0)
+        self.assertEqual(xs.materials['alpha']['ext_tilt'], 'Gauss')
+        self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
+        self.assertAlmostEqual(xs.materials['alpha']['weight'], 0.0275)
+        
+        # Verify gamma parameters
+        self.assertEqual(xs.materials['gamma']['ext_l'], 50.0)
+        self.assertEqual(xs.materials['gamma']['ext_Gg'], 150.0)
+        self.assertEqual(xs.materials['gamma']['ext_L'], 100000.0)
+        self.assertEqual(xs.materials['gamma']['ext_method'], 'Sabine_corr')
+        self.assertAlmostEqual(xs.materials['gamma']['weight'], 1 - 0.0275)
+        
+        # Verify textdata
+        self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['alpha'])
+        self.assertIn('BC_pure  100.0000  1000.0000  100000.0000  Gauss', xs.textdata['alpha'])
+        self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['gamma'])
+        self.assertIn('Sabine_corr  50.0000  150.0000  100000.0000', xs.textdata['gamma'])
+        
+        # Verify cross-section calculation
+        wl = np.array([1.0, 2.0, 3.0])
+        xs_values = xs(wl)
+        self.assertEqual(xs_values.shape, wl.shape)
+        self.assertTrue(np.all(xs_values >= 0))
+
+    def test_cross_section_extinction_update(self):
+        """Test updating extinction parameters via xs.materials and update method."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'ext_l': 100.0,
+                'ext_Gg': 1000.0,
+                'ext_L': 100000.0,
+                'ext_tilt': 'Gauss',
+                'ext_method': 'BC_pure',
+                'weight': 0.0275
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'ext_l': 50.0,
+                'ext_Gg': 150.0,
+                'ext_L': 100000.0,
+                'ext_method': 'Sabine_corr',
+                'weight': 1 - 0.0275
+            }
+        })
+        
+        # Update extinction parameters
+        xs.materials['alpha']['ext_l'] = 200.0
+        xs.materials['alpha']['ext_Gg'] = 300.0
+        xs.materials['alpha']['ext_L'] = 200000.0
+        xs.materials['alpha']['ext_tilt'] = 'Lorentz'
+        xs.materials['alpha']['ext_method'] = 'BC_pure'
+        xs.materials['gamma']['ext_l'] = 150.0
+        xs.materials['gamma']['ext_Gg'] = 200.0
+        xs.materials['gamma']['ext_L'] = 150000.0
+        xs.materials['gamma']['ext_method'] = 'Sabine_corr'
+        
+        xs.update()
+        
+        # Verify updated parameters
+        self.assertEqual(xs.materials['alpha']['ext_l'], 200.0)
+        self.assertEqual(xs.materials['alpha']['ext_Gg'], 300.0)
+        self.assertEqual(xs.materials['alpha']['ext_L'], 200000.0)
+        self.assertEqual(xs.materials['alpha']['ext_tilt'], 'Lorentz')
+        self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
+        self.assertEqual(xs.materials['gamma']['ext_l'], 150.0)
+        self.assertEqual(xs.materials['gamma']['ext_Gg'], 200.0)
+        self.assertEqual(xs.materials['gamma']['ext_L'], 150000.0)
+        self.assertEqual(xs.materials['gamma']['ext_method'], 'Sabine_corr')
+        
+        # Verify textdata
+        self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['alpha'])
+        self.assertIn('BC_pure  200.0000  300.0000  200000.0000  Lorentz', xs.textdata['alpha'])
+        self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['gamma'])
+        self.assertIn('Sabine_corr  150.0000  200.0000  150000.0000', xs.textdata['gamma'])
+
+    def test_cross_section_extinction_call_update(self):
+        """Test updating extinction parameters via __call__ method."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'ext_l': 100.0,
+                'ext_Gg': 1000.0,
+                'ext_L': 100000.0,
+                'ext_tilt': 'Gauss',
+                'ext_method': 'BC_pure',
+                'weight': 0.0275
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'ext_l': 50.0,
+                'ext_Gg': 150.0,
+                'ext_L': 100000.0,
+                'ext_method': 'Sabine_corr',
+                'weight': 1 - 0.0275
+            }
+        })
+        
+        wl = np.array([1.0, 2.0, 3.0])
+        xs(wl, ext_l1=300.0, ext_Gg1=400.0, ext_L1=150000.0, ext_tilt1='Gauss', ext_method1='BC_pure',
+               ext_l2=250.0, ext_Gg2=300.0, ext_L2=200000.0, ext_method2='Sabine_corr')
+        
+        # Verify updated parameters
+        self.assertEqual(xs.materials['alpha']['ext_l'], 300.0)
+        self.assertEqual(xs.materials['alpha']['ext_Gg'], 400.0)
+        self.assertEqual(xs.materials['alpha']['ext_L'], 150000.0)
+        self.assertEqual(xs.materials['alpha']['ext_tilt'], 'Gauss')
+        self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
+        self.assertEqual(xs.materials['gamma']['ext_l'], 250.0)
+        self.assertEqual(xs.materials['gamma']['ext_Gg'], 300.0)
+        self.assertEqual(xs.materials['gamma']['ext_L'], 200000.0)
+        self.assertEqual(xs.materials['gamma']['ext_method'], 'Sabine_corr')
+        
+        # Verify textdata
+        self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['alpha'])
+        self.assertIn('BC_pure  300.0000  400.0000  150000.0000  Gauss', xs.textdata['alpha'])
+        self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['gamma'])
+        self.assertIn('Sabine_corr  250.0000  300.0000  200000.0000', xs.textdata['gamma'])
+        
+        # Verify cross-section calculation
+        xs_values = xs(wl)
+        self.assertEqual(xs_values.shape, wl.shape)
+        self.assertTrue(np.all(xs_values >= 0))
+
+    def test_cross_section_extinction_invalid_tilt(self):
+        """Test handling of invalid extinction tilt values."""
+        xs = CrossSection({
+            'iron': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'ext_l': 100.0,
+                'ext_Gg': 1000.0,
+                'ext_L': 100000.0,
+                'ext_tilt': 'invalid_tilt',
+                'ext_method': 'Sabine_uncorr'
+            }
+        })
+        
+        # Verify default tilt
+        self.assertEqual(xs.materials['iron']['ext_tilt'], 'rect')
+        self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['iron'])
+        self.assertIn('Sabine_uncorr  100.0000  1000.0000  100000.0000  rect', xs.textdata['iron'])
+
 class TestMTEXToNCrystalConversion(unittest.TestCase):
     def setUp(self):
         # Path to test CSV file
         self.csv_file = "simple_components.csv"
         self.base_material = materials_dict["Fe_sg225_Iron-gamma.ncmat"]
 
+    @unittest.skipIf(not os.path.exists("simple_components.csv"), "simple_components.csv not found")
     def test_first_phase_orientation(self):
         """Test orientation of the first phase from MTEX data."""
         cs = CrossSection().from_mtex(self.csv_file, self.base_material, short_name="γ")
@@ -161,6 +352,7 @@ class TestMTEXToNCrystalConversion(unittest.TestCase):
         self.assertEqual(first_phase['mos'], 10.0)
         self.assertAlmostEqual(first_phase['weight'], 1/7, places=7)
 
+    @unittest.skipIf(not os.path.exists("simple_components.csv"), "simple_components.csv not found")
     def test_phases_object_creation(self):
         """Test phases object creation from MTEX data."""
         cs = CrossSection().from_mtex(self.csv_file, self.base_material, short_name="γ")
