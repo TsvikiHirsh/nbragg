@@ -1485,6 +1485,7 @@ class TransmissionModel(lmfit.Model):
         Provides real-time parameter exploration with sliders, float fields, and reset functionality.
         """
         import ipywidgets as widgets
+        import ipywidgets as widgets
         # Check for fit results
         if hasattr(self, "fit_result") and self.fit_result is not None:
             print("Warning: interactive_plot is for models before fitting. Use plot() instead.")
