@@ -46,10 +46,10 @@ extinction = [
 ]
 
 [project.urls]
-Homepage = "[https://github.com/TsvikiHirsh/nbragg](https://github.com/TsvikiHirsh/nbragg)"
-"Bug Tracker" = "[https://github.com/TsvikiHirsh/nbragg/issues](https://github.com/TsvikiHirsh/nbragg/issues)"
-Discussions = "[https://github.com/TsvikiHirsh/nbragg/discussions](https://github.com/TsvikiHirsh/nbragg/discussions)"
-Changelog = "[https://github.com/TsvikiHirsh/nbragg/releases](https://github.com/TsvikiHirsh/nbragg/releases)"
+Homepage = "https://github.com/TsvikiHirsh/nbragg"
+"Bug Tracker" = "https://github.com/TsvikiHirsh/nbragg/issues"
+Discussions = "https://github.com/TsvikiHirsh/nbragg/discussions"
+Changelog = "https://github.com/TsvikiHirsh/nbragg/releases"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
