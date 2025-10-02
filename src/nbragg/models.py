@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 from copy import deepcopy 
 from typing import List, Optional, Union, Dict
 import warnings
-from IPython.display import display
 from matplotlib.patches import Rectangle
 import fnmatch
 import re
