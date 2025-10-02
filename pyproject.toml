@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nbragg"
-version = "0.3.3"
+version = "0.3.4"
 authors = [
   { name = "Tsviki Y. Hirsh", email = "tsviki.hirsh@gmail.com" },
 ]
@@ -41,10 +41,6 @@ dev = [
 "pytest-cov >=3",
 "pre-commit",
 ]
-extinction = [
-  "ncrystal-plugin-crysextn @ git+https://github.com/XuShuqi7/ncplugin-CrysExtn"
-]
-
 
 [project.urls]
 Homepage = "https://github.com/TsvikiHirsh/nbragg"

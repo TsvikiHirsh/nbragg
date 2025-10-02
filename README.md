@@ -30,13 +30,16 @@ pip install nbragg
 
 ### Installation with Extinction Effects
 
-If you need to include extinction effects in your analysis, install with the `extinction` optional dependency:
+To include extinction effects in your analysis, you'll need to install the extinction plugin separately:
 
 ```bash
-pip install nbragg[extinction]
+pip install nbragg
+pip install git+https://github.com/XuShuqi7/ncplugin-CrysExtn
 ```
 
-This will additionally install the [ncrystal-plugin-crysextn](https://github.com/XuShuqi7/ncplugin-CrysExtn) plugin, which provides extinction corrections for crystallographic calculations.
+The [ncrystal-plugin-crysextn](https://github.com/XuShuqi7/ncplugin-CrysExtn) plugin provides extinction corrections for crystallographic calculations.
+
+**Note:** The extinction plugin is only required if you plan to use extinction effects. For standard Bragg edge fitting without extinction corrections, the base installation is sufficient.
 
 ## Usage
 
