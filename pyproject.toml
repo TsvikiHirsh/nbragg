@@ -41,7 +41,6 @@ dev = [
 "pytest-cov >=3",
 "pre-commit",
 ]
-[project.optional-dependencies]
 extinction = [
   "ncplugin-CrysExtn @ git+https://github.com/XuShuqi7/ncplugin-CrysExtn"
 ]
@@ -65,12 +64,14 @@ testpaths = [
 "tests",
 ]
 
-[tool.coverage]
-run.source = ["nbragg"]
-port.exclude_lines = [
-'pragma: no cover',
-'...',
-'if typing.TYPE_CHECKING:',
+[tool.coverage.run]
+source = ["nbragg"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "...",
+  "if typing.TYPE_CHECKING:",
 ]
 
 [tool.mypy]
@@ -122,4 +123,5 @@ unfixable = [
 "F841",
 ]
 flake8-unused-arguments.ignore-variadic-names = true
-isort.required-imports = ["from **future** import annotations"]
+isort.required-imports = ["from __future__ import annotations"]
+
