@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 from copy import deepcopy 
 from typing import List, Optional, Union, Dict
 import warnings
-import ipywidgets as widgets
 from IPython.display import display
 from matplotlib.patches import Rectangle
 import fnmatch
@@ -1486,6 +1485,7 @@ class TransmissionModel(lmfit.Model):
         Designed for models before fitting. Displays a warning if fit results exist.
         Provides real-time parameter exploration with sliders, float fields, and reset functionality.
         """
+        import ipywidgets as widgets
         # Check for fit results
         if hasattr(self, "fit_result") and self.fit_result is not None:
             print("Warning: interactive_plot is for models before fitting. Use plot() instead.")
