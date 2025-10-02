@@ -6,23 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "nbragg"
 version = "0.3.1"
 authors = [
-{ name = "Tsviki Y. Hirsh", email = "[tsviki.hirsh@gmail.com](mailto:tsviki.hirsh@gmail.com)" },
+  { name = "Tsviki Y. Hirsh", email = "tsviki.hirsh@gmail.com" },
 ]
 description = "Simple yet powerful package for neutron resonance fitting"
 readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
-"Development Status :: 1 - Planning",
-"Intended Audience :: Science/Research",
-"License :: OSI Approved :: MIT License",
-"Operating System :: OS Independent",
-"Programming Language :: Python :: 3",
-"Programming Language :: Python :: 3.9",
-"Programming Language :: Python :: 3.10",
-"Programming Language :: Python :: 3.11",
-"Programming Language :: Python :: 3.12",
-"Programming Language :: Python :: 3.13",
-"Topic :: Scientific/Engineering",
 "Development Status :: 1 - Planning",
 "Intended Audience :: Science/Research",
 "License :: OSI Approved :: MIT License",
@@ -44,21 +33,10 @@ dependencies = [
 "setuptools",
 "ncrystal",
 "tqdm"
-"scipy",
-"pandas",
-"numpy",
-"matplotlib",
-"lmfit",
-"setuptools",
-"ncrystal",
-"tqdm"
 ]
 
 [project.optional-dependencies]
 dev = [
-"pytest >=6",
-"pytest-cov >=3",
-"pre-commit",
 "pytest >=6",
 "pytest-cov >=3",
 "pre-commit",
@@ -69,10 +47,10 @@ extinction = [
 
 
 [project.urls]
-Homepage = "[https://github.com/TsvikiHirsh/nbragg](https://github.com/TsvikiHirsh/nbragg)"
-"Bug Tracker" = "[https://github.com/TsvikiHirsh/nbragg/issues](https://github.com/TsvikiHirsh/nbragg/issues)"
-Discussions = "[https://github.com/TsvikiHirsh/nbragg/discussions](https://github.com/TsvikiHirsh/nbragg/discussions)"
-Changelog = "[https://github.com/TsvikiHirsh/nbragg/releases](https://github.com/TsvikiHirsh/nbragg/releases)"
+Homepage = "https://github.com/TsvikiHirsh/nbragg"
+"Bug Tracker" = "https://github.com/TsvikiHirsh/nbragg/issues"
+Discussions = "https://github.com/TsvikiHirsh/nbragg/discussions"
+Changelog = "https://github.com/TsvikiHirsh/nbragg/releases"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -80,11 +58,9 @@ addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config"]
 xfail_strict = true
 filterwarnings = [
 "error",
-"error",
 ]
 log_cli_level = "INFO"
 testpaths = [
-"tests",
 "tests",
 ]
 
@@ -137,35 +113,12 @@ select = [
 "UP",
 "YTT",
 "EXE",
-"E", "F", "W",
-"B",
-"I",
-"ARG",
-"C4",
-"EM",
-"ICN",
-"ISC",
-"G",
-"PGH",
-"PIE",
-"PL",
-"PT",
-"RET",
-"RUF",
-"SIM",
-"UP",
-"YTT",
-"EXE",
 ]
 ignore = [
 "PLR",
 "ISC001",
-"PLR",
-"ISC001",
 ]
 unfixable = [
-"F401",
-"F841",
 "F401",
 "F841",
 ]
