@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nbragg"
-version = "0.3.1"
+version = "0.3.2"
 authors = [
   { name = "Tsviki Y. Hirsh", email = "tsviki.hirsh@gmail.com" },
 ]
