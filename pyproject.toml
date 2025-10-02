@@ -41,9 +41,11 @@ dev = [
 "pytest-cov >=3",
 "pre-commit",
 ]
+[project.optional-dependencies]
 extinction = [
-"ncplugin-CrysExtn @ git+[https://github.com/XuShuqi7/ncplugin-CrysExtn](https://github.com/XuShuqi7/ncplugin-CrysExtn)"
+  "ncplugin-CrysExtn @ git+https://github.com/XuShuqi7/ncplugin-CrysExtn"
 ]
+
 
 [project.urls]
 Homepage = "https://github.com/TsvikiHirsh/nbragg"
