@@ -42,7 +42,7 @@ dev = [
 "pre-commit",
 ]
 extinction = [
-  "ncplugin-CrysExtn @ git+https://github.com/XuShuqi7/ncplugin-CrysExtn"
+  "ncrystal-plugin-crysextn @ git+https://github.com/XuShuqi7/ncplugin-CrysExtn"
 ]
 
 
