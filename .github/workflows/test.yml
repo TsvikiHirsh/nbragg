@@ -1,0 +1,40 @@
+name: CI
+
+on:
+push:
+branches: \[ master ]
+pull\_request:
+branches: \[ master ]
+
+jobs:
+test:
+runs-on: ubuntu-latest
+
+```
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.11"
+
+  - name: Install build dependencies
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y build-essential git
+
+  - name: Install nbragg with extras
+    run: |
+      pip install --upgrade pip
+      pip install ".[extinction]" .
+
+  - name: Check plugin availability
+    run: |
+      echo "nbragg version:"
+      python -c "import nbragg; print(nbragg.__version__)"
+      echo "Available plugins:"
+      nctool --plugins | tee plugins.txt
+      grep -q "CrysExtn" plugins.txt
+```
