@@ -1,14 +1,12 @@
 # nbragg
-
 <p align="center">
-  <img src="https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/docs/source/_static/nbragg_logo.png" alt="nbragg logo" width="200"/>
+<img src="https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/docs/source/_static/nbragg_logo.png" alt="nbragg logo" width="200"/>
 </p>
 
 [![Documentation Status](https://readthedocs.org/projects/nbragg/badge/?version=latest)](https://nbragg.readthedocs.io/en/latest/?badge=latest)
 [![PyPI version][pypi-version]][pypi-link]
 
-
-nbragg is a package designed for fitting neutron Bragg edge data using NCrystal cross-sections. This tool provides a straightforward way to analyze neutron transmission through polycrystalline materials, leveraging Bragg edges to extract information on material structure and composition.
+nbragg is a package designed for fitting neutron Bragg edge data using [NCrystal](https://github.com/mctools/ncrystal) cross-sections. This tool provides a straightforward way to analyze neutron transmission through polycrystalline materials, leveraging Bragg edges to extract information on material structure and composition.
 
 ## Features
 
@@ -22,11 +20,23 @@ nbragg is a package designed for fitting neutron Bragg edge data using NCrystal 
 
 ## Installation
 
-To install use:
+### Basic Installation
+
+To install the base package:
 
 ```bash
 pip install nbragg
 ```
+
+### Installation with Extinction Effects
+
+If you need to include extinction effects in your analysis, install with the `extinction` optional dependency:
+
+```bash
+pip install nbragg[extinction]
+```
+
+This will additionally install the [ncrystal-plugin-crysextn](https://github.com/XuShuqi7/ncplugin-CrysExtn) plugin, which provides extinction corrections for crystallographic calculations.
 
 ## Usage
 
@@ -34,11 +44,12 @@ Here's a quick example to get started:
 
 ```python
 import nbragg
-data = nbragg.Data.from_transmission("iron_powder.csv")                         # read data
-xs = nbragg.CrossSection(iron="Fe_sg229_Iron-alpha.ncmat")                      # define sample
-model = nbragg.TransmissionModel(xs, vary_background=True, vary_response=True)  # define model
-result = model.fit(data)                                                        # perform fit
-result.plot()                                                                   # plot results
+
+data = nbragg.Data.from_transmission("iron_powder.csv") # read data
+xs = nbragg.CrossSection(iron="Fe_sg229_Iron-alpha.ncmat") # define sample
+model = nbragg.TransmissionModel(xs, vary_background=True, vary_response=True) # define model
+result = model.fit(data) # perform fit
+result.plot() # plot results
 ```
 
 ![Fit Results](https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/notebooks/fit_results.png)
