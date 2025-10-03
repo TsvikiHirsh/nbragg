@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from copy import deepcopy 
 from typing import List, Optional, Union, Dict
 import warnings
+import ipywidgets as widgets
+from IPython.display import display
 from matplotlib.patches import Rectangle
 import fnmatch
 import re
@@ -124,21 +126,24 @@ class TransmissionModel(lmfit.Model):
         self._stages = {}
         possible_stages = [
             "basic", "background", "tof", "lattice",
-            "mosaicity", "orientation", "weights", "response", "extinction"
+            "mosaicity", "thetas", "phis", "angles", "orientation", "weights", "response", "extinction"
         ]
         vary_flags = {
             "basic": True,  # Always include basic parameters
             "background": vary_background,
             "tof": vary_tof,
             "lattice": vary_lattice,
+            "mosaicity": vary_orientation,
+            "thetas": vary_orientation,
+            "phis": vary_orientation,
+            "angles": vary_orientation,
+            "orientation": vary_orientation,
             "weights": vary_weights,
             "response": vary_response,
             "extinction": vary_extinction,
-            "mosaicity": vary_orientation,
-            "orientation": vary_orientation,
         }
         for stage in possible_stages:
-            if vary_flags[stage] is True:
+            if vary_flags.get(stage, False) is True:
                 self._stages[stage] = stage
 
 
@@ -381,6 +386,9 @@ class TransmissionModel(lmfit.Model):
             "extinction": [p for p in self.params if p.startswith("ext_")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
             "mosaicity": [p for p in self.params if p.startswith("η")],
+            "thetas": [p for p in self.params if p.startswith("θ")],
+            "phis": [p for p in self.params if p.startswith("ϕ")],
+            "angles": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ")],
             "temperature": [p for p in ["temp"] if p in self.params],
         }
         
@@ -407,7 +415,7 @@ class TransmissionModel(lmfit.Model):
             raise ValueError(f"Stages must be a string ('all') or dict, got {type(value)}")
 
     def _repr_html_(self):
-        """HTML representation for Jupyter, including parameters and stages tables."""
+        """HTML representation for Jupyter, including parameters and expanded stages tables."""
         from IPython.display import HTML
         import pandas as pd
 
@@ -425,17 +433,84 @@ class TransmissionModel(lmfit.Model):
         param_df = pd.DataFrame(param_data)
         param_html = param_df.to_html(index=False, classes='table table-striped', border=0)
 
-        # Stages table
+        # Helper function to resolve a single parameter or group
+        group_map = {
+            "basic": ["norm", "thickness"],
+            "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
+            "tof": [p for p in ["L0", "t0"] if p in self.params],
+            "response": [p for p in self.params if self.response and p in self.response.params],
+            "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
+            "lattice": [p for p in self.params if p in ["a", "b", "c"] or p.startswith("a_") or p.startswith("b_") or p.startswith("c_")],
+            "extinction": [p for p in self.params if p.startswith("ext_")],
+            "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
+            "mosaicity": [p for p in self.params if p.startswith("η")],
+            "thetas": [p for p in self.params if p.startswith("θ")],
+            "phis": [p for p in self.params if p.startswith("ϕ")],
+            "angles": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ")],
+            "temperature": [p for p in ["temp"] if p in self.params],
+        }
+
+        def resolve_single_param_or_group(item):
+            if item == "all":
+                return [p for p in self.params if self.params[p].vary]
+            elif item in group_map:
+                return group_map[item]
+            elif item in self.params:
+                return [item]
+            else:
+                matching_params = [p for p in self.params.keys() if fnmatch.fnmatch(p, item)]
+                if matching_params:
+                    return matching_params
+                return []
+
+        def resolve_group(entry, stage_name):
+            params_list = []
+            overrides = {}
+            if isinstance(entry, str):
+                tokens = entry.split()
+                is_one_by_one = "one-by-one" in tokens
+                base_tokens = [t for t in tokens if t != "one-by-one" and not t.startswith("wlmin=") and not t.startswith("wlmax=")]
+                for t in tokens:
+                    if t.startswith("wlmin="):
+                        overrides['wlmin'] = float(t.split("=")[1])
+                    elif t.startswith("wlmax="):
+                        overrides['wlmax'] = float(t.split("=")[1])
+                for item in base_tokens:
+                    params_list.extend(resolve_single_param_or_group(item))
+            elif isinstance(entry, list):
+                is_one_by_one = "one-by-one" in entry
+                for item in entry:
+                    if item == "one-by-one" or isinstance(item, str) and (item.startswith("wlmin=") or item.startswith("wlmax=")):
+                        if item.startswith("wlmin="):
+                            overrides['wlmin'] = float(item.split("=")[1])
+                        elif item.startswith("wlmax="):
+                            overrides['wlmax'] = float(item.split("=")[1])
+                        continue
+                    params_list.extend(resolve_single_param_or_group(item))
+            else:
+                raise ValueError(f"Stage definition for '{stage_name}' must be a string or list")
+
+            if is_one_by_one:
+                sub_stages = []
+                for i, param in enumerate(params_list):
+                    var_part = param.split("_")[-1] if "_" in param else param
+                    sub_name = f"{stage_name}_{var_part}" if len(params_list) > 1 else stage_name
+                    sub_stages.append((sub_name, [param], overrides.copy()))
+                return sub_stages
+            return [(stage_name, params_list, overrides)]
+
+        # Stages table with expanded stages
         stage_data = []
         for stage_name, stage_def in self.stages.items():
-            if stage_def == "all":
-                params = [p for p in self.params if self.params[p].vary]
-            else:
-                params = self._get_stage_parameters(stage_def)
-            stage_data.append({
-                'Stage': stage_name,
-                'Parameters': ', '.join(params)
-            })
+            resolved = resolve_group(stage_def, stage_name)
+            for sub_name, params, overrides in resolved:
+                param_str = ', '.join(params)
+                if overrides:
+                    param_str += f" (wlmin={overrides.get('wlmin', 'default')}, wlmax={overrides.get('wlmax', 'default')})"
+                stage_data.append({
+                    'Stage': sub_name,
+                    'Parameters': param_str
+                })
         stage_df = pd.DataFrame(stage_data)
         stage_html = stage_df.to_html(index=False, classes='table table-striped', border=0)
 
@@ -450,6 +525,7 @@ class TransmissionModel(lmfit.Model):
         """
         return html
 
+
     def _get_stage_parameters(self, stage_def: Union[str, List[str]]) -> List[str]:
         """Helper method to get parameters associated with a stage definition."""
         group_map = {
@@ -462,6 +538,9 @@ class TransmissionModel(lmfit.Model):
             "extinction": [p for p in self.params if p.startswith("ext_")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
             "mosaicity": [p for p in self.params if p.startswith("η")],
+            "thetas": [p for p in self.params if p.startswith("θ")],
+            "phis": [p for p in self.params if p.startswith("ϕ")],
+            "angles": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ")],
             "temperature": [p for p in ["temp"] if p in self.params],
         }
         if stage_def == "all":
@@ -508,7 +587,7 @@ class TransmissionModel(lmfit.Model):
             If True, shows a progress bar for each fitting stage.
         stages : dict, optional
             Dictionary of stage definitions. If None, uses self.stages.
-        kwargs : dict, optional
+        **kwargs
             Additional keyword arguments for the fit method.
 
         Returns
@@ -523,7 +602,7 @@ class TransmissionModel(lmfit.Model):
         import fnmatch
         import pandas
         try:
-            from tqdm.notebook import tqdm
+            from tqdm.notebook import tqdm as notebook_tqdm
         except ImportError:
             from tqdm.auto import tqdm
         import pickle
@@ -542,6 +621,9 @@ class TransmissionModel(lmfit.Model):
             "extinction": [p for p in self.params if p.startswith("ext_")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
             "mosaicity": [p for p in self.params if p.startswith("η")],
+            "thetas": [p for p in self.params if p.startswith("θ")],
+            "phis": [p for p in self.params if p.startswith("ϕ")],
+            "angles": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ")],
             "temperature": [p for p in ["temp"] if p in self.params],
         }
 
@@ -549,6 +631,8 @@ class TransmissionModel(lmfit.Model):
             """Resolve a single parameter name or group name to a list of parameters."""
             if item == "all":
                 return [p for p in self.params if self.params[p].vary]
+            elif item == "one-by-one":
+                return []  # Handled separately in resolve_group
             elif item in group_map:
                 resolved = group_map[item]
                 if verbose:
@@ -568,24 +652,67 @@ class TransmissionModel(lmfit.Model):
                     warnings.warn(f"Unknown parameter or group: '{item}'. Available parameters: {list(self.params.keys())}")
                     return []
 
-        def resolve_group(entry):
+        def resolve_group(entry, stage_name):
             """
-            Resolve a group entry to a flat list of parameters and overrides.
+            Resolve a group entry to a list of parameters and overrides.
+            If "one-by-one" is detected in the entry list, expand all parameters into sub-stages.
             """
-            params_list = []
-            overrides = {}
-
-            def process_item(item):
-                nonlocal params_list, overrides
-                if isinstance(item, str):
-                    if item.startswith("wlmin="):
+            if isinstance(entry, str):
+                tokens = entry.split()
+                params_list = []
+                overrides = {}
+                is_one_by_one = "one-by-one" in tokens
+                if is_one_by_one:
+                    idx = tokens.index("one-by-one")
+                    base_tokens = tokens[:idx]
+                    post_tokens = tokens[idx + 1:]
+                    base_entry = " ".join(base_tokens)
+                    # Process base for params
+                    base_items = base_entry.split() if base_entry else []
+                    for it in base_items:
+                        params_list.extend(resolve_single_param_or_group(it))
+                    # Process post for overrides
+                    for tok in post_tokens:
+                        if tok.startswith("wlmin="):
+                            k, v = tok.split("=")
+                            overrides['wlmin'] = float(v)
+                        elif tok.startswith("wlmax="):
+                            k, v = tok.split("=")
+                            overrides['wlmax'] = float(v)
+                else:
+                    # Normal processing
+                    for it in tokens:
+                        if it.startswith("wlmin="):
+                            k, v = it.split("=")
+                            overrides['wlmin'] = float(v)
+                        elif it.startswith("wlmax="):
+                            k, v = it.split("=")
+                            overrides['wlmax'] = float(v)
+                        else:
+                            params_list.extend(resolve_single_param_or_group(it))
+                if is_one_by_one:
+                    sub_stages = []
+                    for i, param in enumerate(params_list):
+                        var_part = param.split("_")[-1] if "_" in param else param
+                        sub_name = f"{stage_name}_{var_part}" if len(params_list) > 1 else stage_name
+                        sub_stages.append((sub_name, [param], overrides.copy()))
+                    return sub_stages
+                return [(stage_name, params_list, overrides)]
+            elif isinstance(entry, list):
+                params_list = []
+                overrides = {}
+                is_one_by_one = "one-by-one" in entry
+                for item in entry:
+                    if item == "one-by-one":
+                        continue
+                    if isinstance(item, str) and item.startswith("wlmin="):
                         try:
                             overrides['wlmin'] = float(item.split("=", 1)[1])
                             if verbose:
                                 print(f"  Override wlmin detected: {overrides['wlmin']}")
                         except ValueError:
                             warnings.warn(f"Invalid wlmin value in group: {item}")
-                    elif item.startswith("wlmax="):
+                    elif isinstance(item, str) and item.startswith("wlmax="):
                         try:
                             overrides['wlmax'] = float(item.split("=", 1)[1])
                             if verbose:
@@ -594,35 +721,28 @@ class TransmissionModel(lmfit.Model):
                             warnings.warn(f"Invalid wlmax value in group: {item}")
                     else:
                         params_list.extend(resolve_single_param_or_group(item))
-                elif isinstance(item, list):
-                    for subitem in item:
-                        process_item(subitem)
-                else:
-                    warnings.warn(f"Unexpected item type in group: {type(item)} - {item}")
-
-            process_item(entry)
-            return params_list, overrides
+                if is_one_by_one:
+                    sub_stages = []
+                    for i, param in enumerate(params_list):
+                        var_part = param.split("_")[-1] if "_" in param else param
+                        sub_name = f"{stage_name}_{var_part}" if len(params_list) > 1 else stage_name
+                        sub_stages.append((sub_name, [param], overrides.copy()))
+                    return sub_stages
+                return [(stage_name, params_list, overrides)]
+            else:
+                raise ValueError(f"Stage definition for '{stage_name}' must be a string or list, got {type(entry)}")
 
         # Handle stages input
-        stage_names = []
-        resolved_stages = []
-        stage_overrides = []
-
+        expanded_stages = []
         if isinstance(stages, dict):
-            stage_names = list(stages.keys())
-            for stage in stage_names:
-                params_list, overrides = resolve_group(stages[stage])
-                if params_list or stages[stage] == "all":
-                    resolved_stages.append(params_list)
-                    stage_overrides.append(overrides)
-                else:
-                    if verbose:
-                        print(f"Skipping empty stage: {stage}")
+            for stage_name, entry in stages.items():
+                resolved = resolve_group(entry, stage_name)
+                expanded_stages.extend(resolved)
         else:
             raise ValueError("Stages must be a dictionary")
 
         # Remove any empty stages
-        filtered = [(n, g, o) for n, g, o in zip(stage_names, resolved_stages, stage_overrides) if g or stages[n] == "all"]
+        filtered = [(n, g, o) for n, g, o in zip(*zip(*expanded_stages)) if g]
         if not filtered:
             raise ValueError("No valid stages found. Check your stage definitions.")
         stage_names, resolved_stages, stage_overrides = zip(*filtered)
@@ -634,8 +754,8 @@ class TransmissionModel(lmfit.Model):
                 print(f"  {name}: {group if group else 'all vary=True parameters'}  overrides: {ov}")
 
         # Store for summary or introspection
-        self._stage_param_groups = resolved_stages
-        self._stage_names = stage_names
+        self._stage_param_groups = list(resolved_stages)
+        self._stage_names = list(stage_names)
         self._fitting_method = method
 
         params = deepcopy(params or self.params)
@@ -841,6 +961,8 @@ class TransmissionModel(lmfit.Model):
         return fit_result
 
 
+
+
     def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None, 
                                             method="rietveld", color=True):
         import pandas as pd
@@ -985,22 +1107,25 @@ class TransmissionModel(lmfit.Model):
         show_params : bool, optional
             If True, show all individual parameters
         """
+        group_map = {
+            "basic": ["norm", "thickness"],
+            "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
+            "tof": [p for p in ["L0", "t0"] if p in self.params],
+            "response": [p for p in self.params if self.response and p in self.response.params],
+            "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
+            "lattice": [p for p in self.params if p in ["a", "b", "c"]],
+            "extinction": [p for p in self.params if p.startswith("ext_")],
+            "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
+            "mosaicity": [p for p in self.params if p.startswith("η")],
+            "thetas": [p for p in self.params if p.startswith("θ")],
+            "phis": [p for p in self.params if p.startswith("ϕ")],
+            "angles": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ")],
+            "temperature": [p for p in ["temp"] if p in self.params],
+        }
         if show_groups:
             print("Available parameter groups:")
             print("=" * 30)
 
-            group_map = {
-                "basic": ["norm", "thickness"],
-                "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
-                "tof": [p for p in ["L0", "t0"] if p in self.params],
-                "response": [p for p in self.params if self.response and p in self.response.params],
-                "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
-                "lattice": [p for p in self.params if p in ["a", "b", "c"]],
-                "extinction": [p for p in self.params if p.startswith("ext_")],
-                "orientation": [p for p in ["phi", "theta", "eta"] if p in self.params],
-                "temperature": [p for p in ["temp"] if p in self.params],
-            }
-            
             for group_name, params in group_map.items():
                 if params:  # Only show groups with available parameters
                     print(f"  '{group_name}': {params}")
@@ -1027,6 +1152,8 @@ class TransmissionModel(lmfit.Model):
         print('param_groups = {"scale": ["norm"], "sample": ["thickness", "extinction"]}')
         print("\n# Mixed approach:")
         print('param_groups = ["basic", ["b0", "ext_l2"], "lattice"]')
+        print("\n# One-by-one expansion:")
+        print('stages = {"angles_one": "angles one-by-one"}  # Expands to sub-stages for each angle')
 
     def plot(self, data=None, plot_bg: bool = True,    
             plot_dspace: bool = False, dspace_min: float = 1,    
@@ -1196,30 +1323,126 @@ class TransmissionModel(lmfit.Model):
 
     def _make_weight_params(self, vary=False):
         params = lmfit.Parameters()
-        for i, material in enumerate(self._materials):
-            params.add(f"p{i}", value=material.weight, min=0., max=1., vary=vary)
-        return params
+        weights = np.array([self._materials[phase]["weight"] for phase in self._materials])
+        param_names = [phase.replace("-", "") for phase in self._materials]
 
-    def _make_tof_params(self, vary=False, **kwargs):
-        params = lmfit.Parameters()
-        params.add("L0", value=self.tof_length, min=0., vary=vary)
-        params.add("t0", value=0., vary=vary)
-        return params
+        N = len(weights)
+        if N == 1:
+            # Special case: if N=1, the weight is always 1
+            params.add(f'{param_names[0]}', value=1., vary=False)
+        else:
 
+            last_weight = weights[-1]
+            # Add (N-1) free parameters corresponding to the first (N-1) items
+            for i, name in enumerate(param_names[:-1]):
+                initial_value = weights[i]  # Use weight values
+                params.add(f'p{i+1}',value=np.log(weights[i]/last_weight),min=-14,max=14,vary=vary) # limit to 1ppm
+            
+            # Define the normalization expression
+            normalization_expr = ' + '.join([f'exp(p{i+1})' for i in range(N-1)])
+            
+            # Add weights based on the free parameters
+            for i, name in enumerate(param_names[:-1]):
+                params.add(f'{name}', expr=f'exp(p{i+1}) / (1 + {normalization_expr})')
+            
+            # The last weight is 1 minus the sum of the previous weights
+            params.add(f'{param_names[-1]}', expr=f'1 / (1 + {normalization_expr})')
+
+        return params
+    
     def _make_lattice_params(self, vary=False):
+        """
+        Create lattice-parameter ('a','b','c') params for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The lattice-related parameters.
+        """
         params = lmfit.Parameters()
-        for phase in self.cross_section.phases:
-            lattice_params = self.cross_section.phases_data[phase].info.lattice()
-            params.add(f"a_{phase}", value=lattice_params[0], min=0., vary=vary)
-            params.add(f"b_{phase}", value=lattice_params[1], min=0., vary=vary)
-            params.add(f"c_{phase}", value=lattice_params[2], min=0., vary=vary)
+        for i, material in enumerate(self._materials):
+            # update materials with new lattice parameter
+            try:
+                info = self.cross_section.phases_data[material].info.structure_info
+                a, b, c = info["a"], info["b"], info["c"]
+
+                param_a_name = f"a{i+1}" if len(self._materials)>1 else "a"
+                param_b_name = f"b{i+1}" if len(self._materials)>1 else "b"
+                param_c_name = f"c{i+1}" if len(self._materials)>1 else "c"
+
+                if np.isclose(a,b,atol=1e-4) and np.isclose(b,c,atol=1e-4):
+                    if param_a_name in self.params:
+                        self.params[param_a_name].vary = vary
+                    else:
+                        params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
+                        params.add(param_b_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
+                        params.add(param_c_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
+                elif np.isclose(a,b,atol=1e-4) and not np.isclose(c,b,atol=1e-4):
+                    if param_a_name in self.params:
+                        self.params[param_a_name].vary = vary
+                        self.params[param_c_name].vary = vary
+                    else:
+                        params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
+                        params.add(param_b_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
+                        params.add(param_c_name, value=c, min=0.5, max=10, vary=vary)
+                elif not np.isclose(a,b,atol=1e-4) and not np.isclose(c,b,atol=1e-4):
+                    if param_a_name in self.params:
+                        self.params[param_a_name].vary = vary
+                        self.params[param_b_name].vary = vary
+                        self.params[param_c_name].vary = vary
+                    else:
+                        params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
+                        params.add(param_b_name, value=b, min=0.5, max=10, vary=vary)
+                        params.add(param_c_name, value=c, min=0.5, max=10, vary=vary)
+            except:
+                pass
+                    
         return params
 
     def _make_extinction_params(self, vary=False):
+        """
+        Create extinction-parameter ('ext_l', 'ext_Gg', 'ext_L') params for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The extinction-related parameters.
+        """
         params = lmfit.Parameters()
-        for phase in self.cross_section.phases:
-            params.add(f"ext_l_{phase}", value=1., min=0., vary=vary)
-            params.add(f"ext_Gg_{phase}", value=1., min=0., vary=vary)
+        for i, material in enumerate(self._materials):
+            # update materials with new lattice parameter
+            try:
+                info = self.cross_section.extinction[material]
+
+
+                l, Gg, L = info["l"], info["Gg"], info["L"]
+
+                param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
+                param_Gg_name = f"ext_Gg{i+1}" if len(self._materials)>1 else "ext_Gg"
+                param_L_name = f"ext_L{i+1}" if len(self._materials)>1 else "ext_L"
+
+
+                if param_l_name in self.params:
+                    self.params[param_l_name].vary = vary
+                    self.params[param_Gg_name].vary = vary
+                    self.params[param_L_name].vary = vary
+                else:
+                    params.add(param_l_name, value=l, min=0., max=10000,vary=vary)
+                    params.add(param_Gg_name, value=Gg, min=0., max=10000,vary=vary)
+                    params.add(param_L_name, value=L, min=0., max=1000000,vary=vary)
+            except KeyError:
+                warnings.warn(f"@CRYSEXTN section is not defined for the {material} phase")
+                                
         return params
 
     def _make_orientation_params(self, vary=False):
@@ -1235,6 +1458,12 @@ class TransmissionModel(lmfit.Model):
         t0 = kwargs.get("t0", 0.)
         # Assuming energy correction based on TOF
         return E * (L0 / self.tof_length) + t0
+
+    def _make_tof_params(self, vary=False, **kwargs):
+        params = lmfit.Parameters()
+        params.add("L0", value=self.tof_length, min=0., vary=vary)
+        params.add("t0", value=0., vary=vary)
+        return params
 
     def plot_total_xs(self, plot_bg: bool = True,     
                     plot_dspace: bool = False,     
@@ -1484,8 +1713,6 @@ class TransmissionModel(lmfit.Model):
         Designed for models before fitting. Displays a warning if fit results exist.
         Provides real-time parameter exploration with sliders, float fields, and reset functionality.
         """
-        import ipywidgets as widgets
-        import ipywidgets as widgets
         # Check for fit results
         if hasattr(self, "fit_result") and self.fit_result is not None:
             print("Warning: interactive_plot is for models before fitting. Use plot() instead.")
@@ -1693,268 +1920,6 @@ class TransmissionModel(lmfit.Model):
         # Initial plot
         update_plot()
         return main_box
-        
-    def _make_orientation_params(self, vary: bool = False):
-        """
-        Create orientation for the model.
-
-        Parameters
-        ----------
-        vary : bool, optional
-            Whether to allow these parameters to vary during fitting, by default False.
-
-        Returns
-        -------
-        lmfit.Parameters
-            The orientation-related parameters.
-        """
-        params = lmfit.Parameters()
-        for i, material in enumerate(self._materials):
-            mos = self._materials[material].get("mos", None)
-            if mos: 
-                param_name = f"η{i+1}"
-                if param_name in self.params:
-                    self.params[param_name].vary = vary
-                else:
-                    params.add(param_name, value=mos, min=0.001, max=50, vary=vary)
-                
-                theta = self._materials[material].get("theta", 0.)
-                param_name = f"θ{i+1}"
-                if param_name in self.params:
-                    self.params[param_name].vary = vary
-                else:
-                    params.add(param_name, value=theta, min=0., max=180, vary=vary)
-                
-                phi = self._materials[material].get("phi", 0.)
-                param_name = f"ϕ{i+1}"
-                if param_name in self.params:
-                    self.params[param_name].vary = vary
-                else:
-                    params.add(param_name, value=phi, min=0, max=360, vary=vary)
-        return params
-
-    def _make_temperature_params(self, vary: bool = False):
-        """
-        Create temperature for the model.
-
-        Parameters
-        ----------
-        vary : bool, optional
-            Whether to allow these parameters to vary during fitting, by default False.
-
-        Returns
-        -------
-        lmfit.Parameters
-            The temperature-related parameters.
-        """
-        params = lmfit.Parameters()
-        for i, material in enumerate(self._materials):
-            temp = self._materials[material].get("temp", None)
-            if temp: 
-                param_name = "temp"
-                if param_name in self.params:
-                    self.params[param_name].vary = vary
-                else:
-                    params.add(param_name, value=temp, min=77., max=1000, vary=vary)
-        return params
-
-    def _make_basic_params(self, vary: bool = True):
-        """
-        Create basic params for the model.
-
-        Parameters
-        ----------
-        vary : bool, optional
-            Whether to allow these parameters to vary during fitting, by default False.
-
-        Returns
-        -------
-        lmfit.Parameters
-            The basic parameters of thickness and normalization.
-        """
-        params = lmfit.Parameters()
-        param_name = "thickness"
-        if param_name in self.params:
-            self.params[param_name].vary = vary
-        else:
-            params.add(param_name, value=1., min=0., max=5., vary=vary)
-        
-        param_name = "norm"
-        if param_name in self.params:
-            self.params[param_name].vary = vary
-        else:
-            params.add(param_name, value=1., min=0.1, max=10., vary=vary)
-        return params
-
-    def _make_tof_params(self, vary: bool = False, t0: float = 0., L0: float = 1.):
-        """
-        Create time-of-flight (TOF) parameters for the model.
-
-        Parameters
-        ----------
-        vary : bool, optional
-            Whether to allow these parameters to vary during fitting, by default False.
-        t0 : float, optional
-            Initial time offset parameter, by default 0.
-        L0 : float, optional
-            Initial flight path distance scale parameter, by default 1.
-
-        Returns
-        -------
-        lmfit.Parameters
-            The TOF-related parameters.
-        """
-        params = lmfit.Parameters()
-        param_name = "L0"
-        if param_name in self.params:
-            self.params[param_name].vary = vary
-        else:
-            params.add(param_name, value=L0, min=0.5, max=1.5, vary=vary)
-        
-        param_name = "t0"
-        if param_name in self.params:
-            self.params[param_name].vary = vary
-        else:
-            params.add(param_name, value=t0, min=-5e-6, max=5e6, vary=vary)
-        return params
-
-    def _make_weight_params(self, vary: bool = False):
-        """
-        Create lmfit parameters based on initial isotope weights.
-
-        Parameters
-        ----------
-        vary : bool, optional
-            Whether to allow weights to vary during fitting, by default False.
-
-        Returns
-        -------
-        lmfit.Parameters
-            The normalized weight parameters for the model.
-        """
-        params = lmfit.Parameters()
-        weights = np.array([self._materials[phase]["weight"] for phase in self._materials])
-        param_names = [phase.replace("-", "") for phase in self._materials]
-
-        N = len(weights)
-        if N == 1:
-            # Special case: if N=1, the weight is always 1
-            params.add(f'{param_names[0]}', value=1., vary=False)
-        else:
-
-            last_weight = weights[-1]
-            # Add (N-1) free parameters corresponding to the first (N-1) items
-            for i, name in enumerate(param_names[:-1]):
-                initial_value = weights[i]  # Use weight values
-                params.add(f'p{i+1}',value=np.log(weights[i]/last_weight),min=-14,max=14,vary=vary) # limit to 1ppm
-            
-            # Define the normalization expression
-            normalization_expr = ' + '.join([f'exp(p{i+1})' for i in range(N-1)])
-            
-            # Add weights based on the free parameters
-            for i, name in enumerate(param_names[:-1]):
-                params.add(f'{name}', expr=f'exp(p{i+1}) / (1 + {normalization_expr})')
-            
-            # The last weight is 1 minus the sum of the previous weights
-            params.add(f'{param_names[-1]}', expr=f'1 / (1 + {normalization_expr})')
-
-        return params
-    
-    def _make_lattice_params(self, vary: bool = False):
-        """
-        Create lattice-parameter ('a','b','c') params for the model.
-
-        Parameters
-        ----------
-        vary : bool, optional
-            Whether to allow these parameters to vary during fitting, by default False.
-
-        Returns
-        -------
-        lmfit.Parameters
-            The lattice-related parameters.
-        """
-        params = lmfit.Parameters()
-        for i, material in enumerate(self._materials):
-            # update materials with new lattice parameter
-            try:
-                info = self.cross_section.phases_data[material].info.structure_info
-                a, b, c = info["a"], info["b"], info["c"]
-
-                param_a_name = f"a{i+1}" if len(self._materials)>1 else "a"
-                param_b_name = f"b{i+1}" if len(self._materials)>1 else "b"
-                param_c_name = f"c{i+1}" if len(self._materials)>1 else "c"
-
-                if np.isclose(a,b,atol=1e-4) and np.isclose(b,c,atol=1e-4):
-                    if param_a_name in self.params:
-                        self.params[param_a_name].vary = vary
-                    else:
-                        params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
-                        params.add(param_b_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
-                        params.add(param_c_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
-                elif np.isclose(a,b,atol=1e-4) and not np.isclose(c,b,atol=1e-4):
-                    if param_a_name in self.params:
-                        self.params[param_a_name].vary = vary
-                        self.params[param_c_name].vary = vary
-                    else:
-                        params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
-                        params.add(param_b_name, value=a, min=0.5, max=10, vary=vary, expr=param_a_name)
-                        params.add(param_c_name, value=c, min=0.5, max=10, vary=vary)
-                elif not np.isclose(a,b,atol=1e-4) and not np.isclose(c,b,atol=1e-4):
-                    if param_a_name in self.params:
-                        self.params[param_a_name].vary = vary
-                        self.params[param_b_name].vary = vary
-                        self.params[param_c_name].vary = vary
-                    else:
-                        params.add(param_a_name, value=a, min=0.5, max=10, vary=vary)
-                        params.add(param_b_name, value=b, min=0.5, max=10, vary=vary)
-                        params.add(param_c_name, value=c, min=0.5, max=10, vary=vary)
-            except:
-                pass
-                    
-        return params
-
-    
-    def _make_extinction_params(self, vary: bool = False):
-        """
-        Create extinction-parameter ('ext_l', 'ext_Gg', 'ext_L') params for the model.
-
-        Parameters
-        ----------
-        vary : bool, optional
-            Whether to allow these parameters to vary during fitting, by default False.
-
-        Returns
-        -------
-        lmfit.Parameters
-            The extinction-related parameters.
-        """
-        params = lmfit.Parameters()
-        for i, material in enumerate(self._materials):
-            # update materials with new lattice parameter
-            try:
-                info = self.cross_section.extinction[material]
-
-
-                l, Gg, L = info["l"], info["Gg"], info["L"]
-
-                param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
-                param_Gg_name = f"ext_Gg{i+1}" if len(self._materials)>1 else "ext_Gg"
-                param_L_name = f"ext_L{i+1}" if len(self._materials)>1 else "ext_L"
-
-
-                if param_l_name in self.params:
-                    self.params[param_l_name].vary = vary
-                    self.params[param_Gg_name].vary = vary
-                    self.params[param_L_name].vary = vary
-                else:
-                    params.add(param_l_name, value=l, min=0., max=10000,vary=vary)
-                    params.add(param_Gg_name, value=Gg, min=0., max=10000,vary=vary)
-                    params.add(param_L_name, value=L, min=0., max=1000000,vary=vary)
-            except KeyError:
-                warnings.warn(f"@CRYSEXTN section is not defined for the {material} phase")
-                                
-        return params
 
     def set_cross_section(self, xs: 'CrossSection', inplace: bool = True) -> 'TransmissionModel':
         """
