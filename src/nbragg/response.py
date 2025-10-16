@@ -490,14 +490,16 @@ class Response:
 
         params = params if params else self.params
         y = self.function(**params.valuesdict())
-        if self.kind == "jorgensen":
+        if self.kind == "jorgensen" or self.kind == "full_jorgensen" or self.kind == "square_jorgensen":
             xlabel = kwargs.pop("xlabel", "wavelength [Angstrom]")
             df = pd.Series(y, index=self.Δλ, name="Response")
             df.plot(ax=ax, xlabel=xlabel, **kwargs)
         elif self.kind == "square":
             xlabel = kwargs.pop("xlabel", "tof [usec]")
             df = pd.Series(y, index=self.tgrid, name="Response")
-            df.plot(ax=ax, xlabel=xlabel, **kwargs)       
+            df.plot(ax=ax, xlabel=xlabel, **kwargs)     
+        else:
+            raise("response plotting is only supported for 'jorgensen','full_jorgensen', 'square', and 'jorgensen_square' kinds")
 
 
 class Background:
