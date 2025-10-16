@@ -4,11 +4,11 @@ import numpy as np
 import pickle
 import json
 import os
+import warnings
 
 # Constants
 SPEED_OF_LIGHT = 299792458  # m/s
 MASS_OF_NEUTRON = 939.56542052 * 1e6 / (SPEED_OF_LIGHT ** 2)  # [eV s²/m²]
-
 
 def time2energy(time, flight_path_length):
     """
@@ -41,7 +41,7 @@ def energy2time(energy, flight_path_length):
 # Initialize materials as a global dictionary
 materials = {}
 _initialized = False
-_initializing = False  # Recursion guard
+_initializing_materials = False  # Recursion guard for initialize_materials
 
 def get_cache_path():
     """
@@ -51,12 +51,11 @@ def get_cache_path():
     2. Package directory (if writable)
     3. Temporary directory as fallback
     """
-    # Try user cache directory first (most reliable)
     try:
         if os.name == 'nt':  # Windows
             cache_dir = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'nbragg'
         else:  # Linux/Mac
-            cache_dir = Path.home() / '.cache' / 'nbragg'
+            cache_dir = Path(os.environ.get('HOME', '/tmp')) / '.cache' / 'nbragg'
         
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_file = cache_dir / 'materials_cache.pkl'
@@ -130,7 +129,6 @@ def save_cache(materials_dict):
             pickle.dump(materials_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
         return True
     except Exception as e:
-        import warnings
         warnings.warn(f"Could not save materials cache: {e}")
         return False
 
@@ -142,7 +140,6 @@ def load_cache():
             with open(cache_path, 'rb') as f:
                 return pickle.load(f)
     except Exception as e:
-        import warnings
         warnings.warn(f"Could not load materials cache: {e}")
     return None
 
@@ -159,7 +156,6 @@ def save_user_materials(user_materials_dict):
             json.dump(json_dict, f, indent=2)
         return True
     except Exception as e:
-        import warnings
         warnings.warn(f"Could not save user materials: {e}")
         return False
 
@@ -211,7 +207,6 @@ def load_user_materials():
             
             return materials_dict
     except Exception as e:
-        import warnings
         warnings.warn(f"Could not load user materials: {e}")
     return {}
 
@@ -237,7 +232,6 @@ def save_ncmat_content(filename, content):
             f.write(content)
         return True
     except Exception as e:
-        import warnings
         warnings.warn(f"Could not save NCMAT content for {filename}: {e}")
         return False
 
@@ -325,29 +319,41 @@ def make_materials_dict():
     
     return mat_dict
 
+
 def initialize_materials():
-    """
-    Initialize the global materials dictionary.
-    Uses cache if available, otherwise builds and caches it.
-    Also loads user-registered materials.
-    """
-    global materials
-    
-    # Try to load from cache first
-    cached_materials = load_cache()
-    
-    if cached_materials is not None:
-        materials.update(cached_materials)
-    else:
-        # Build materials dictionary from NCrystal files
-        materials.update(make_materials_dict())
-        # Save to cache for next time
-        save_cache(materials)
-    
-    # Load and merge user-registered materials
-    user_materials = load_user_materials()
-    if user_materials:
-        materials.update(user_materials)
+    """Initialize the global materials dictionary, avoiding recursion issues."""
+    global _initializing_materials, _initialized, materials
+
+    # Recursion guard
+    if _initializing_materials:
+        raise RuntimeError(
+            "Recursion detected in initialize_materials. "
+            "Try calling initialize_materials() explicitly before accessing materials, "
+            "or check for issues in get_cache_path() or IPython output handling."
+        )
+
+    _initializing_materials = True
+    try:
+        cached_materials = load_cache()
+
+        # Always convert to a plain dict to avoid LazyMaterialsDict recursion
+        if cached_materials is not None:
+            base_data = dict(cached_materials)
+        else:
+            base_data = make_materials_dict()
+            save_cache(base_data)
+
+        # Bypass LazyMaterialsDict.update(), which calls _ensure_initialized()
+        super(LazyMaterialsDict, materials).clear()
+        super(LazyMaterialsDict, materials).update(base_data)
+
+        # Mark initialization as complete before any access
+        _initialized = True
+        _initializing_materials = False
+
+    finally:
+        _initializing_materials = False
+
 
 def rebuild_cache(save_to_cache=True):
     """
@@ -427,36 +433,6 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
     Returns:
     --------
     dict : The materials that were registered
-    
-    Examples:
-    ---------
-    >>> # Register from file
-    >>> register_material("Fe_custom.ncmat")
-    
-    >>> # Register with custom name
-    >>> register_material("Fe_custom.ncmat", material_name="MyIron")
-    
-    >>> # Register from CIF file
-    >>> register_material(cif_source="bismuth.cif", material_name="Bi")
-    
-    >>> # Register from COD database
-    >>> register_material(cif_source="codid::7123352", material_name="Bismuth")
-    
-    >>> # Register from dict
-    >>> register_material(iron={'mat': 'Fe.ncmat', 'temp': 500})
-    
-    >>> # Register multiple materials
-    >>> register_material(
-    ...     iron={'mat': 'Fe.ncmat'},
-    ...     copper={'mat': 'Cu.ncmat'}
-    ... )
-    
-    >>> # Register from CrossSection
-    >>> xs = CrossSection(alpha=materials["Fe_sg229"], beta=materials["Fe_sg225"])
-    >>> register_material(**xs.materials, save_persistent=False)
-    
-    >>> # Register specific phases with custom names
-    >>> register_material(custom_alpha=xs.materials['alpha'])
     """
     updated_materials = {}
     
@@ -515,7 +491,7 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
                 'ext_tilt': None,
                 'weight': 1.0,
                 '_name': material_name,
-                '_formula': '',  # Could be extracted from composer if needed
+                '_formula': '',
                 '_space_group': '',
                 '_custom': True,
                 '_cif_source': cif_source,
@@ -646,7 +622,6 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
     
     return updated_materials
 
-
 def _try_store_material_content(material_dict):
     """
     Try to store the NCMAT content for a material if accessible.
@@ -670,7 +645,6 @@ def _try_store_material_content(material_dict):
     except Exception:
         # If we can't access the content, that's okay
         pass
-
 
 def _process_material_dict(material_info):
     """
@@ -713,7 +687,6 @@ def _process_material_dict(material_info):
             full_material[key] = value
     
     return full_material
-
 
 def get_material_info(material_key, show_url=False):
     """
@@ -766,7 +739,6 @@ def get_material_info(material_key, show_url=False):
     
     return '\n'.join(info_lines)
 
-
 def list_materials(filter_str=None, custom_only=False):
     """
     List all available materials with optional filtering.
@@ -813,7 +785,6 @@ def clear_user_materials():
         if user_path.exists():
             user_path.unlink()
     except Exception as e:
-        import warnings
         warnings.warn(f"Could not clear user materials: {e}")
     
     # Reload from cache only
@@ -825,10 +796,6 @@ def clear_user_materials():
         # Rebuild if no cache
         rebuild_cache()
 
-# Initialize the materials dictionary at module import
-# This is now lazy - only builds when first accessed
-_initialized = False
-
 def _ensure_initialized():
     """Ensure materials dictionary is initialized (lazy loading)."""
     global _initialized
@@ -836,7 +803,6 @@ def _ensure_initialized():
         initialize_materials()
         _initialized = True
 
-# Override materials dict access to ensure initialization
 class LazyMaterialsDict(dict):
     """Dictionary that initializes materials on first access."""
     
