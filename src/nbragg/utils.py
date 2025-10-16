@@ -576,6 +576,7 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
             new_material['_ncmat_content'] = file_content
         
         updated_materials[material_name] = new_material
+        
     
     # Handle dictionary input
     elif materials_dict:
@@ -620,7 +621,8 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
         user_materials.update(updated_materials)
         save_user_materials(user_materials)
     
-    return updated_materials
+    return {k: MaterialSpec(v) if not isinstance(v, MaterialSpec) else v 
+        for k, v in updated_materials.items()}
 
 def _try_store_material_content(material_dict):
     """
@@ -803,12 +805,126 @@ def _ensure_initialized():
         initialize_materials()
         _initialized = True
 
+class Hyperlink:
+    """
+    A simple hyperlink representation that displays as 'hyperlink' in repr
+    but can be clicked in Jupyter/IPython environments.
+    """
+    
+    def __init__(self, url):
+        self.url = url
+    
+    def __repr__(self):
+        return self.url
+    
+    def _repr_html_(self):
+        """
+        Jupyter/IPython HTML representation - creates a clickable link.
+        """
+        return f'<a href="{self.url}" target="_blank">hyperlink</a>'
+    
+    def __str__(self):
+        return self.url
+
+
+class MaterialSpec(dict):
+    """
+    A dictionary subclass for material specifications that supports weight multiplication
+    and provides enhanced representation with hyperlinks.
+    
+    Usage:
+        material = nbragg.materials["Al2O3_sg167_Corundum"]
+        weighted_material = material * 0.5  # Creates new MaterialSpec with weight=0.5
+        xs = CrossSection(phase1=material * 0.3, phase2=other_material * 0.7)
+    """
+    
+    def __mul__(self, weight):
+        """
+        Multiply material by a weight factor.
+        
+        Parameters:
+        -----------
+        weight : float
+            Weight factor to apply to the material
+        
+        Returns:
+        --------
+        MaterialSpec : New MaterialSpec with updated weight
+        """
+        if not isinstance(weight, (int, float)):
+            return NotImplemented
+        
+        # Create a copy of the material
+        new_material = MaterialSpec(self)
+        new_material['weight'] = float(weight)
+        return new_material
+    
+    def __rmul__(self, weight):
+        """
+        Right multiplication (weight * material).
+        
+        Parameters:
+        -----------
+        weight : float
+            Weight factor to apply to the material
+        
+        Returns:
+        --------
+        MaterialSpec : New MaterialSpec with updated weight
+        """
+        return self.__mul__(weight)
+    
+    def __repr__(self):
+        """
+        Enhanced representation with hyperlink for URL.
+        """
+        # Create a copy of the dict for display
+        display_dict = dict(self)
+        
+        # Replace URL with hyperlink object if present
+        if '_url' in display_dict and display_dict['_url']:
+            url = display_dict['_url']
+            display_dict['_url'] = Hyperlink(url)
+        
+        return repr(display_dict)
+    
+    def _repr_pretty_(self, p, cycle):
+        """
+        IPython/Jupyter pretty printing support.
+        """
+        if cycle:
+            p.text('{...}')
+            return
+        
+        with p.group(1, '{', '}'):
+            if self:
+                for idx, (key, value) in enumerate(self.items()):
+                    if idx:
+                        p.text(',')
+                        p.breakable()
+                    
+                    p.text(repr(key))
+                    p.text(': ')
+                    
+                    # Special handling for URL
+                    if key == '_url' and value:
+                        p.text(repr(Hyperlink(value)))
+                    else:
+                        p.pretty(value)
+
+
 class LazyMaterialsDict(dict):
-    """Dictionary that initializes materials on first access."""
+    """Dictionary that initializes materials on first access and returns MaterialSpec objects."""
     
     def __getitem__(self, key):
         _ensure_initialized()
-        return super().__getitem__(key)
+        material_dict = super().__getitem__(key)
+        # Wrap in MaterialSpec if not already wrapped
+        if not isinstance(material_dict, MaterialSpec):
+            material_dict = MaterialSpec(material_dict)
+            # Update the stored value so we don't re-wrap every time
+            super().__setitem__(key, material_dict)
+        return material_dict
     
     def __iter__(self):
         _ensure_initialized()
@@ -823,16 +939,30 @@ class LazyMaterialsDict(dict):
         return super().keys()
     
     def values(self):
+        """Return MaterialSpec-wrapped values."""
         _ensure_initialized()
-        return super().values()
+        for key in super().keys():
+            yield self[key]  # Use __getitem__ to get wrapped version
     
     def items(self):
+        """Return items with MaterialSpec-wrapped values."""
         _ensure_initialized()
-        return super().items()
+        for key in super().keys():
+            yield key, self[key]  # Use __getitem__ to get wrapped version
     
     def get(self, key, default=None):
         _ensure_initialized()
-        return super().get(key, default)
+        if key not in self:
+            return default
+        return self[key]  # Use __getitem__ to get wrapped version
+    
+    def update(self, *args, **kwargs):
+        """Override update to handle initialization properly."""
+        _ensure_initialized()
+        super().update(*args, **kwargs)
+
+# Add to your module exports or integrate into existing code
+__all__ = ['MaterialSpec', 'Hyperlink', 'LazyMaterialsDict']
 
 # Replace materials dict with lazy version
 materials = LazyMaterialsDict()
