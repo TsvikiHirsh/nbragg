@@ -166,7 +166,7 @@ class TestCrossSection(unittest.TestCase):
                 'ext_l': 100.0,
                 'ext_Gg': 1000.0,
                 'ext_L': 100000.0,
-                'ext_tilt': 'Gauss',
+                'ext_dist': 'Gauss',
                 'ext_method': 'BC_pure',
                 'weight': 0.0275
             },
@@ -184,7 +184,7 @@ class TestCrossSection(unittest.TestCase):
         self.assertEqual(xs.materials['alpha']['ext_l'], 100.0)
         self.assertEqual(xs.materials['alpha']['ext_Gg'], 1000.0)
         self.assertEqual(xs.materials['alpha']['ext_L'], 100000.0)
-        self.assertEqual(xs.materials['alpha']['ext_tilt'], 'Gauss')
+        self.assertEqual(xs.materials['alpha']['ext_dist'], 'Gauss')
         self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
         self.assertAlmostEqual(xs.materials['alpha']['weight'], 0.0275)
         
@@ -215,7 +215,7 @@ class TestCrossSection(unittest.TestCase):
                 'ext_l': 100.0,
                 'ext_Gg': 1000.0,
                 'ext_L': 100000.0,
-                'ext_tilt': 'Gauss',
+                'ext_dist': 'Gauss',
                 'ext_method': 'BC_pure',
                 'weight': 0.0275
             },
@@ -233,7 +233,7 @@ class TestCrossSection(unittest.TestCase):
         xs.materials['alpha']['ext_l'] = 200.0
         xs.materials['alpha']['ext_Gg'] = 300.0
         xs.materials['alpha']['ext_L'] = 200000.0
-        xs.materials['alpha']['ext_tilt'] = 'Lorentz'
+        xs.materials['alpha']['ext_dist'] = 'Lorentz'
         xs.materials['alpha']['ext_method'] = 'BC_pure'
         xs.materials['gamma']['ext_l'] = 150.0
         xs.materials['gamma']['ext_Gg'] = 200.0
@@ -246,7 +246,7 @@ class TestCrossSection(unittest.TestCase):
         self.assertEqual(xs.materials['alpha']['ext_l'], 200.0)
         self.assertEqual(xs.materials['alpha']['ext_Gg'], 300.0)
         self.assertEqual(xs.materials['alpha']['ext_L'], 200000.0)
-        self.assertEqual(xs.materials['alpha']['ext_tilt'], 'Lorentz')
+        self.assertEqual(xs.materials['alpha']['ext_dist'], 'Lorentz')
         self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
         self.assertEqual(xs.materials['gamma']['ext_l'], 150.0)
         self.assertEqual(xs.materials['gamma']['ext_Gg'], 200.0)
@@ -267,7 +267,7 @@ class TestCrossSection(unittest.TestCase):
                 'ext_l': 100.0,
                 'ext_Gg': 1000.0,
                 'ext_L': 100000.0,
-                'ext_tilt': 'Gauss',
+                'ext_dist': 'Gauss',
                 'ext_method': 'BC_pure',
                 'weight': 0.0275
             },
@@ -282,14 +282,14 @@ class TestCrossSection(unittest.TestCase):
         })
         
         wl = np.array([1.0, 2.0, 3.0])
-        xs(wl, ext_l1=300.0, ext_Gg1=400.0, ext_L1=150000.0, ext_tilt1='Gauss', ext_method1='BC_pure',
+        xs(wl, ext_l1=300.0, ext_Gg1=400.0, ext_L1=150000.0, ext_dist1='Gauss', ext_method1='BC_pure',
                ext_l2=250.0, ext_Gg2=300.0, ext_L2=200000.0, ext_method2='Sabine_corr')
         
         # Verify updated parameters
         self.assertEqual(xs.materials['alpha']['ext_l'], 300.0)
         self.assertEqual(xs.materials['alpha']['ext_Gg'], 400.0)
         self.assertEqual(xs.materials['alpha']['ext_L'], 150000.0)
-        self.assertEqual(xs.materials['alpha']['ext_tilt'], 'Gauss')
+        self.assertEqual(xs.materials['alpha']['ext_dist'], 'Gauss')
         self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
         self.assertEqual(xs.materials['gamma']['ext_l'], 250.0)
         self.assertEqual(xs.materials['gamma']['ext_Gg'], 300.0)
@@ -307,21 +307,21 @@ class TestCrossSection(unittest.TestCase):
         self.assertEqual(xs_values.shape, wl.shape)
         self.assertTrue(np.all(xs_values >= 0))
 
-    def test_cross_section_extinction_invalid_tilt(self):
-        """Test handling of invalid extinction tilt values."""
+    def test_cross_section_extinction_invalid_dist(self):
+        """Test handling of invalid extinction dist values."""
         xs = CrossSection({
             'iron': {
                 'mat': 'Fe_sg225_Iron-gamma.ncmat',
                 'ext_l': 100.0,
                 'ext_Gg': 1000.0,
                 'ext_L': 100000.0,
-                'ext_tilt': 'invalid_tilt',
+                'ext_dist': 'invalid_dist',
                 'ext_method': 'Sabine_uncorr'
             }
         })
         
-        # Verify default tilt
-        self.assertEqual(xs.materials['iron']['ext_tilt'], 'rect')
+        # Verify default dist
+        self.assertEqual(xs.materials['iron']['ext_dist'], 'rect')
         self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['iron'])
         self.assertIn('Sabine_uncorr  100.0000  1000.0000  100000.0000  rect', xs.textdata['iron'])
 
