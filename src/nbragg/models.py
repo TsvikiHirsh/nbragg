@@ -300,6 +300,7 @@ class TransmissionModel(lmfit.Model):
             from tqdm.notebook import tqdm
         except ImportError:
             from tqdm.auto import tqdm
+            
 
         # If progress_bar=True, wrap the fit in tqdm
         if progress_bar:
@@ -602,7 +603,7 @@ class TransmissionModel(lmfit.Model):
         import fnmatch
         import pandas
         try:
-            from tqdm.notebook import tqdm as notebook_tqdm
+            from tqdm.notebook import tqdm
         except ImportError:
             from tqdm.auto import tqdm
         import pickle
@@ -762,9 +763,9 @@ class TransmissionModel(lmfit.Model):
 
         # Setup tqdm iterator
         try:
-            from tqdm.notebook import tqdm as notebook_tqdm
+            from tqdm.notebook import tqdm
             if 'ipykernel' in sys.modules:
-                iterator = notebook_tqdm(
+                iterator = tqdm(
                     zip(stage_names, resolved_stages, stage_overrides),
                     desc=f"{'Rietveld' if method == 'rietveld' else 'Staged'} Fit",
                     disable=not progress_bar,
