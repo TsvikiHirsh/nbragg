@@ -8,8 +8,8 @@ class TestCrossSection(unittest.TestCase):
     def test_cross_section_init_with_materials_dict(self):
         """Test initialization with dictionary of materials."""
         xs = CrossSection(
-            gamma=materials_dict["Fe_sg225_Iron-gamma.ncmat"],
-            alpha="Fe_sg229_Iron-alpha.ncmat"
+            gamma=materials_dict["Fe_sg225_Iron-gamma"],
+            alpha="Fe_sg229_Iron-alpha"
         )
         
         self.assertEqual(len(xs.materials), 2)
@@ -48,8 +48,8 @@ class TestCrossSection(unittest.TestCase):
     def test_cross_section_init_with_total_weight(self):
         """Test initialization with total weight scaling."""
         xs = CrossSection(
-            gamma=materials_dict["Fe_sg225_Iron-gamma.ncmat"],
-            alpha="Fe_sg229_Iron-alpha.ncmat", 
+            gamma=materials_dict["Fe_sg225_Iron-gamma"],
+            alpha="Fe_sg229_Iron-alpha",
             total_weight=2.0
         )
         
@@ -59,8 +59,8 @@ class TestCrossSection(unittest.TestCase):
 
     def test_cross_section_add_operator(self):
         """Test addition of two CrossSection objects."""
-        xs1 = CrossSection(gamma=materials_dict["Fe_sg225_Iron-gamma.ncmat"])
-        xs2 = CrossSection(alpha="Fe_sg229_Iron-alpha.ncmat")
+        xs1 = CrossSection(gamma=materials_dict["Fe_sg225_Iron-gamma"])
+        xs2 = CrossSection(alpha="Fe_sg229_Iron-alpha")
         
         xs_combined = xs1 + xs2
         
@@ -71,7 +71,7 @@ class TestCrossSection(unittest.TestCase):
     def test_cross_section_multiply_operator(self):
         """Test multiplication of a CrossSection by a scalar."""
         xs1 = CrossSection(
-            gamma=materials_dict["Fe_sg225_Iron-gamma.ncmat"], 
+            gamma=materials_dict["Fe_sg225_Iron-gamma"],
             total_weight=1.0
         )
         
@@ -132,9 +132,71 @@ class TestCrossSection(unittest.TestCase):
             iron_gamma='Fe_sg225_Iron-gamma.ncmat',
             iron_alpha='Fe_sg229_Iron-alpha.ncmat'
         )
-        
+
         self.assertEqual(xs.materials['iron_gamma']['mat'], 'Fe_sg225_Iron-gamma.ncmat')
         self.assertEqual(xs.materials['iron_alpha']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
+
+    def test_cross_section_with_string_in_materials_dict(self):
+        """Test initialization using string values in materials dictionary (issue fix)."""
+        # This is the use case from the error: CrossSection(iron="Fe_sg229_Iron-alpha.ncmat")
+        # where the value is a direct string (file path)
+        xs = CrossSection({
+            'iron': 'Fe_sg229_Iron-alpha.ncmat'
+        })
+
+        self.assertEqual(len(xs.materials), 1)
+        self.assertEqual(xs.materials['iron']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertEqual(xs.materials['iron']['temp'], 300.0)
+        self.assertAlmostEqual(xs.materials['iron']['weight'], 1.0)
+
+    def test_cross_section_with_string_from_materials_dict(self):
+        """Test initialization using string references to nbragg.materials dictionary."""
+        # Check if the material exists in the materials_dict
+        if 'Fe_sg229_Iron-alpha' in materials_dict:
+            xs = CrossSection({
+                'iron': 'Fe_sg229_Iron-alpha'
+            })
+
+            self.assertEqual(len(xs.materials), 1)
+            # Should resolve to the material from materials_dict
+            expected_mat = materials_dict['Fe_sg229_Iron-alpha']['mat']
+            self.assertEqual(xs.materials['iron']['mat'], expected_mat)
+
+    def test_cross_section_with_string_without_extension(self):
+        """Test initialization using string without .ncmat extension."""
+        # This should work for both "Fe_sg229_Iron-alpha" and "Fe_sg229_Iron-alpha.ncmat"
+        xs1 = CrossSection({
+            'iron': 'Fe_sg229_Iron-alpha.ncmat'
+        })
+
+        xs2 = CrossSection({
+            'iron': 'Fe_sg229_Iron-alpha'
+        })
+
+        # Both should produce the same result
+        self.assertEqual(xs1.materials['iron']['mat'], xs2.materials['iron']['mat'])
+        self.assertEqual(len(xs1.materials), 1)
+        self.assertEqual(len(xs2.materials), 1)
+
+    def test_materials_dict_backward_compatibility(self):
+        """Test that materials dictionary supports both key formats (backward compatibility)."""
+        # Test accessing materials dict with .ncmat extension
+        mat_without_ext = materials_dict['Fe_sg229_Iron-alpha']
+        mat_with_ext = materials_dict['Fe_sg229_Iron-alpha.ncmat']
+
+        # Both should return the same material
+        self.assertEqual(mat_without_ext['mat'], mat_with_ext['mat'])
+        self.assertEqual(mat_without_ext['mat'], 'Fe_sg229_Iron-alpha.ncmat')
+
+    def test_cross_section_with_materials_dict_with_extension(self):
+        """Test backward compatibility: CrossSection with materials_dict accessed via .ncmat key."""
+        # This is the use case from the notebook that was failing
+        xs = CrossSection(
+            iron=materials_dict['Fe_sg229_Iron-alpha.ncmat']
+        )
+
+        self.assertEqual(len(xs.materials), 1)
+        self.assertEqual(xs.materials['iron']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
 
     def test_cross_section_with_extinction_single(self):
         """Test initialization with extinction parameters for single material."""

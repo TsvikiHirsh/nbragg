@@ -11,7 +11,7 @@ class TestTransmissionModel(unittest.TestCase):
 
     def setUp(self):
         """Set up the model with a real CrossSection for testing."""
-        self.cross_section = CrossSection(iron=materials["Fe_sg229_Iron-alpha.ncmat"])
+        self.cross_section = CrossSection(iron=materials["Fe_sg229_Iron-alpha"])
         self.model = TransmissionModel(self.cross_section)
         # Mock data for fitting tests
         self.mock_data = pd.DataFrame({
