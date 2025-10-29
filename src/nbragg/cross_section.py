@@ -25,21 +25,24 @@ class CrossSection:
     """
     Represents a combination of cross-sections for crystal materials.
     """
-    def __init__(self, materials: Union[Dict[str, Union[Dict, dict]], 'CrossSection', None] = None,
+    def __init__(self, materials: Union[Dict[str, Union[Dict, dict, str]], 'CrossSection', None] = None,
                  name: str = None,
                  total_weight: float = 1.,
                  **kwargs):
         """
         Initialize the CrossSection class.
-        
+
         Args:
             materials: Dictionary of material specifications in format:
                 {"name": {"mat": material_source, "temp": temp, "mos": mos, "dir1": dir1, "dir2": dir2, "weight": weight}}
                 OR {"name": material_dict_from_nbragg_materials}
+                OR {"name": "material_name_in_nbragg_materials"}  (string lookup)
+                OR {"name": "path/to/material.ncmat"}  (direct file path)
                 OR an instance of the CrossSection class
             name: Name for this cross-section combination.
             **kwargs: Additional materials in format material_name=material_dict_from_nbragg_materials
-                      or material_name="material_name_in_nbragg_materials".
+                      or material_name="material_name_in_nbragg_materials"
+                      or material_name="path/to/material.ncmat".
         """
         self.name = name
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
@@ -57,8 +60,19 @@ class CrossSection:
         
         # Add materials from kwargs
         for key, value in kwargs.items():
-            if isinstance(value, str) and value in materials_dict:
-                combined_materials[key] = materials_dict[value]
+            if isinstance(value, str):
+                # Try exact match first
+                if value in materials_dict:
+                    combined_materials[key] = materials_dict[value]
+                # Try with .ncmat extension if not present
+                elif not value.endswith('.ncmat') and f"{value}.ncmat" in materials_dict:
+                    combined_materials[key] = materials_dict[f"{value}.ncmat"]
+                # Try without .ncmat extension if present
+                elif value.endswith('.ncmat') and value[:-6] in materials_dict:
+                    combined_materials[key] = materials_dict[value[:-6]]
+                else:
+                    # Keep as is (will be treated as file path)
+                    combined_materials[key] = value
             else:
                 combined_materials[key] = value
 
@@ -80,7 +94,7 @@ class CrossSection:
         """Process materials dictionary while preserving relative weights."""
         processed = {}
         raw_total_weight = 0
-        
+
         # First pass: process specifications without normalizing weights
         for name, spec in materials.items():
             if isinstance(spec, dict) and not spec.get('mat'):
@@ -108,9 +122,53 @@ class CrossSection:
                 for material_name, material_spec in spec.materials.items():
                     processed[f"{name}_{material_name}"] = material_spec.copy()
                     raw_total_weight += material_spec['weight']
+            elif isinstance(spec, str):
+                # Handle string specification - look up in materials_dict
+                # Try exact match first
+                if spec in materials_dict:
+                    spec = materials_dict[spec]
+                # Try with .ncmat extension if not present
+                elif not spec.endswith('.ncmat') and f"{spec}.ncmat" in materials_dict:
+                    spec = materials_dict[f"{spec}.ncmat"]
+                # Try without .ncmat extension if present
+                elif spec.endswith('.ncmat') and spec[:-6] in materials_dict:
+                    spec = materials_dict[spec[:-6]]
+                else:
+                    # Treat as a direct material path (e.g., .ncmat file)
+                    spec = {'mat': spec}
+
+                # Now process as a dictionary
+                material = spec.get('mat')
+                if isinstance(material, dict):
+                    material = material.get('mat')
+                elif isinstance(material, str):
+                    material = self._resolve_material(material)
+
+                weight = float(spec.get('weight', 1.0))
+                raw_total_weight += weight
+
+                processed[name] = {
+                    'mat': material,
+                    'temp': spec.get('temp', 300.),
+                    'mos': spec.get('mos', None),
+                    'dir1': spec.get('dir1', None),
+                    'dir2': spec.get('dir2', None),
+                    'dirtol': spec.get('dirtol', None),
+                    'theta': spec.get('theta', None),
+                    'phi': spec.get('phi', None),
+                    'a': spec.get('a', None),
+                    'b': spec.get('b', None),
+                    'c': spec.get('c', None),
+                    'ext_method': spec.get('ext_method', None),
+                    'ext_l': spec.get('ext_l', None),
+                    'ext_Gg': spec.get('ext_Gg', None),
+                    'ext_L': spec.get('ext_L', None),
+                    'ext_dist': spec.get('ext_dist', None),
+                    'weight': weight
+                }
             else:
                 if not isinstance(spec, dict):
-                    raise ValueError(f"Material specification for {name} must be a dictionary")
+                    raise ValueError(f"Material specification for {name} must be a dictionary or string")
                 
                 material = spec.get('mat')
                 if isinstance(material, dict):

@@ -918,12 +918,33 @@ class LazyMaterialsDict(dict):
     
     def __getitem__(self, key):
         _ensure_initialized()
-        material_dict = super().__getitem__(key)
+
+        # Try exact match first
+        try:
+            material_dict = super().__getitem__(key)
+        except KeyError:
+            # If key ends with .ncmat, try without extension
+            if key.endswith('.ncmat'):
+                try:
+                    material_dict = super().__getitem__(key[:-6])
+                except KeyError:
+                    raise KeyError(key)
+            # If key doesn't end with .ncmat, try with extension
+            else:
+                try:
+                    material_dict = super().__getitem__(f"{key}.ncmat")
+                except KeyError:
+                    raise KeyError(key)
+
         # Wrap in MaterialSpec if not already wrapped
         if not isinstance(material_dict, MaterialSpec):
             material_dict = MaterialSpec(material_dict)
             # Update the stored value so we don't re-wrap every time
-            super().__setitem__(key, material_dict)
+            # Use the original key that worked for storage
+            for possible_key in [key, key[:-6] if key.endswith('.ncmat') else None, f"{key}.ncmat"]:
+                if possible_key and possible_key in dict.keys(self):
+                    super().__setitem__(possible_key, material_dict)
+                    break
         return material_dict
     
     def __iter__(self):
