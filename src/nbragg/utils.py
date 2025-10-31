@@ -187,6 +187,7 @@ def load_user_materials():
                     'ext_Gg': value.get('ext_Gg'),
                     'ext_L': value.get('ext_L'),
                     'ext_dist': value.get('ext_dist'),
+                    'sans': value.get('sans'),
                     'weight': value.get('weight', 1.0),
                 }
                 # Add metadata fields
@@ -309,6 +310,7 @@ def make_materials_dict():
                 'ext_Gg': None,
                 'ext_L': None,
                 'ext_dist': None,
+                'sans': None,
                 'weight': 1.0,
                 # Metadata for convenience
                 '_name': name,
@@ -489,6 +491,7 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
                 'ext_Gg': None,
                 'ext_L': None,
                 'ext_dist': None,
+                'sans': None,
                 'weight': 1.0,
                 '_name': material_name,
                 '_formula': '',
@@ -563,6 +566,7 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
             'ext_Gg': None,
             'ext_L': None,
             'ext_dist': None,
+            'sans': None,
             'weight': 1.0,
             '_name': name,
             '_formula': formula,
@@ -679,6 +683,7 @@ def _process_material_dict(material_info):
         'ext_Gg': material_info.get('ext_Gg', None),
         'ext_L': material_info.get('ext_L', None),
         'ext_dist': material_info.get('ext_dist', None),
+        'sans': material_info.get('sans', None),
         'weight': material_info.get('weight', 1.0),
         '_custom': True  # Mark as user-registered
     }

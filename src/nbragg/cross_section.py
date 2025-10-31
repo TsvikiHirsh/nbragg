@@ -115,6 +115,7 @@ class CrossSection:
                     'ext_Gg': spec.get('ext_Gg', None),
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
+                    'sans': spec.get('sans', None),
                     'weight': spec.get('weight', 1.0)
                 }
                 raw_total_weight += processed[name]['weight']
@@ -164,6 +165,7 @@ class CrossSection:
                     'ext_Gg': spec.get('ext_Gg', None),
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
+                    'sans': spec.get('sans', None),
                     'weight': weight
                 }
             else:
@@ -196,6 +198,7 @@ class CrossSection:
                     'ext_Gg': spec.get('ext_Gg', None),
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
+                    'sans': spec.get('sans', None),
                     'weight': weight
                 }
         
@@ -302,7 +305,7 @@ class CrossSection:
             )
 
             # Apply any user-modified parameters from self.materials
-            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist'] if self.materials[material].get(key) is not None}
+            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'sans'] if self.materials[material].get(key) is not None}
             if kwargs:
                 self._update_ncmat_parameters(material, **kwargs)
 
@@ -313,7 +316,7 @@ class CrossSection:
         """
         # Update virtual materials with current parameters
         for material in self.materials:
-            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist'] if self.materials[material].get(key) is not None}
+            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'sans'] if self.materials[material].get(key) is not None}
             if kwargs:
                 self._update_ncmat_parameters(material, **kwargs)
         
@@ -341,28 +344,62 @@ class CrossSection:
             if key in kwargs and kwargs[key] is not None:
                 self.materials[material][key] = float(kwargs[key]) if key not in ['ext_method', 'ext_dist'] else kwargs[key]
 
-        # Update cell information
-        updated_cells = self._cell_info(material, **kwargs)
-        
-        # Handle extinction information
-        updated_ext = self._extinction_info(material, **kwargs) if any(kwargs.get(key) for key in ['ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'ext_method']) or material in self.extinction else ""
-        
-        # Create the updated material text using the material-specific template
-        updated_textdata = self.datatemplate[material].replace(
-            "**cell_section**", 
-            updated_cells
-        )
-        
-        # Handle extinction section replacement
-        if updated_ext:
-            updated_textdata = updated_textdata.replace(
-                "@CUSTOM_CRYSEXTN\n**extinction_section**" if "@CUSTOM_CRYSEXTN" in self.datatemplate[material] else "**extinction_section**",
-                "@CUSTOM_CRYSEXTN\n" + updated_ext
-            )
+        # Handle SANS separately since it needs special processing
+        if 'sans' in kwargs and kwargs['sans'] is not None:
+            self.materials[material]['sans'] = float(kwargs['sans'])
+
+        # Handle SANS: if sans parameter is provided, use NCMATComposer to add the hard-sphere model
+        if 'sans' in kwargs and kwargs['sans'] is not None:
+            # Use NCMATComposer to add SANS hard-sphere model
+            sans_radius = kwargs['sans']
+            composer = nc.NCMATComposer(self.materials[material]["mat"])
+
+            # Apply lattice parameter updates if provided
+            has_lattice_updates = any(kwargs.get(key) for key in ['a', 'b', 'c'])
+            if has_lattice_updates:
+                # Get current cell info to update
+                mat_data = nc.load(self.materials[material]["mat"])
+                try:
+                    cell_dict = mat_data.info.structure_info
+                    # Update with kwargs
+                    for key in ['a', 'b', 'c']:
+                        if key in kwargs and kwargs[key] is not None:
+                            cell_dict[key] = kwargs[key]
+                    # Update cell in composer
+                    composer.set_cell_parameters(
+                        cell_dict['a'], cell_dict['b'], cell_dict['c'],
+                        cell_dict['alpha'], cell_dict['beta'], cell_dict['gamma']
+                    )
+                except Exception:
+                    pass  # No structure info available
+
+            # SANS requires at least one secondary phase - add a tiny void phase
+            composer.add_secondary_phase(0.01, 'void.ncmat')
+            composer.add_hard_sphere_sans_model(sans_radius)
+            updated_textdata = composer()
         else:
-            # Remove the placeholder entirely
-            updated_textdata = updated_textdata.replace("@CUSTOM_CRYSEXTN\n**extinction_section**", "")
-            updated_textdata = updated_textdata.replace("**extinction_section**", "")
+            # Update cell information
+            updated_cells = self._cell_info(material, **kwargs)
+
+            # Handle extinction information
+            updated_ext = self._extinction_info(material, **kwargs) if any(kwargs.get(key) for key in ['ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'ext_method']) or material in self.extinction else ""
+
+            # Create the updated material text using the material-specific template
+            updated_textdata = self.datatemplate[material].replace(
+                "**cell_section**",
+                updated_cells
+            )
+
+            # Handle extinction section replacement
+            if updated_ext:
+                updated_textdata = updated_textdata.replace(
+                    "@CUSTOM_CRYSEXTN\n**extinction_section**" if "@CUSTOM_CRYSEXTN" in self.datatemplate[material] else "**extinction_section**",
+                    "@CUSTOM_CRYSEXTN\n" + updated_ext
+                )
+            else:
+                # Remove the placeholder entirely
+                updated_textdata = updated_textdata.replace("@CUSTOM_CRYSEXTN\n**extinction_section**", "")
+                updated_textdata = updated_textdata.replace("**extinction_section**", "")
         
         # AGGRESSIVE blank line removal - remove all multiple consecutive blank lines
         # and any blank lines right before section headers
@@ -751,7 +788,7 @@ class CrossSection:
     def __call__(self, wl: np.ndarray, **kwargs):
         """
         Update configuration if parameters change and return cross-section.
-        
+
         Args:
             wl: Wavelength array
             **kwargs: Material-specific parameters in format:
@@ -761,6 +798,7 @@ class CrossSection:
                     temp1, temp2, ... for temperatures of materials 1, 2, ...
                     a1, a2, ... for lattice parameter of materials 1, 2 ...
                     ext_l1, ext_Gg1, ext_L1, ext_dist1, ext_method1 ... for extinction params
+                    sans1, sans2, ... for SANS hard-sphere radius (Å) of materials 1, 2, ...
         """
         updated = False
         # Check for parameter updates
@@ -781,6 +819,7 @@ class CrossSection:
             ext_L_key = f"ext_L{i}"
             ext_dist_key = f"ext_dist{i}"
             ext_method_key = f"ext_method{i}"
+            sans_key = f"sans{i}"
             
             # Update temperature
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
@@ -856,6 +895,14 @@ class CrossSection:
                 if "ext_method" in kwargs:
                     ext_params['ext_method'] = kwargs["ext_method"]
                 self._update_ncmat_parameters(name, **ext_params)
+                updated = True
+
+            # Update SANS parameters
+            if sans_key in kwargs:
+                self._update_ncmat_parameters(name, sans=kwargs[sans_key])
+                updated = True
+            elif "sans" in kwargs:  # for single phase materials
+                self._update_ncmat_parameters(name, sans=kwargs["sans"])
                 updated = True
 
         if updated:

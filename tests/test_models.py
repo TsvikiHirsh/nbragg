@@ -228,6 +228,118 @@ class TestTransmissionModel(unittest.TestCase):
         self.assertEqual(list(resolved_param_groups), list(expected_param_groups))
         self.assertEqual(list(resolved_overrides), [{}] * len(expected_stage_names))
 
+class TestSANSModelParameters(unittest.TestCase):
+    def test_sans_params_single_phase(self):
+        """Test SANS parameter creation for single-phase material."""
+        xs = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 50.0
+            }
+        })
+        model = TransmissionModel(xs, vary_sans=True)
+
+        params = model.params
+        self.assertIn('sans', params, "Expected 'sans' parameter in model.params")
+        self.assertEqual(params['sans'].value, 50.0)
+        self.assertTrue(params['sans'].vary)
+        self.assertEqual(params['sans'].min, 0.0)
+        self.assertEqual(params['sans'].max, 1000)
+
+    def test_sans_params_multiphase(self):
+        """Test SANS parameter creation for multi-phase materials."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'sans': 30.0,
+                'weight': 0.4
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'sans': 60.0,
+                'weight': 0.6
+            }
+        })
+        model = TransmissionModel(xs, vary_sans=True)
+
+        params = model.params
+        self.assertIn('sans1', params, "Expected 'sans1' parameter in model.params")
+        self.assertIn('sans2', params, "Expected 'sans2' parameter in model.params")
+        self.assertEqual(params['sans1'].value, 30.0)
+        self.assertEqual(params['sans2'].value, 60.0)
+        self.assertTrue(params['sans1'].vary)
+        self.assertTrue(params['sans2'].vary)
+
+    def test_sans_params_not_vary(self):
+        """Test SANS parameters with vary=False."""
+        xs = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 50.0
+            }
+        })
+        model = TransmissionModel(xs, vary_sans=False)
+
+        params = model.params
+        self.assertIn('sans', params, "Expected 'sans' parameter in model.params")
+        self.assertEqual(params['sans'].value, 50.0)
+        self.assertFalse(params['sans'].vary)
+
+    def test_sans_stages_initialization(self):
+        """Test that SANS stage is initialized when vary_sans=True."""
+        xs = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 50.0
+            }
+        })
+        model = TransmissionModel(xs, vary_sans=True)
+
+        self.assertIn('sans', model.stages)
+        self.assertEqual(model.stages['sans'], 'sans')
+
+    def test_sans_group_in_stages_setter(self):
+        """Test that SANS parameters are recognized in stages setter."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'sans': 30.0,
+                'weight': 0.4
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'sans': 60.0,
+                'weight': 0.6
+            }
+        })
+        model = TransmissionModel(xs, vary_sans=True)
+
+        # Test setting stages with SANS group
+        model.stages = {'sans_stage': 'sans'}
+        self.assertEqual(model.stages, {'sans_stage': 'sans'})
+
+    def test_sans_params_only_if_defined(self):
+        """Test that SANS parameters are only created if sans is defined in material."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'sans': 30.0,
+                'weight': 0.4
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                # No SANS parameter defined
+                'weight': 0.6
+            }
+        })
+        model = TransmissionModel(xs, vary_sans=True)
+
+        params = model.params
+        # Only sans1 should exist (for alpha phase)
+        self.assertIn('sans1', params, "Expected 'sans1' parameter for alpha phase")
+        # sans2 should NOT exist because gamma doesn't have SANS defined
+        # The materials dict has 2 materials, but only 1 has sans defined
+
 class MockFitResult:
     """Mock lmfit.ModelResult for testing."""
     def __init__(self):

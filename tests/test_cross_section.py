@@ -435,5 +435,145 @@ class TestMTEXToNCrystalConversion(unittest.TestCase):
         self.assertIn('dir1=@crys_hkl:0.92718385,-0.37460659,0.00000000@lab:0,0,1', first_phase)
         self.assertIn('dir2=@crys_hkl:0.37460659,0.92718385,0.00000000@lab:0,1,0', first_phase)
 
+class TestSANSFunctionality(unittest.TestCase):
+    def test_cross_section_with_sans_single(self):
+        """Test initialization with SANS hard-sphere parameter for single material."""
+        xs = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 50.0  # 50 Angstrom sphere radius
+            }
+        })
+
+        self.assertEqual(xs.materials['aluminum']['sans'], 50.0)
+
+        # Verify textdata contains @CUSTOM_HARDSPHERESANS
+        textdata = xs.textdata['aluminum']
+        self.assertIn('@CUSTOM_HARDSPHERESANS', textdata)
+        self.assertIn('50.0', textdata)
+
+    def test_cross_section_with_sans_multiphase(self):
+        """Test initialization with SANS hard-sphere parameters for multiple materials."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'sans': 30.0,
+                'weight': 0.4
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'sans': 60.0,
+                'weight': 0.6
+            }
+        })
+
+        # Verify alpha parameters
+        self.assertEqual(xs.materials['alpha']['sans'], 30.0)
+        self.assertAlmostEqual(xs.materials['alpha']['weight'], 0.4)
+
+        # Verify gamma parameters
+        self.assertEqual(xs.materials['gamma']['sans'], 60.0)
+        self.assertAlmostEqual(xs.materials['gamma']['weight'], 0.6)
+
+        # Verify textdata contains @CUSTOM_HARDSPHERESANS
+        self.assertIn('@CUSTOM_HARDSPHERESANS', xs.textdata['alpha'])
+        self.assertIn('30.0', xs.textdata['alpha'])
+        self.assertIn('@CUSTOM_HARDSPHERESANS', xs.textdata['gamma'])
+        self.assertIn('60.0', xs.textdata['gamma'])
+
+        # Verify cross-section calculation
+        wl = np.array([1.0, 2.0, 3.0])
+        xs_values = xs(wl)
+        self.assertEqual(xs_values.shape, wl.shape)
+        self.assertTrue(np.all(xs_values >= 0))
+
+    def test_cross_section_sans_update(self):
+        """Test updating SANS parameters via xs.materials and update method."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'sans': 30.0,
+                'weight': 0.4
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'sans': 60.0,
+                'weight': 0.6
+            }
+        })
+
+        # Update SANS parameters
+        xs.materials['alpha']['sans'] = 40.0
+        xs.materials['gamma']['sans'] = 70.0
+
+        xs.update()
+
+        # Verify updated parameters
+        self.assertEqual(xs.materials['alpha']['sans'], 40.0)
+        self.assertEqual(xs.materials['gamma']['sans'], 70.0)
+
+        # Verify textdata
+        self.assertIn('@CUSTOM_HARDSPHERESANS', xs.textdata['alpha'])
+        self.assertIn('40.0', xs.textdata['alpha'])
+        self.assertIn('@CUSTOM_HARDSPHERESANS', xs.textdata['gamma'])
+        self.assertIn('70.0', xs.textdata['gamma'])
+
+    def test_cross_section_sans_call_update(self):
+        """Test updating SANS parameters via __call__ method."""
+        xs = CrossSection({
+            'alpha': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'sans': 30.0,
+                'weight': 0.4
+            },
+            'gamma': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'sans': 60.0,
+                'weight': 0.6
+            }
+        })
+
+        wl = np.array([1.0, 2.0, 3.0])
+        xs(wl, sans1=45.0, sans2=75.0)
+
+        # Verify updated parameters
+        self.assertEqual(xs.materials['alpha']['sans'], 45.0)
+        self.assertEqual(xs.materials['gamma']['sans'], 75.0)
+
+        # Verify textdata
+        self.assertIn('@CUSTOM_HARDSPHERESANS', xs.textdata['alpha'])
+        self.assertIn('45.0', xs.textdata['alpha'])
+        self.assertIn('@CUSTOM_HARDSPHERESANS', xs.textdata['gamma'])
+        self.assertIn('75.0', xs.textdata['gamma'])
+
+        # Verify cross-section calculation
+        xs_values = xs(wl)
+        self.assertEqual(xs_values.shape, wl.shape)
+        self.assertTrue(np.all(xs_values >= 0))
+
+    def test_cross_section_sans_single_phase_call(self):
+        """Test updating SANS parameter for single phase via __call__ method."""
+        xs = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 50.0
+            }
+        })
+
+        wl = np.array([1.0, 2.0, 3.0])
+        xs(wl, sans=55.0)
+
+        # Verify updated parameter
+        self.assertEqual(xs.materials['aluminum']['sans'], 55.0)
+
+        # Verify textdata
+        self.assertIn('@CUSTOM_HARDSPHERESANS', xs.textdata['aluminum'])
+        self.assertIn('55.0', xs.textdata['aluminum'])
+
+        # Verify cross-section calculation
+        xs_values = xs(wl)
+        self.assertEqual(xs_values.shape, wl.shape)
+        self.assertTrue(np.all(xs_values >= 0))
+
 if __name__ == '__main__':
     unittest.main()

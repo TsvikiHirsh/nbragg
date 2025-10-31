@@ -20,18 +20,19 @@ from numpy import log
 
 
 class TransmissionModel(lmfit.Model):
-    def __init__(self, cross_section, 
+    def __init__(self, cross_section,
                 params: "lmfit.Parameters" = None,
                 response: str = "jorgensen",
                 background: str = "polynomial3",
                 tof_length: float = 9,
-                vary_weights: bool = None, 
-                vary_background: bool = None, 
+                vary_weights: bool = None,
+                vary_background: bool = None,
                 vary_tof: bool = None,
                 vary_response: bool = None,
                 vary_orientation: bool = None,
                 vary_lattice: bool = None,
                 vary_extinction: bool = None,
+                vary_sans: bool = None,
                 **kwargs):
         """
         Initialize the TransmissionModel, a subclass of lmfit.Model.
@@ -57,9 +58,11 @@ class TransmissionModel(lmfit.Model):
         vary_orientation : bool, optional
             If True, allows the orientation parameters (θ,ϕ,η) to vary during fitting.
         vary_lattice: bool, optional
-            If True, allows the lattice parameters of the material to be varied 
+            If True, allows the lattice parameters of the material to be varied
         vary_extinction: bool, optional
             If True, allows the extinction parameters of the material to be varied (requires the CrysExtn plugin to be installed)
+        vary_sans: bool, optional
+            If True, allows the SANS hard-sphere radius parameter to be varied
         kwargs : dict, optional
             Additional keyword arguments for model and background parameters.
 
@@ -96,6 +99,8 @@ class TransmissionModel(lmfit.Model):
             self.params += self._make_lattice_params(vary=vary_lattice)
         if vary_extinction is not None:
             self.params += self._make_extinction_params(vary=vary_extinction)
+        if vary_sans is not None:
+            self.params += self._make_sans_params(vary=vary_sans)
 
         self.response = None
         if vary_response is not None:
@@ -126,7 +131,7 @@ class TransmissionModel(lmfit.Model):
         self._stages = {}
         possible_stages = [
             "basic", "background", "tof", "lattice",
-            "mosaicity", "thetas", "phis", "angles", "orientation", "weights", "response", "extinction"
+            "mosaicity", "thetas", "phis", "angles", "orientation", "weights", "response", "extinction", "sans"
         ]
         vary_flags = {
             "basic": True,  # Always include basic parameters
@@ -141,6 +146,7 @@ class TransmissionModel(lmfit.Model):
             "weights": vary_weights,
             "response": vary_response,
             "extinction": vary_extinction,
+            "sans": vary_sans,
         }
         for stage in possible_stages:
             if vary_flags.get(stage, False) is True:
@@ -385,6 +391,7 @@ class TransmissionModel(lmfit.Model):
             "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
             "lattice": [p for p in self.params if p in ["a", "b", "c"] or p.startswith("a_") or p.startswith("b_") or p.startswith("c_")],
             "extinction": [p for p in self.params if p.startswith("ext_")],
+            "sans": [p for p in self.params if p.startswith("sans")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
             "mosaicity": [p for p in self.params if p.startswith("η")],
             "thetas": [p for p in self.params if p.startswith("θ")],
@@ -443,6 +450,7 @@ class TransmissionModel(lmfit.Model):
             "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
             "lattice": [p for p in self.params if p in ["a", "b", "c"] or p.startswith("a_") or p.startswith("b_") or p.startswith("c_")],
             "extinction": [p for p in self.params if p.startswith("ext_")],
+            "sans": [p for p in self.params if p.startswith("sans")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
             "mosaicity": [p for p in self.params if p.startswith("η")],
             "thetas": [p for p in self.params if p.startswith("θ")],
@@ -1444,6 +1452,34 @@ class TransmissionModel(lmfit.Model):
             except KeyError:
                 warnings.warn(f"@CRYSEXTN section is not defined for the {material} phase")
                                 
+        return params
+
+    def _make_sans_params(self, vary=False):
+        """
+        Create SANS hard-sphere radius parameters for the model.
+
+        Parameters
+        ----------
+        vary : bool, optional
+            Whether to allow these parameters to vary during fitting, by default False.
+
+        Returns
+        -------
+        lmfit.Parameters
+            The SANS-related parameters.
+        """
+        params = lmfit.Parameters()
+        for i, material in enumerate(self._materials):
+            # Check if material has sans defined
+            sans_value = self._materials[material].get('sans')
+            if sans_value is not None:
+                param_sans_name = f"sans{i+1}" if len(self._materials) > 1 else "sans"
+
+                if param_sans_name in self.params:
+                    self.params[param_sans_name].vary = vary
+                else:
+                    params.add(param_sans_name, value=sans_value, min=0., max=1000, vary=vary)
+
         return params
 
     def _make_orientation_params(self, vary=False):
