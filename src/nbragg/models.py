@@ -1498,7 +1498,7 @@ class TransmissionModel(lmfit.Model):
 
     def _make_tof_params(self, vary=False, **kwargs):
         params = lmfit.Parameters()
-        params.add("L0", value=self.tof_length, min=0., vary=vary)
+        params.add("L0", value=1., min=0., max = 2., vary=vary)
         params.add("t0", value=0., vary=vary)
         return params
 
