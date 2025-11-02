@@ -316,6 +316,12 @@ class CrossSection:
         """
         # Update virtual materials with current parameters
         for material in self.materials:
+            # Validate that material is a dictionary
+            if not isinstance(self.materials[material], dict):
+                raise TypeError(
+                    f"Material '{material}' is not a dictionary. "
+                    f"Did you mean to set xs.materials['{list(self.materials.keys())[0]}']['{material}'] instead of xs.materials['{material}']?"
+                )
             kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'sans'] if self.materials[material].get(key) is not None}
             if kwargs:
                 self._update_ncmat_parameters(material, **kwargs)
