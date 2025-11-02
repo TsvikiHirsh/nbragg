@@ -575,5 +575,154 @@ class TestSANSFunctionality(unittest.TestCase):
         self.assertEqual(xs_values.shape, wl.shape)
         self.assertTrue(np.all(xs_values >= 0))
 
+    def test_sans_affects_cross_section(self):
+        """Test that SANS actually changes the cross-section values."""
+        # Create cross-sections with and without SANS
+        xs_no_sans = CrossSection(iron='Fe_sg225_Iron-gamma.ncmat')
+        xs_with_sans = CrossSection({
+            'iron': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'sans': 50.0
+            }
+        })
+
+        # Evaluate at same wavelengths
+        wl = np.linspace(1, 5, 100)
+        xs_values_no_sans = xs_no_sans(wl)
+        xs_values_with_sans = xs_with_sans(wl)
+
+        # SANS should increase the cross-section
+        self.assertFalse(np.allclose(xs_values_no_sans, xs_values_with_sans),
+                        "SANS should change cross-section values")
+
+        # SANS should generally increase cross-section (SANS adds scattering)
+        mean_diff = (xs_values_with_sans - xs_values_no_sans).mean()
+        self.assertGreater(mean_diff, 0,
+                          "SANS should increase mean cross-section")
+
+    def test_sans_radius_effect(self):
+        """Test that larger SANS radii produce larger cross-sections."""
+        wl = np.linspace(1, 5, 50)
+
+        # Create cross-sections with different SANS radii
+        xs_small = CrossSection({
+            'iron': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'sans': 30.0
+            }
+        })
+        xs_large = CrossSection({
+            'iron': {
+                'mat': 'Fe_sg225_Iron-gamma.ncmat',
+                'sans': 100.0
+            }
+        })
+
+        xs_values_small = xs_small(wl)
+        xs_values_large = xs_large(wl)
+
+        # Larger SANS radius should produce larger cross-section
+        mean_small = xs_values_small.mean()
+        mean_large = xs_values_large.mean()
+        self.assertGreater(mean_large, mean_small,
+                          "Larger SANS radius should produce larger cross-section")
+
+    def test_sans_error_message(self):
+        """Test that helpful error message is shown for common mistake."""
+        xs = CrossSection(iron='Fe_sg225_Iron-gamma.ncmat')
+
+        # Common mistake: setting sans as a material instead of parameter
+        xs.materials['sans'] = 300  # WRONG
+
+        with self.assertRaises(TypeError) as context:
+            xs.update()
+
+        # Check that error message is helpful
+        error_msg = str(context.exception)
+        self.assertIn("not a dictionary", error_msg)
+        self.assertIn("iron", error_msg)
+        self.assertIn("sans", error_msg)
+
+    def test_sans_extreme_values(self):
+        """Test SANS with very different sphere radii (1Å vs 1000Å)."""
+        # Create cross-sections with extreme SANS values
+        xs_small = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 1.0  # Very small sphere
+            }
+        })
+        xs_large = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 1000.0  # Very large sphere
+            }
+        })
+
+        # Test at long wavelengths where SANS effect is strongest
+        wl_long = np.array([20.0])
+        xs_small_val = xs_small(wl_long)[0]
+        xs_large_val = xs_large(wl_long)[0]
+
+        # Large sphere should produce MUCH larger cross-section at long wavelengths
+        ratio = xs_large_val / xs_small_val
+        self.assertGreater(ratio, 10,
+                          f"SANS=1000Å should produce >10x larger XS than SANS=1Å at 20Å wavelength, got {ratio:.2f}x")
+
+    def test_sans_wavelength_dependence(self):
+        """Test that SANS shows strong wavelength dependence."""
+        xs = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 1000.0
+            }
+        })
+
+        # Evaluate at short and long wavelengths
+        wl_short = np.array([1.0])
+        wl_long = np.array([20.0])
+
+        xs_short = xs(wl_short)[0]
+        xs_long = xs(wl_long)[0]
+
+        # Cross-section at long wavelength should be much larger for large spheres
+        ratio = xs_long / xs_short
+        self.assertGreater(ratio, 10,
+                          f"SANS should show strong wavelength dependence for large spheres, got ratio {ratio:.2f}")
+
+    def test_sans_matches_ncrystal_composer(self):
+        """Test that nbragg SANS produces similar results to direct NCMATComposer."""
+        import NCrystal as NC
+
+        # Create using NCMATComposer directly
+        composer = NC.NCMATComposer('Al_sg225.ncmat')
+        composer.add_secondary_phase(0.01, 'void.ncmat')
+        composer.add_hard_sphere_sans_model(100.0)
+        mat_direct = NC.load(composer())
+
+        # Create using nbragg
+        xs_nbragg = CrossSection({
+            'aluminum': {
+                'mat': 'Al_sg225.ncmat',
+                'sans': 100.0
+            }
+        })
+
+        # Compare at several wavelengths
+        wavelengths = np.array([1.0, 5.0, 10.0, 15.0])
+        for wl in wavelengths:
+            # NCrystal direct - need total cross-section (scatter + absorption)
+            xs_scatter = mat_direct.scatter.xsect(wl=wl, direction=(0,0,1))
+            xs_absorb = mat_direct.absorption.xsect(wl=wl, direction=(0,0,1))
+            xs_direct_total = xs_scatter + xs_absorb
+
+            # nbragg (returns total cross-section)
+            xs_nbragg_val = xs_nbragg(np.array([wl]))[0]
+
+            # They should be very similar (within 1%)
+            rel_diff = abs(xs_nbragg_val - xs_direct_total) / xs_direct_total
+            self.assertLess(rel_diff, 0.01,
+                           f"At wavelength {wl}Å: nbragg ({xs_nbragg_val:.6f}) vs direct ({xs_direct_total:.6f}), diff={rel_diff*100:.1f}%")
+
 if __name__ == '__main__':
     unittest.main()
