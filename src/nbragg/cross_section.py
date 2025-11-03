@@ -116,7 +116,8 @@ class CrossSection:
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
-                    'weight': spec.get('weight', 1.0)
+                    'weight': spec.get('weight', 1.0),
+                    '_original_mat': spec.get('_original_mat', spec.get('mat'))
                 }
                 raw_total_weight += processed[name]['weight']
             elif isinstance(spec, CrossSection):
@@ -166,21 +167,22 @@ class CrossSection:
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
-                    'weight': weight
+                    'weight': weight,
+                    '_original_mat': spec.get('_original_mat', material)
                 }
             else:
                 if not isinstance(spec, dict):
                     raise ValueError(f"Material specification for {name} must be a dictionary or string")
-                
+
                 material = spec.get('mat')
                 if isinstance(material, dict):
                     material = material.get('mat')
                 elif isinstance(material, str):
                     material = self._resolve_material(material)
-                    
+
                 weight = float(spec.get('weight', 1.0))
                 raw_total_weight += weight
-                
+
                 processed[name] = {
                     'mat': material,
                     'temp': spec.get('temp', 300.),
@@ -199,9 +201,10 @@ class CrossSection:
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
-                    'weight': weight
+                    'weight': weight,
+                    '_original_mat': spec.get('_original_mat', material)
                 }
-        
+
         # Second pass: normalize weights while preserving relative proportions
         if raw_total_weight > 0:
             for spec in processed.values():
@@ -299,10 +302,29 @@ class CrossSection:
                 self.extinction[material] = {}
 
             # Save original rawdata in nbragg file name
+            # Use material name as prefix to ensure uniqueness when multiple materials use the same base file
+            original_mat = self.materials[material].get("_original_mat", self.materials[material]["mat"])
+            # Ensure we're working with the actual .ncmat file, not a .nbragg file
+            if original_mat.endswith('.nbragg'):
+                # If somehow we got a .nbragg file, convert to .ncmat
+                original_mat = original_mat.replace('.nbragg', '.ncmat')
+
+            # Store original filename for NCMATComposer (which needs the .ncmat original)
+            # Only set this if it's not already set from _process_materials
+            if "_original_mat" not in self.materials[material]:
+                self.materials[material]["_original_mat"] = original_mat
+
+            # Create unique virtual filename
+            base_filename = original_mat.split('/')[-1].replace("ncmat", "nbragg")  # Get just the filename, not the path
+            unique_filename = f"{material}_{base_filename}"
+
             nc.registerInMemoryFileData(
-                self.materials[material]["mat"].replace("ncmat", "nbragg"), 
+                unique_filename,
                 self.textdata[material]
             )
+
+            # Update the material dict to point to the unique filename
+            self.materials[material]["mat"] = unique_filename
 
             # Apply any user-modified parameters from self.materials
             kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'sans'] if self.materials[material].get(key) is not None}
@@ -358,7 +380,9 @@ class CrossSection:
         if 'sans' in kwargs and kwargs['sans'] is not None:
             # Use NCMATComposer to add SANS hard-sphere model
             sans_radius = kwargs['sans']
-            composer = nc.NCMATComposer(self.materials[material]["mat"])
+            # Use original .ncmat file for composer (stored during _create_virtual_materials)
+            original_mat = self.materials[material].get("_original_mat", self.materials[material]["mat"])
+            composer = nc.NCMATComposer(original_mat)
 
             # Apply lattice parameter updates if provided
             has_lattice_updates = any(kwargs.get(key) for key in ['a', 'b', 'c'])
@@ -428,10 +452,10 @@ class CrossSection:
         
         # Update the textdata for this specific material
         self.textdata[material] = updated_textdata
-        
-        # Register the in-memory file with the correct material name
+
+        # Register the in-memory file (self.materials[material]["mat"] is already the unique .nbragg filename)
         nc.registerInMemoryFileData(
-            self.materials[material]["mat"].replace("ncmat", "nbragg"), 
+            self.materials[material]["mat"],
             updated_textdata
         )
 

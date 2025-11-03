@@ -13,14 +13,16 @@ class TestCrossSection(unittest.TestCase):
         )
         
         self.assertEqual(len(xs.materials), 2)
-        
-        # Check gamma material
-        self.assertEqual(xs.materials['gamma']['mat'], 'Fe_sg225_Iron-gamma.ncmat')
+
+        # Check gamma material - after processing, 'mat' points to virtual .nbragg file
+        self.assertEqual(xs.materials['gamma']['_original_mat'], 'Fe_sg225_Iron-gamma.ncmat')
+        self.assertTrue(xs.materials['gamma']['mat'].endswith('.nbragg'))
         self.assertEqual(xs.materials['gamma']['temp'], 300.0)
         self.assertAlmostEqual(xs.materials['gamma']['weight'], 0.5)
-        
+
         # Check alpha material
-        self.assertEqual(xs.materials['alpha']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertEqual(xs.materials['alpha']['_original_mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertTrue(xs.materials['alpha']['mat'].endswith('.nbragg'))
         self.assertEqual(xs.materials['alpha']['temp'], 300.0)
         self.assertAlmostEqual(xs.materials['alpha']['weight'], 0.5)
 
@@ -38,11 +40,14 @@ class TestCrossSection(unittest.TestCase):
         })
         
         self.assertEqual(len(xs.materials), 2)
-        
-        self.assertEqual(xs.materials['gamma']['mat'], 'Fe_sg225_Iron-gamma.ncmat')
+
+        # After processing, 'mat' points to virtual .nbragg file, '_original_mat' has the original
+        self.assertEqual(xs.materials['gamma']['_original_mat'], 'Fe_sg225_Iron-gamma.ncmat')
+        self.assertTrue(xs.materials['gamma']['mat'].endswith('.nbragg'))
         self.assertAlmostEqual(xs.materials['gamma']['weight'], 0.7)
-        
-        self.assertEqual(xs.materials['alpha']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
+
+        self.assertEqual(xs.materials['alpha']['_original_mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertTrue(xs.materials['alpha']['mat'].endswith('.nbragg'))
         self.assertAlmostEqual(xs.materials['alpha']['weight'], 0.3)
 
     def test_cross_section_init_with_total_weight(self):
@@ -133,8 +138,10 @@ class TestCrossSection(unittest.TestCase):
             iron_alpha='Fe_sg229_Iron-alpha.ncmat'
         )
 
-        self.assertEqual(xs.materials['iron_gamma']['mat'], 'Fe_sg225_Iron-gamma.ncmat')
-        self.assertEqual(xs.materials['iron_alpha']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertEqual(xs.materials['iron_gamma']['_original_mat'], 'Fe_sg225_Iron-gamma.ncmat')
+        self.assertTrue(xs.materials['iron_gamma']['mat'].endswith('.nbragg'))
+        self.assertEqual(xs.materials['iron_alpha']['_original_mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertTrue(xs.materials['iron_alpha']['mat'].endswith('.nbragg'))
 
     def test_cross_section_with_string_in_materials_dict(self):
         """Test initialization using string values in materials dictionary (issue fix)."""
@@ -145,7 +152,8 @@ class TestCrossSection(unittest.TestCase):
         })
 
         self.assertEqual(len(xs.materials), 1)
-        self.assertEqual(xs.materials['iron']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertEqual(xs.materials['iron']['_original_mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertTrue(xs.materials['iron']['mat'].endswith('.nbragg'))
         self.assertEqual(xs.materials['iron']['temp'], 300.0)
         self.assertAlmostEqual(xs.materials['iron']['weight'], 1.0)
 
@@ -159,8 +167,9 @@ class TestCrossSection(unittest.TestCase):
 
             self.assertEqual(len(xs.materials), 1)
             # Should resolve to the material from materials_dict
-            expected_mat = materials_dict['Fe_sg229_Iron-alpha']['mat']
-            self.assertEqual(xs.materials['iron']['mat'], expected_mat)
+            expected_original_mat = materials_dict['Fe_sg229_Iron-alpha']['mat']
+            self.assertEqual(xs.materials['iron']['_original_mat'], expected_original_mat)
+            self.assertTrue(xs.materials['iron']['mat'].endswith('.nbragg'))
 
     def test_cross_section_with_string_without_extension(self):
         """Test initialization using string without .ncmat extension."""
@@ -173,8 +182,10 @@ class TestCrossSection(unittest.TestCase):
             'iron': 'Fe_sg229_Iron-alpha'
         })
 
-        # Both should produce the same result
-        self.assertEqual(xs1.materials['iron']['mat'], xs2.materials['iron']['mat'])
+        # Both should produce the same result - check _original_mat field
+        self.assertEqual(xs1.materials['iron']['_original_mat'], xs2.materials['iron']['_original_mat'])
+        self.assertTrue(xs1.materials['iron']['mat'].endswith('.nbragg'))
+        self.assertTrue(xs2.materials['iron']['mat'].endswith('.nbragg'))
         self.assertEqual(len(xs1.materials), 1)
         self.assertEqual(len(xs2.materials), 1)
 
@@ -196,7 +207,8 @@ class TestCrossSection(unittest.TestCase):
         )
 
         self.assertEqual(len(xs.materials), 1)
-        self.assertEqual(xs.materials['iron']['mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertEqual(xs.materials['iron']['_original_mat'], 'Fe_sg229_Iron-alpha.ncmat')
+        self.assertTrue(xs.materials['iron']['mat'].endswith('.nbragg'))
 
     def test_cross_section_with_extinction_single(self):
         """Test initialization with extinction parameters for single material."""
