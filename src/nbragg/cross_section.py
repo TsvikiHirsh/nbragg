@@ -78,7 +78,12 @@ class CrossSection:
 
         # Process the combined materials dictionary
         self.materials = self._process_materials(combined_materials)
-        self.extinction = {}
+
+        # Preserve extinction data if copying from another CrossSection
+        if isinstance(materials, CrossSection):
+            self.extinction = materials.extinction.copy()
+        else:
+            self.extinction = {}
 
         # Create virtual material
         self._create_virtual_materials()
@@ -376,32 +381,38 @@ class CrossSection:
         if 'sans' in kwargs and kwargs['sans'] is not None:
             self.materials[material]['sans'] = float(kwargs['sans'])
 
-        # Handle SANS: if sans parameter is provided, use NCMATComposer to add the hard-sphere model
-        if 'sans' in kwargs and kwargs['sans'] is not None:
+        # Handle SANS: if sans parameter is provided OR if material already has SANS, use NCMATComposer to add the hard-sphere model
+        # Check both kwargs and existing material SANS setting
+        has_sans_in_kwargs = 'sans' in kwargs and kwargs['sans'] is not None
+        has_sans_in_material = self.materials[material].get('sans') is not None
+
+        if has_sans_in_kwargs or has_sans_in_material:
             # Use NCMATComposer to add SANS hard-sphere model
-            sans_radius = kwargs['sans']
+            # Use SANS radius from kwargs if provided, otherwise use stored value
+            sans_radius = kwargs.get('sans', self.materials[material]['sans'])
             # Use original .ncmat file for composer (stored during _create_virtual_materials)
             original_mat = self.materials[material].get("_original_mat", self.materials[material]["mat"])
             composer = nc.NCMATComposer(original_mat)
 
-            # Apply lattice parameter updates if provided
-            has_lattice_updates = any(kwargs.get(key) for key in ['a', 'b', 'c'])
-            if has_lattice_updates:
-                # Get current cell info to update
-                mat_data = nc.load(self.materials[material]["mat"])
-                try:
-                    cell_dict = mat_data.info.structure_info
+            # Always get and set cell parameters for SANS (NCMATComposer requires cell info)
+            # Load the material to get structure info
+            mat_data = nc.load(self.materials[material]["mat"])
+            try:
+                cell_dict = mat_data.info.structure_info
+                # Apply lattice parameter updates if provided
+                has_lattice_updates = any(kwargs.get(key) for key in ['a', 'b', 'c'])
+                if has_lattice_updates:
                     # Update with kwargs
                     for key in ['a', 'b', 'c']:
                         if key in kwargs and kwargs[key] is not None:
                             cell_dict[key] = kwargs[key]
-                    # Update cell in composer
-                    composer.set_cell_parameters(
-                        cell_dict['a'], cell_dict['b'], cell_dict['c'],
-                        cell_dict['alpha'], cell_dict['beta'], cell_dict['gamma']
-                    )
-                except Exception:
-                    pass  # No structure info available
+                # Always set cell parameters in composer (required for SANS)
+                composer.set_cell_parameters(
+                    cell_dict['a'], cell_dict['b'], cell_dict['c'],
+                    cell_dict['alpha'], cell_dict['beta'], cell_dict['gamma']
+                )
+            except Exception:
+                pass  # No structure info available
 
             # SANS requires at least one secondary phase - add a tiny void phase
             composer.add_secondary_phase(0.01, 'void.ncmat')
@@ -546,7 +557,7 @@ class CrossSection:
                 self.extinction[material].update({
                     'method': method,
                     'l': l,
-                    'g': g,
+                    'Gg': g,  # Use consistent key name 'Gg' instead of 'g'
                     'L': L,
                     'dist': dist if method in methods_with_dist else None,
                     'c': c if method == 'RED' else None
@@ -623,7 +634,7 @@ class CrossSection:
             self.extinction[material].update({
                 'method': method,
                 'l': float(self.materials[material]['ext_l']),
-                'g': float(self.materials[material].get('ext_Gg', self.materials[material].get('ext_Gg', defaults['ext_Gg']))),
+                'Gg': float(self.materials[material].get('ext_Gg', defaults['ext_Gg'])),  # Use consistent key 'Gg' and fix double get
                 'L': float(self.materials[material]['ext_L']),
                 'dist': self.materials[material].get('ext_dist') if method in methods_with_dist else None,
                 'c': self.materials[material].get('ext_c') if method == 'RED' else None
@@ -638,7 +649,7 @@ class CrossSection:
             line = (
                 f"  {method}  "
                 f"{self.extinction[material]['l']:.4f}  "
-                f"{self.extinction[material]['g']:.4f}  "
+                f"{self.extinction[material]['Gg']:.4f}  "
                 f"{self.extinction[material]['L']:.4f}"
             )
             if method in methods_with_dist and self.extinction[material].get('dist'):
