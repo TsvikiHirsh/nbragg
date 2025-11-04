@@ -11,6 +11,8 @@ nbragg is a package designed for fitting neutron Bragg edge data using [NCrystal
 ## Features
 
 - **Flexible Cross-Section Calculations**: Interfaces with NCrystal to fetch cross-sections for crystalline materials.
+- **SANS Modeling**: Built-in support for Small Angle Neutron Scattering (SANS) using hard-sphere models for samples with nanoscale features.
+- **Extinction Effects**: Support for primary and secondary extinction modeling for large crystallites and thick samples.
 - **Built-In Tools for Response and Background Functions**: Includes predefined models for instrument response (e.g., Jorgensen, square) and background components (polynomial functions).
 - **LMFit Integration**: Allows flexible, nonlinear fitting of experimental data using the powerful lmfit library.
 - **Rietveld-type analysis**: Enables iterative, parametric refinement of Bragg edge data using the Rietveld method, accumulating parameters across stages for robust fitting.
