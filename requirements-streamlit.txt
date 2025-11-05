@@ -1,0 +1,11 @@
+# Optional dependencies for nbragg Streamlit web app
+# Install with: pip install -r requirements-streamlit.txt
+
+streamlit>=1.28.0
+plotly>=5.17.0
+
+# The app also requires nbragg core dependencies
+# If you haven't installed nbragg yet, first run:
+#   pip install -e .
+# Or:
+#   pip install nbragg

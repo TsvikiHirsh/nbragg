@@ -59,6 +59,28 @@ result.plot() # plot results
 
 ![Fit Results](https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/notebooks/fit_results.png)
 
+## Interactive Web App
+
+Try nbragg in your browser with our **Streamlit web app**!
+
+```bash
+# Install optional streamlit dependencies
+pip install -r requirements-streamlit.txt
+
+# Run the app
+streamlit run docs/streamlit/streamlit_app.py
+```
+
+The web app provides:
+- 🎨 Modern dark theme interface
+- 📁 Easy data upload or use example datasets
+- ⚛️ Interactive cross-section builder with multi-phase support
+- 🔧 Visual model configuration with all fitting options
+- 📊 Interactive Plotly plots with zoom and pan
+- 📈 Comprehensive statistics and fit quality metrics
+
+See [docs/streamlit](docs/streamlit/) for more details and deployment options.
+
 ## Tutorials and Documentation
 
 For more detailed examples and advanced usage, including custom stage definitions and Rietveld fitting, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the updated [Jupyter notebook tutorial](https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/nbragg_tutorial.ipynb).
