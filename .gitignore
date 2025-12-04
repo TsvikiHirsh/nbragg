@@ -159,3 +159,7 @@ Thumbs.db
 evaluated_data/*.endf
 
 paper
+notebooks/fit_result_matplotlib.pdf
+notebooks/fit_result.html
+notebooks/iron_powder.pdf
+notebooks/lmfit_result.html

@@ -25,6 +25,7 @@ class TransmissionModel(lmfit.Model):
                 response: str = "jorgensen",
                 background: str = "polynomial3",
                 tof_length: float = 9,
+                vary_basic: bool = None,
                 vary_weights: bool = None,
                 vary_background: bool = None,
                 vary_tof: bool = None,
@@ -47,6 +48,9 @@ class TransmissionModel(lmfit.Model):
             The type of background function to use, by default "polynomial3".
         tof_length : float, optional
             The flight path length in [m]
+        vary_basic : bool, optional
+            If True, allows the basic parameters (thickness, norm) to vary during fitting.
+            Note: temp parameter is always set to vary=False by default.
         vary_weights : bool, optional
             If True, allows the isotope weights to vary during fitting.
         vary_background : bool, optional
@@ -88,7 +92,10 @@ class TransmissionModel(lmfit.Model):
         else:
             self.params = lmfit.Parameters()
         if "thickness" not in self.params and "norm" not in self.params:
-            self.params += self._make_basic_params()
+            if vary_basic is not None:
+                self.params += self._make_basic_params(vary=vary_basic)
+            else:
+                self.params += self._make_basic_params()
         if "temp" not in self.params:
             self.params += self._make_temperature_params()
         if vary_weights is not None:
@@ -134,7 +141,7 @@ class TransmissionModel(lmfit.Model):
             "mosaicity", "thetas", "phis", "angles", "orientation", "weights", "response", "extinction", "sans"
         ]
         vary_flags = {
-            "basic": True,  # Always include basic parameters
+            "basic": True if vary_basic is None else vary_basic,  # Default True for backward compatibility
             "background": vary_background,
             "tof": vary_tof,
             "lattice": vary_lattice,
@@ -1322,15 +1329,15 @@ class TransmissionModel(lmfit.Model):
         plt.subplots_adjust(hspace=0.05)    
         return ax    
 
-    def _make_basic_params(self):
+    def _make_basic_params(self, vary=True):
         params = lmfit.Parameters()
-        params.add("thickness", value=1., min=0.)
-        params.add("norm", value=1., min=0.)
+        params.add("thickness", value=1., min=0., vary=vary)
+        params.add("norm", value=1., min=0., vary=vary)
         return params
 
     def _make_temperature_params(self):
         params = lmfit.Parameters()
-        params.add("temp", value=293.15, min=0.)  # Default temperature in Kelvin
+        params.add("temp", value=293.15, min=0., vary=False)  # Default temperature in Kelvin, always fixed by default
         return params
 
     def _make_weight_params(self, vary=False):
