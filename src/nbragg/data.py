@@ -5,21 +5,31 @@ import NCrystal as NC
 
 class Data:
     """
-    A class for handling neutron transmission data, including reading counts data, 
+    A class for handling neutron transmission data, including reading counts data,
     calculating transmission, and plotting the results.
-    
+
     Attributes:
     -----------
     table : pandas.DataFrame or None
         A dataframe containing wavelength (Angstroms), transmission, and error values.
     tgrid : pandas.Series or None
         A time-of-flight grid corresponding to the time steps in the data.
+    signal : pandas.DataFrame or None
+        The signal counts data (tof, counts, err).
+    openbeam : pandas.DataFrame or None
+        The open beam counts data (tof, counts, err).
+    L : float or None
+        Distance (meters) used in the energy conversion from time-of-flight.
+    tstep : float or None
+        Time step (seconds) for converting time-of-flight to energy.
+    sys_err : float or None
+        Fractional systematic error included in transmission calculation.
     """
     
     def __init__(self, **kwargs):
         """
         Initializes the Data object with optional keyword arguments.
-        
+
         Parameters:
         -----------
         **kwargs : dict, optional
@@ -27,6 +37,11 @@ class Data:
         """
         self.table = None
         self.tgrid = None
+        self.signal = None
+        self.openbeam = None
+        self.L = None
+        self.tstep = None
+        self.sys_err = None
     
     @classmethod
     def _read_counts(cls, input_data, names=None):
@@ -170,15 +185,20 @@ class Data:
             "trans": transmission,
             "err": err
         })
-        
+
         # Set the label attribute from the signal file
         df.attrs["label"] = signal.attrs["label"]
-        
+
         # Create and return the Data object
         self_data = cls()
         self_data.table = df
         self_data.tgrid = signal["tof"]
-        
+        self_data.signal = signal
+        self_data.openbeam = openbeam
+        self_data.L = L
+        self_data.tstep = tstep
+        self_data.sys_err = sys_err
+
         return self_data
 
     @classmethod
@@ -213,6 +233,114 @@ class Data:
         
         return self_data
     
+    def __add__(self, other):
+        """
+        Adds two Data objects together by combining their signal and openbeam counts,
+        then recalculating transmission with improved statistics.
+
+        Parameters:
+        -----------
+        other : Data
+            Another Data object to add to this one.
+
+        Returns:
+        --------
+        Data
+            A new Data object with combined counts and recalculated transmission.
+
+        Raises:
+        -------
+        ValueError
+            If L or tstep parameters differ between the two Data objects.
+        TypeError
+            If the objects don't have the necessary attributes for addition.
+        """
+        # Validate that both objects have the necessary attributes
+        if self.signal is None or self.openbeam is None:
+            raise TypeError("Cannot add Data objects: this object was not created with from_counts()")
+        if other.signal is None or other.openbeam is None:
+            raise TypeError("Cannot add Data objects: other object was not created with from_counts()")
+
+        # Check that L and tstep are identical
+        if self.L != other.L:
+            raise ValueError(f"Cannot add Data objects with different L values: {self.L} != {other.L}")
+        if self.tstep != other.tstep:
+            raise ValueError(f"Cannot add Data objects with different tstep values: {self.tstep} != {other.tstep}")
+
+        # Add signal counts
+        combined_signal = self.signal.copy()
+        combined_signal["counts"] = self.signal["counts"] + other.signal["counts"]
+        combined_signal["err"] = np.sqrt(self.signal["err"]**2 + other.signal["err"]**2)
+
+        # Add openbeam counts
+        combined_openbeam = self.openbeam.copy()
+        combined_openbeam["counts"] = self.openbeam["counts"] + other.openbeam["counts"]
+        combined_openbeam["err"] = np.sqrt(self.openbeam["err"]**2 + other.openbeam["err"]**2)
+
+        # Calculate transmission and error with combined counts
+        transmission = combined_signal["counts"] / combined_openbeam["counts"]
+        sys_err = self.sys_err if self.sys_err is not None else 0.
+        err = transmission * np.sqrt(
+            (combined_signal["err"] / combined_signal["counts"])**2 +
+            (combined_openbeam["err"] / combined_openbeam["counts"])**2 +
+            sys_err**2
+        )
+
+        # Create new dataframe with combined results
+        df = pd.DataFrame({
+            "wavelength": combined_signal["wavelength"],
+            "trans": transmission,
+            "err": err
+        })
+
+        # Combine labels
+        label1 = self.table.attrs.get("label", "data1")
+        label2 = other.table.attrs.get("label", "data2")
+        df.attrs["label"] = f"{label1}+{label2}"
+
+        # Create new Data object
+        result = Data()
+        result.table = df
+        result.tgrid = self.tgrid
+        result.signal = combined_signal
+        result.openbeam = combined_openbeam
+        result.L = self.L
+        result.tstep = self.tstep
+        result.sys_err = sys_err
+
+        return result
+
+    def __iadd__(self, other):
+        """
+        In-place addition of another Data object to this one.
+
+        Parameters:
+        -----------
+        other : Data
+            Another Data object to add to this one.
+
+        Returns:
+        --------
+        Data
+            This Data object with updated values.
+
+        Raises:
+        -------
+        ValueError
+            If L or tstep parameters differ between the two Data objects.
+        TypeError
+            If the objects don't have the necessary attributes for addition.
+        """
+        result = self.__add__(other)
+        self.table = result.table
+        self.tgrid = result.tgrid
+        self.signal = result.signal
+        self.openbeam = result.openbeam
+        self.L = result.L
+        self.tstep = result.tstep
+        self.sys_err = result.sys_err
+        return self
+
     def plot(self, **kwargs):
         """
         Plots the transmission data with error bars.
