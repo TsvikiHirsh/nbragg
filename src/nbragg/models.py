@@ -1494,10 +1494,17 @@ class TransmissionModel(lmfit.Model):
 
     def _make_orientation_params(self, vary=False):
         params = lmfit.Parameters()
+        materials = self.cross_section.materials
         for phase in self.cross_section.phases:
-            params.add(f"θ_{phase}", value=0., vary=vary)
-            params.add(f"ϕ_{phase}", value=0., vary=vary)
-            params.add(f"η_{phase}", value=0., min=0., vary=vary)
+            # Get orientation values from material dictionary, default to 0
+            material = materials.get(phase, {})
+            theta_val = material.get('theta', 0.) if material.get('theta') is not None else 0.
+            phi_val = material.get('phi', 0.) if material.get('phi') is not None else 0.
+            mos_val = material.get('mos', 0.) if material.get('mos') is not None else 0.
+
+            params.add(f"θ_{phase}", value=theta_val, vary=vary)
+            params.add(f"ϕ_{phase}", value=phi_val, vary=vary)
+            params.add(f"η_{phase}", value=mos_val, min=0., vary=vary)
         return params
 
     def _tof_correction(self, E, **kwargs):
