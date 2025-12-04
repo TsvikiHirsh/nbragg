@@ -9,7 +9,7 @@
 project = 'nbragg'
 copyright = '2025, Tsviki Y. Hirsh'
 author = 'Tsviki Y. Hirsh'
-release = '0.2'
+release = '0.5'  # Updated to match current version
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -19,6 +19,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx_autodoc_typehints',
     'sphinx.ext.viewcode',
+    'sphinx.ext.mathjax',  # Support for math equations
 ]
 
 templates_path = ['_templates']

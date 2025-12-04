@@ -29,10 +29,26 @@ Getting Started
 
 .. toctree::
    :maxdepth: 2
-   :caption: Documentation Contents:
+   :caption: Getting Started:
 
    installation
    quickstart
+
+.. toctree::
+   :maxdepth: 2
+   :caption: User Guide:
+
+   user_guide/index
+   user_guide/basic_usage
+   user_guide/model_parameters
+   user_guide/orientation_index
+   user_guide/mtex_integration
+   user_guide/advanced_fitting
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Examples & Reference:
+
    examples/iron_powder
    api/index
    license
