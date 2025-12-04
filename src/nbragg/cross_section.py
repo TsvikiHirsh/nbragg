@@ -1134,23 +1134,90 @@ class CrossSection:
     def from_mtex(cls, csv_file, material, powder_phase=True, short_name=None):
         """
         Create a CrossSection from MTEX CSV orientation data.
-        
-        Parameters:
-        -----------
+
+        Parameters
+        ----------
         csv_file : str
-            Path to the CSV file containing orientation components
-        material : dict
-            Base material dictionary with existing properties
+            Path to the CSV file containing MTEX orientation data with columns:
+            - alpha_mtex, beta_mtex, gamma_mtex: Euler angles
+            - volume_mtex: Volume fraction for each orientation
+            - fwhm: Full width at half maximum (mosaicity)
+            - xh, xk, xl: First crystal direction components
+            - yh, yk, yl: Second crystal direction components
+        material : str or dict
+            Material specification. Can be:
+            - A string filename (e.g., "Fe_sg225_Iron-gamma.ncmat") - will be loaded from nbragg.materials
+            - A material dictionary from nbragg.materials with keys like 'mat', 'temp', etc.
         powder_phase : bool, optional
-            Whether to add a non-oriented powder phase with complementary weight (default True)
+            Whether to add a non-oriented powder phase with complementary weight (default: True)
         short_name : str, optional
-            Short name for the phase (e.g., 'γ' for gamma)
-        
-        Returns:
-        --------
+            Short name prefix for the phase (e.g., 'γ' for gamma).
+            If not provided, will be extracted from the material name.
+
+        Returns
+        -------
         CrossSection
-            CrossSection object with materials from CSV data
+            CrossSection object with oriented materials from CSV data and optional powder phase
+
+        Examples
+        --------
+        >>> # Using material dictionary
+        >>> xs = nbragg.CrossSection.from_mtex(
+        ...     "orientations.csv",
+        ...     material=nbragg.materials["Fe_sg225_Iron-gamma.ncmat"],
+        ...     short_name="gamma"
+        ... )
+
+        >>> # Using material filename (string)
+        >>> xs = nbragg.CrossSection.from_mtex(
+        ...     "orientations.csv",
+        ...     material="Fe_sg225_Iron-gamma.ncmat"
+        ... )
+
+        >>> # Without specifying short_name (auto-extracted)
+        >>> xs = nbragg.CrossSection.from_mtex(
+        ...     "orientations.csv",
+        ...     material=nbragg.materials["Fe_sg225_Iron-gamma.ncmat"]
+        ... )
         """
+        from . import materials as materials_registry
+
+        # Handle material parameter - accept string or dict
+        if isinstance(material, str):
+            # If it's a string, try to load from materials registry
+            if material in materials_registry:
+                material_dict = materials_registry[material]
+            else:
+                # Assume it's a valid .ncmat filename
+                material_dict = {
+                    'mat': material,
+                    'temp': 300.0,
+                    'weight': 1.0
+                }
+        elif isinstance(material, dict):
+            material_dict = material
+        else:
+            raise TypeError(f"material must be a string or dict, got {type(material)}")
+
+        # Generate default short_name if not provided
+        if short_name is None:
+            # Try to extract from _name field first
+            if '_name' in material_dict:
+                short_name = material_dict['_name']
+            # Otherwise extract from mat field
+            elif 'mat' in material_dict:
+                mat_str = material_dict['mat']
+                # Extract name from filename like "Fe_sg225_Iron-gamma.ncmat"
+                # Remove extension and split by underscores
+                name_part = mat_str.replace('.ncmat', '').replace('.nbragg', '')
+                # Take the last part after the last underscore (e.g., "Iron-gamma")
+                if '_' in name_part:
+                    short_name = name_part.split('_')[-1]
+                else:
+                    short_name = name_part
+            else:
+                short_name = "phase"
+
         # Read the CSV file
         try:
             df = pd.read_csv(csv_file)
@@ -1194,35 +1261,35 @@ class CrossSection:
             yl_col = find_column(column_mapping['yl'])
         except KeyError:
             # If specific orientation columns are not found, return a CrossSection with base material
-            return cls({short_name or material['name']: material}, name=short_name)
-        
+            return cls({short_name: material_dict}, name=short_name)
+
         # Normalize volumes to ensure they sum to 1 or less
         total_volume = df[volume_col].sum()
         if total_volume > 1:
             df[volume_col] = df[volume_col] / total_volume
-        
+
         # Prepare materials dictionary
         materials = {}
-        
+
         # Process each row for oriented phases
         for i, row in df.iterrows():
             # Create a copy of the base material
-            updated_material = material.copy()
-            
+            updated_material = material_dict.copy()
+
             # Extract weight
             weight = row[volume_col]
-            
+
             # MTEX to NCrystal coordinate transformation
             dir1 = cls._normalize_mtex_vector([row[xh_col], row[xk_col], row[xl_col]])
             dir2 = cls._normalize_mtex_vector([row[yh_col], row[yk_col], row[yl_col]])
-            
+
             # Create material name
-            material_name = f"{short_name or material['name']}{i}"
-            
+            material_name = f"{short_name}{i}"
+
             # Update material dictionary with parameters
             updated_material.update({
-                'mat': material.get('mat', ''),  # Use existing mat or empty string
-                'temp': material.get('temp', 300),  # Default to 300 if not specified
+                'mat': material_dict.get('mat', ''),  # Use existing mat or empty string
+                'temp': material_dict.get('temp', 300),  # Default to 300 if not specified
                 'mos': row[fwhm_col],
                 'dir1': dir1,
                 'dir2': dir2,
@@ -1234,18 +1301,18 @@ class CrossSection:
                 'phi': 0.0,
                 'weight': weight
             })
-            
+
             # Add to materials dictionary
             materials[material_name] = updated_material
-        
+
         # Add non-oriented powder phase if requested
         if powder_phase:
             background_weight = 1.0 - total_volume if total_volume <= 1 else 0.0
             if background_weight > 0:
-                background_material = material.copy()
+                background_material = material_dict.copy()
                 background_material.update({
-                    'mat': material.get('mat', ''),
-                    'temp': material.get('temp', 300),
+                    'mat': material_dict.get('mat', ''),
+                    'temp': material_dict.get('temp', 300),
                     'mos': None,  # No mosaicity for powder phase
                     'dir1': None,  # No orientation
                     'dir2': None,
@@ -1257,8 +1324,8 @@ class CrossSection:
                     'phi': None,
                     'weight': background_weight
                 })
-                materials[f"{short_name or material['name']}_powder"] = background_material
-        
+                materials[f"{short_name}_powder"] = background_material
+
         # Return CrossSection with materials
         return cls(materials, name=short_name)
 
