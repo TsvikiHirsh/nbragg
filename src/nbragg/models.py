@@ -182,10 +182,10 @@ class TransmissionModel(lmfit.Model):
 
         Notes
         -----
-        This function combines the cross-section with the response and background 
+        This function combines the cross-section with the response and background
         models to compute the transmission, which is given by:
 
-        .. math:: T(\lambda) = \text{norm} \cdot e^{- \sigma \cdot \text{thickness} \cdot n} \cdot (1 - \text{bg}) + \text{bg}
+        .. math:: T(\\lambda) = \\text{norm} \\cdot e^{- \\sigma \\cdot \\text{thickness} \\cdot n} \\cdot (1 - \\text{bg}) + \\text{bg}
         
         where `sigma` is the cross-section, `bg` is the background function, and `n` is the total atomic weight.
         """
@@ -1519,116 +1519,296 @@ class TransmissionModel(lmfit.Model):
         params.add("t0", value=0., vary=vary)
         return params
 
-    def plot_total_xs(self, plot_bg: bool = True,     
-                    plot_dspace: bool = False,     
-                    dspace_min: float = 1,     
-                    dspace_label_pos: float = 0.99,     
+    def plot_total_xs(self, plot_bg: bool = True,
+                    plot_dspace: bool = False,
+                    dspace_min: float = 1,
+                    dspace_label_pos: float = 0.99,
                     stage: int = None,
-                    **kwargs):    
-        """    
-        Plot the results of the total cross-section fit.    
+                    split_phases: bool = False,
+                    plot_residuals: bool = False,
+                    **kwargs):
+        """
+        Plot the results of the total cross-section fit.
 
-        Parameters    
-        ----------    
-        plot_bg : bool, optional    
-            Whether to include the background in the plot, by default True.    
-        plot_dspace: bool, optional    
-            If True plots the 2*dspace and labels of that material that are larger than dspace_min    
-        dspace_min: float, optional    
-            The minimal dspace from which to plot the dspacing*2 lines    
-        dspace_label_pos: float, optional    
-            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure    
-        stage: int, optional    
-            If provided, plot results from a specific Rietveld fitting stage (1-indexed).    
-            Only works if Rietveld fitting has been performed.    
-        kwargs : dict, optional    
-            Additional plot settings like color, marker size, etc.    
-                
-        Returns    
-        -------    
-        matplotlib.axes.Axes    
-            The axes of the plot.    
-                
-        Notes    
-        -----    
-        This function generates a plot showing the total cross-section data and the best-fit curve.    
-        If `plot_bg` is True, it will also plot the background function.    
-        Can be used both after fitting (using fit_result) or before fitting (using model params).    
-        """    
+        Parameters
+        ----------
+        plot_bg : bool, optional
+            Whether to include the background in the plot, by default True.
+        plot_dspace: bool, optional
+            If True plots the 2*dspace and labels of that material that are larger than dspace_min
+        dspace_min: float, optional
+            The minimal dspace from which to plot the dspacing*2 lines
+        dspace_label_pos: float, optional
+            The position on the y-axis to plot the dspace label, e.g. 1 is at the top of the figure
+        stage: int, optional
+            If provided, plot results from a specific Rietveld fitting stage (1-indexed).
+            Only works if Rietveld fitting has been performed.
+        split_phases: bool, optional
+            If True, plots individual phase contributions with different colors and weight labels.
+        plot_residuals: bool, optional
+            If True, creates a 2-panel plot with residuals in the bottom panel.
+        color : str, optional
+            Color for the total cross section line. Default is "0.1" (dark gray).
+        title : str, optional
+            Plot title. Default is "Total Cross-Section: {material_name}".
+        logy : bool, optional
+            If True, use logarithmic scale for y-axis. Default is True.
+        ylim : tuple, optional
+            Y-axis limits as (ymin, ymax). Example: ylim=(1e-2, 20).
+        xlim : tuple, optional
+            X-axis limits as (xmin, xmax). Example: xlim=(1.0, 5.0).
+        legend_loc : str, optional
+            Legend location. Default is 'lower right' for data, 'best' otherwise.
+        legend_fontsize : int, optional
+            Legend font size. Default is 9.
+        residuals_ylim : tuple, optional
+            Y-axis limits for residuals panel. Default is (-2.5, 2.5).
+        **kwargs : dict, optional
+            Additional matplotlib parameters passed to ax.set() (e.g., xlabel, ylabel, etc.).
+
+        Returns
+        -------
+        matplotlib.axes.Axes or tuple of Axes
+            The axes of the plot. Returns tuple (ax_main, ax_residual) if plot_residuals=True.
+
+        Notes
+        -----
+        This function generates a plot showing the total cross-section data and the best-fit curve.
+        If `plot_bg` is True, it will also plot the background function.
+        If `split_phases` is True, shows individual phase contributions with weights.
+        Can be used both after fitting (using fit_result) or before fitting (using model params).
+        """
         import matplotlib.pyplot as plt
         import numpy as np
-        
-        fig, ax = plt.subplots(figsize=(6, 4))    
-            
+
+        # Create figure with or without residuals panel
+        if plot_residuals:
+            fig, (ax, ax_res) = plt.subplots(2, 1, figsize=(6, 7),
+                                             height_ratios=[4, 1], sharex=True)
+        else:
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax_res = None    
+
         # Determine which results to use
+        data_xs = None
+        data_err = None
+        has_data = False
+
         if stage is not None and hasattr(self, "fit_stages") and self.fit_stages:
             # Use specific stage results
             if stage < 1 or stage > len(self.fit_stages):
                 raise ValueError(f"Stage {stage} not available. Available stages: 1-{len(self.fit_stages)}")
-            
+
             # Get stage results
             stage_result = self.fit_stages[stage - 1]  # Convert to 0-indexed
             params = stage_result.params
             wavelength = np.linspace(1.0, 10.0, 1000)  # Adjust range as needed
-            xs = self.cross_section(wavelength, **params)
             fit_label = f"Stage {stage} fit"
-            
-        elif hasattr(self, "fit_result") and self.fit_result is not None:    
-            # Use final fit results    
-            wavelength = self.fit_result.userkws["wl"]    
-            params = self.fit_result.params    
-            xs = self.cross_section(wavelength, **params)    
-            fit_label = "Best fit"    
-        else:    
-            # Use model (no fit yet)    
-            fit_label = "Model"    
-            params = self.params    
-            wavelength = np.linspace(1.0, 10.0, 1000)  # Adjust range as needed    
-            xs = self.cross_section(wavelength, **params)    
-            
-        # Plot settings    
-        color = kwargs.pop("color", "seagreen")    
-        title = kwargs.pop("title", f"Total Cross-Section: {self.cross_section.name}")    
-            
-        # Plot cross-section    
-        ax.plot(wavelength, xs, color=color, label=fit_label)    
-        ax.set_ylabel("Cross-Section [barn]")    
-        ax.set_xlabel("λ [Å]")    
-        ax.set_title(title)    
-            
-        # Plot background if requested    
-        if plot_bg and self.background:    
-            bg = self.background.function(wl=wavelength, **params)    
-            ax.plot(wavelength, bg, color="orange", linestyle="--", label="Background")    
-            legend_labels = [fit_label, "Background"]    
-        else:    
-            legend_labels = [fit_label]    
-            
-        # Plot d-spacing lines if requested    
-        if plot_dspace:    
-            for phase in self.cross_section.phases_data:    
-                try:    
-                    hkls = self.cross_section.phases_data[phase].info.hklList()    
-                except:    
-                    continue    
-                for hkl in hkls:    
-                    hkl = hkl[:3]    
-                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)    
-                    if dspace >= dspace_min:    
-                        trans = ax.get_xaxis_transform()    
-                        ax.axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")    
-                        if len(self.cross_section.phases) > 1:    
-                            ax.text(dspace*2, dspace_label_pos, f"{phase} {hkl}",     
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans,     
-                                    rotation=90, va="top", ha="right")    
-                        else:    
-                            ax.text(dspace*2, dspace_label_pos, f"{hkl}",     
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans,     
-                                    rotation=90, va="top", ha="right")    
-            
-        ax.legend(legend_labels, fontsize=9)    
-        plt.tight_layout()    
-        return ax
+
+        elif hasattr(self, "fit_result") and self.fit_result is not None:
+            # Use final fit results
+            wavelength = self.fit_result.userkws["wl"]
+            params = self.fit_result.params
+            fit_label = "Best fit"
+
+            # Extract data for plotting
+            if hasattr(self.fit_result, 'data') and hasattr(self.fit_result, 'weights'):
+                trans_data = self.fit_result.data
+                weights = self.fit_result.weights
+                err_trans = 1.0 / weights
+
+                # Convert transmission back to cross section
+                # σ = -ln(T) / (thickness * n)
+                thickness = params['thickness'].value
+                norm = params.get('norm', params.get('normalization', type('obj', (), {'value': 1.0}))).value
+
+                # Get background if it exists
+                bg = np.zeros_like(trans_data)
+                if self.background is not None:
+                    bg = self.background.function(wl=wavelength, **params.valuesdict())
+
+                # Calculate cross section from transmission: T = norm * exp(-σ * thickness * n) * (1 - bg) + bg
+                # Rearranging: σ = -ln((T - bg) / (norm * (1 - bg))) / (thickness * n)
+                trans_corrected = (trans_data - bg) / (norm * (1 - bg) + 1e-10)
+                trans_corrected = np.clip(trans_corrected, 1e-10, 1.0)  # Ensure valid range
+
+                # Get atomic density from model (same as used in transmission calculation)
+                n = self.atomic_density
+
+                data_xs = -np.log(trans_corrected) / (thickness * n)
+                # Error propagation: Δσ = |dσ/dT| * ΔT = σ/T * ΔT (approximately)
+                data_err = np.abs(data_xs * err_trans / (trans_data + 1e-10))
+                has_data = True
+
+        else:
+            # Use model (no fit yet)
+            fit_label = "Model"
+            params = self.params
+            wavelength = np.linspace(1.0, 10.0, 1000)  # Adjust range as needed
+
+        # Calculate total cross section and individual phase contributions
+        xs_total = self.cross_section(wavelength, **params.valuesdict())
+
+        # Get individual phase cross sections if split_phases is True
+        if split_phases:
+            phase_xs = {}
+            phase_weights = {}
+            for phase in self.cross_section.phases:
+                # Get cross section for this phase
+                phase_xs[phase] = self.cross_section.get_phase_xs(wavelength, phase, **params.valuesdict())
+                # Get weight
+                if phase in params:
+                    phase_weights[phase] = params[phase].value
+                else:
+                    # Try to find weight parameter
+                    weight_found = False
+                    for key in params:
+                        if phase in key and 'weight' not in key:
+                            phase_weights[phase] = params[key].value
+                            weight_found = True
+                            break
+                    if not weight_found:
+                        phase_weights[phase] = self.cross_section.materials.get(phase, {}).get('weight', 1.0)
+
+        # Plot settings - extract specific parameters
+        color = kwargs.pop("color", "0.1")
+        title = kwargs.pop("title", f"Total Cross-Section: {self.cross_section.name}")
+        logy = kwargs.pop("logy", True)  # Default to log scale
+        ylim = kwargs.pop("ylim", None)
+        xlim = kwargs.pop("xlim", None)
+        legend_loc = kwargs.pop("legend_loc", None)
+        legend_fontsize = kwargs.pop("legend_fontsize", 9)
+
+        # Plot data if available
+        if has_data and data_xs is not None:
+            ax.errorbar(wavelength, data_xs, yerr=data_err,
+                       marker=".", ms=2, ls="none",
+                       color="#B0A1BA", ecolor="0.8",
+                       zorder=-1, label="Data")
+
+        # Plot individual phases if requested
+        if split_phases:
+            # Get colormap
+            cmap = plt.cm.turbo
+            n_phases = len(self.cross_section.phases)
+            colors = cmap(np.linspace(0., 1, n_phases))
+
+            # Sort phases by weight
+            sorted_phases = sorted(phase_weights.items(), key=lambda x: x[1], reverse=True)
+
+            # Plot each phase
+            for i, (phase, weight) in enumerate(sorted_phases):
+                if phase in phase_xs:
+                    weighted_xs = phase_xs[phase] * weight
+                    ax.plot(wavelength, weighted_xs, lw=1, color=colors[i],
+                           label=f"{phase}", zorder=5)
+
+            # Add weight labels on the right side
+            xlim = ax.get_xlim()
+            x_label = xlim[1] * 0.98  # Position near right edge
+
+            # Get y-positions for labels (at end of plot)
+            y_positions = []
+            for phase, weight in sorted_phases:
+                if phase in phase_xs:
+                    weighted_xs = phase_xs[phase] * weight
+                    y_pos = weighted_xs[-1]
+                    # Filter out very small contributions
+                    if y_pos > xs_total[-1] * 0.01:
+                        y_positions.append((phase, weight, y_pos))
+
+            # Add text labels with weight percentages
+            total_weight = sum(phase_weights.values())
+            for i, (phase, weight, y_pos) in enumerate(y_positions):
+                phase_idx = [p for p, _ in sorted_phases].index(phase)
+                percentage = (weight / total_weight) * 100
+                ax.text(x_label, y_pos, f"{phase}: {percentage:>3.1f}%",
+                       color=colors[phase_idx], fontsize=8, rotation=4,
+                       va='center', ha='right')
+
+        # Plot total cross-section
+        ax.plot(wavelength, xs_total, color=color, label=fit_label, zorder=10, lw=1.5)
+        ax.set_ylabel("Cross-Section [barn]")
+        if not plot_residuals:
+            ax.set_xlabel("λ [Å]")
+        ax.set_title(title)
+
+        # Apply log scale if requested
+        if logy:
+            ax.set_yscale("log")
+
+        # Apply axis limits if provided
+        if ylim is not None:
+            ax.set_ylim(ylim)
+        if xlim is not None:
+            ax.set_xlim(xlim)
+
+        # Plot background if requested
+        if plot_bg and self.background:
+            bg = self.background.function(wl=wavelength, **params.valuesdict())
+            ax.plot(wavelength, bg, color="orange", linestyle="--", label="Background")
+
+        # Plot d-spacing lines if requested
+        if plot_dspace:
+            for phase in self.cross_section.phases_data:
+                try:
+                    hkls = self.cross_section.phases_data[phase].info.hklList()
+                except:
+                    continue
+                for hkl in hkls:
+                    hkl = hkl[:3]
+                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
+                    if dspace >= dspace_min:
+                        trans = ax.get_xaxis_transform()
+                        ax.axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
+                        if len(self.cross_section.phases) > 1:
+                            ax.text(dspace*2, dspace_label_pos, f"{phase} {hkl}",
+                                    color="0.2", zorder=-1, fontsize=8, transform=trans,
+                                    rotation=90, va="top", ha="right")
+                        else:
+                            ax.text(dspace*2, dspace_label_pos, f"{hkl}",
+                                    color="0.2", zorder=-1, fontsize=8, transform=trans,
+                                    rotation=90, va="top", ha="right")
+
+        # Add legend
+        if has_data:
+            legend_title = f"$\\chi^2$: {self.fit_result.redchi:.2f}" if hasattr(self, 'fit_result') else None
+            loc = legend_loc if legend_loc is not None else 'lower right'
+            ax.legend(fontsize=legend_fontsize, loc=loc, title=legend_title,
+                     title_fontsize=legend_fontsize, reverse=True)
+        else:
+            loc = legend_loc if legend_loc is not None else 'best'
+            ax.legend(fontsize=legend_fontsize, loc=loc)
+
+        # Plot residuals if requested
+        if plot_residuals and has_data and data_xs is not None:
+            residuals = data_xs - xs_total
+            ax_res.plot(wavelength, residuals, marker=".", ms=1,
+                       color="#B0A1BA", ls="none", zorder=-1)
+            ax_res.axhline(0, color="0.1", lw=1, ls="-")
+            ax_res.set_ylabel("Residuals [barn]", labelpad=13)
+            ax_res.set_xlabel("λ [Å]")
+
+            # Allow user to override residuals ylim
+            residuals_ylim = kwargs.pop("residuals_ylim", [-2.5, 2.5])
+            ax_res.set_ylim(residuals_ylim)
+            plt.subplots_adjust(hspace=0.05)
+
+        # Apply any remaining kwargs to the main axes
+        # This allows users to pass additional matplotlib parameters
+        if kwargs:
+            try:
+                ax.set(**kwargs)
+            except:
+                # If set() fails, ignore silently (kwargs might be for other purposes)
+                pass
+
+        plt.tight_layout()
+
+        if plot_residuals:
+            return ax, ax_res
+        else:
+            return ax
 
     def plot_stage_progression(self, param_name, ax=None, **kwargs):
         """

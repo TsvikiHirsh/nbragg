@@ -953,7 +953,51 @@ class CrossSection:
             self._populate_material_data()
 
         return self._calculate_cross_section(wl, self.mat_data)
-    
+
+    def get_phase_xs(self, wl: np.ndarray, phase: str, **kwargs):
+        """
+        Get cross section for a specific phase.
+
+        Args:
+            wl: Wavelength array
+            phase: Phase name
+            **kwargs: Parameters for updating the phase configuration
+
+        Returns:
+            Cross section array for the specified phase
+        """
+        if phase not in self.phases_data:
+            raise ValueError(f"Phase '{phase}' not found. Available phases: {list(self.phases_data.keys())}")
+
+        # Update parameters if needed (similar to __call__)
+        # For now, just calculate with current configuration
+        return self._calculate_cross_section(wl, self.phases_data[phase])
+
+    def get_atomic_density(self):
+        """
+        Get the atomic density (number density) from the material.
+
+        Returns:
+            Atomic number density in atoms/barn/cm
+        """
+        if self.mat_data is None:
+            return 1.0  # Default value
+
+        # Get number density from NCrystal
+        # NCrystal provides this via the Info object
+        try:
+            info = self.mat_data.scatter.info
+            # Number density in atoms/(Angstrom^3)
+            n_density = info.getNumberDensity()
+            # Convert from atoms/Angstrom^3 to atoms/(barn*cm)
+            # 1 Angstrom = 1e-8 cm
+            # 1 barn = 1e-24 cm^2
+            # atoms/Angstrom^3 = atoms/(1e-8 cm)^3 = atoms * 1e24 / cm^3
+            # We need atoms/(barn*cm) = atoms/(1e-24 cm^2 * cm) = atoms * 1e24 / cm^3
+            return n_density * 1e24  # Convert to atoms/(barn*cm)
+        except:
+            return 1.0  # Default fallback
+
     @staticmethod
     def _get_material_info(material_key: str) -> Dict:
         """Get material information from the materials dictionary."""
