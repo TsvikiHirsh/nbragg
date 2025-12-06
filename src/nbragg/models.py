@@ -1526,6 +1526,9 @@ class TransmissionModel(lmfit.Model):
                     stage: int = None,
                     split_phases: bool = False,
                     plot_residuals: bool = False,
+                    weight_label_position: str = 'right',
+                    figsize: tuple = None,
+                    height_ratios: list = None,
                     **kwargs):
         """
         Plot the results of the total cross-section fit.
@@ -1547,6 +1550,19 @@ class TransmissionModel(lmfit.Model):
             If True, plots individual phase contributions with different colors and weight labels.
         plot_residuals: bool, optional
             If True, creates a 2-panel plot with residuals in the bottom panel.
+        weight_label_position : str, optional
+            Position of weight labels when split_phases=True. Options:
+            - 'right': Labels on right edge of plot (default)
+            - 'left': Labels above each curve on the left (respects log scale)
+            - 'legend': Include weights in legend labels
+            - 'none' or None: No weight labels
+        figsize : tuple, optional
+            Figure size as (width, height). Default is (6, 4) for single panel,
+            (6, 5) for residuals panel.
+        height_ratios : list, optional
+            Height ratios for panels when plot_residuals=True.
+            Default is [6, 1] (main panel 6x larger than residuals).
+            Example: [3, 1] for different ratio.
         color : str, optional
             Color for the total cross section line. Default is "0.1" (dark gray).
         title : str, optional
@@ -1581,12 +1597,18 @@ class TransmissionModel(lmfit.Model):
         import matplotlib.pyplot as plt
         import numpy as np
 
+        # Set default figsize and height_ratios
+        if figsize is None:
+            figsize = (6, 5) if plot_residuals else (6, 4)
+        if height_ratios is None:
+            height_ratios = [6, 1]
+
         # Create figure with or without residuals panel
         if plot_residuals:
-            fig, (ax, ax_res) = plt.subplots(2, 1, figsize=(6, 7),
-                                             height_ratios=[4, 1], sharex=True)
+            fig, (ax, ax_res) = plt.subplots(2, 1, figsize=figsize,
+                                             height_ratios=height_ratios, sharex=True)
         else:
-            fig, ax = plt.subplots(figsize=(6, 4))
+            fig, ax = plt.subplots(figsize=figsize)
             ax_res = None    
 
         # Determine which results to use
@@ -1695,36 +1717,65 @@ class TransmissionModel(lmfit.Model):
 
             # Sort phases by weight
             sorted_phases = sorted(phase_weights.items(), key=lambda x: x[1], reverse=True)
+            total_weight = sum(phase_weights.values())
 
-            # Plot each phase
+            # Plot each phase with appropriate labels
             for i, (phase, weight) in enumerate(sorted_phases):
                 if phase in phase_xs:
                     weighted_xs = phase_xs[phase] * weight
+                    percentage = (weight / total_weight) * 100
+
+                    # Create label based on weight_label_position
+                    if weight_label_position == 'legend':
+                        phase_label = f"{phase}: {percentage:>3.1f}%"
+                    else:
+                        phase_label = f"{phase}"
+
                     ax.plot(wavelength, weighted_xs, lw=1, color=colors[i],
-                           label=f"{phase}", zorder=5)
+                           label=phase_label, zorder=5)
 
-            # Add weight labels on the right side
-            xlim = ax.get_xlim()
-            x_label = xlim[1] * 0.98  # Position near right edge
+            # Add weight labels as text annotations (not in legend)
+            if weight_label_position == 'right':
+                # Labels on right edge of plot
+                xlim_current = ax.get_xlim()
+                x_label = xlim_current[1] * 0.98
 
-            # Get y-positions for labels (at end of plot)
-            y_positions = []
-            for phase, weight in sorted_phases:
-                if phase in phase_xs:
-                    weighted_xs = phase_xs[phase] * weight
-                    y_pos = weighted_xs[-1]
-                    # Filter out very small contributions
-                    if y_pos > xs_total[-1] * 0.01:
-                        y_positions.append((phase, weight, y_pos))
+                for i, (phase, weight) in enumerate(sorted_phases):
+                    if phase in phase_xs:
+                        weighted_xs = phase_xs[phase] * weight
+                        y_pos = weighted_xs[-1]
+                        # Filter out very small contributions
+                        if y_pos > xs_total[-1] * 0.01:
+                            percentage = (weight / total_weight) * 100
+                            ax.text(x_label, y_pos, f"{phase}: {percentage:>3.1f}%",
+                                   color=colors[i], fontsize=8, rotation=4,
+                                   va='center', ha='right')
 
-            # Add text labels with weight percentages
-            total_weight = sum(phase_weights.values())
-            for i, (phase, weight, y_pos) in enumerate(y_positions):
-                phase_idx = [p for p, _ in sorted_phases].index(phase)
-                percentage = (weight / total_weight) * 100
-                ax.text(x_label, y_pos, f"{phase}: {percentage:>3.1f}%",
-                       color=colors[phase_idx], fontsize=8, rotation=4,
-                       va='center', ha='right')
+            elif weight_label_position == 'left':
+                # Labels above each curve on the left
+                xlim_current = ax.get_xlim()
+                x_label = xlim_current[0] + (xlim_current[1] - xlim_current[0]) * 0.05
+
+                for i, (phase, weight) in enumerate(sorted_phases):
+                    if phase in phase_xs:
+                        weighted_xs = phase_xs[phase] * weight
+                        # Find y-position at the label x position
+                        idx = np.argmin(np.abs(wavelength - x_label))
+                        y_pos = weighted_xs[idx]
+                        # Filter out very small contributions
+                        if y_pos > xs_total[idx] * 0.01:
+                            percentage = (weight / total_weight) * 100
+                            # Offset label upward to avoid overlap with curve
+                            # Use multiplicative offset for log scale, small additive for linear
+                            if logy:
+                                y_label = y_pos * 1.2  # 20% higher in log space
+                            else:
+                                # Use small multiplicative factor for linear scale too
+                                y_label = y_pos * 1.05  # 5% higher
+
+                            ax.text(x_label, y_label, f"{phase}: {percentage:>3.1f}%",
+                                   color=colors[i], fontsize=8,
+                                   va='bottom', ha='left')
 
         # Plot total cross-section
         ax.plot(wavelength, xs_total, color=color, label=fit_label, zorder=10, lw=1.5)
