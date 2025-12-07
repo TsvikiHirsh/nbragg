@@ -10,6 +10,7 @@ This comprehensive guide covers all aspects of using nbragg for neutron Bragg ed
 
    basic_usage
    model_parameters
+   save_load
    orientation_index
    crystal_orientation_guide
    orientation_quick_reference
@@ -21,6 +22,9 @@ Quick Links
 
 **New to nbragg?**
    Start with :doc:`basic_usage` to learn the fundamentals.
+
+**Saving and loading fits?**
+   See :doc:`save_load` to learn how to save results and resume analysis sessions.
 
 **Working with oriented materials?**
    See the :doc:`orientation_index` for a complete guide to crystal orientations.
@@ -63,6 +67,14 @@ What's New
 
 Recent additions to nbragg include:
 
+**Save and Load Functionality**
+   - ``result.save()`` method for easy saving of fit results
+   - ``TransmissionModel.load()`` automatically detects model or result files
+   - Initialize models directly from saved files: ``TransmissionModel("fit.json")``
+   - Loaded results have all methods (plot, save, etc.)
+   - JSON-based format avoids ctypes pickle issues
+   - See :doc:`save_load` for complete documentation
+
 **Model Parameter Control**
    - New ``vary_basic`` parameter to control thickness and norm fitting
    - Automatic initialization of orientation parameters from material properties
@@ -74,7 +86,8 @@ Recent additions to nbragg include:
    - Better handling of powder phases in oriented materials
 
 **Enhanced Documentation**
-   - Comprehensive crystal orientation guide
+   - Comprehensive save/load guide
+   - Crystal orientation guide
    - Quick reference cards for common operations
    - Executable examples for all major features
 
