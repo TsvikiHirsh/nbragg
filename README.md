@@ -69,24 +69,14 @@ nbragg is licensed under the [MIT License](LICENSE).
 
 ### Third-Party Dependencies
 
-This project depends on several open-source packages, each with their own licenses. All dependency licenses are compatible with the MIT License:
+This project depends on several open-source packages with permissive licenses compatible with MIT:
 
-- **BSD Licensed packages**: scipy, pandas, numpy, lmfit
-  - These packages use BSD or BSD 3-Clause licenses, which are permissive open-source licenses compatible with MIT.
+- **scipy, pandas, numpy, lmfit**: BSD/BSD 3-Clause
+- **setuptools, tqdm**: MIT License
+- **matplotlib**: PSF License
+- **ncrystal**: Apache 2.0 ([license](https://github.com/mctools/ncrystal/blob/master/LICENSE))
 
-- **setuptools**: MIT License
-  - Licensed under the same MIT License as nbragg.
-
-- **tqdm**: MIT License OR MPL-2.0 (dual licensed)
-  - Can be used under either the MIT License or Mozilla Public License 2.0.
-
-- **matplotlib**: Python Software Foundation License
-  - Licensed under the PSF License, a permissive license compatible with MIT.
-
-- **ncrystal**: Apache License 2.0
-  - Licensed under the Apache 2.0 License. While compatible with MIT, this license includes specific patent grant provisions and attribution requirements. For full details, see the [NCrystal LICENSE](https://github.com/mctools/ncrystal/blob/master/LICENSE) and [NOTICE](https://github.com/mctools/ncrystal/blob/master/NOTICE) files.
-
-All these licenses are permissive and allow free use, modification, and distribution. Users should refer to each dependency's respective license for specific terms and conditions.
+All dependencies allow free use, modification, and distribution.
 
 [pypi-version]: https://img.shields.io/pypi/v/nbragg.svg
 [pypi-link]: https://pypi.org/project/nbragg/
