@@ -953,15 +953,20 @@ class TransmissionModel(lmfit.Model):
                     p.vary = False
                 
                 # Unfreeze all parameters that have been introduced so far
+                # But respect the user's vary setting from self.params
                 unfrozen_count = 0
                 for name in cumulative_params:
                     if name in params:
-                        params[name].vary = True
-                        unfrozen_count += 1
-                        if verbose and (name in group or not group):
-                            print(f"  New parameter: {name}")
+                        # Only set vary=True if the parameter's original setting allows it
+                        if name in self.params and self.params[name].vary:
+                            params[name].vary = True
+                            unfrozen_count += 1
+                            if verbose and (name in group or not group):
+                                print(f"  New parameter: {name}")
+                            elif verbose:
+                                print(f"  Continuing: {name}")
                         elif verbose:
-                            print(f"  Continuing: {name}")
+                            print(f"  Skipping {name} (vary=False set by user)")
                     else:
                         if name in group or not group:  # Only warn for new parameters
                             warnings.warn(f"Parameter '{name}' not found in params")
@@ -971,6 +976,7 @@ class TransmissionModel(lmfit.Model):
                     
             elif method == "staged":
                 # Staged: only current group parameters vary
+                # But respect the user's vary setting from self.params
                 for p in params.values():
                     p.vary = False
 
@@ -978,10 +984,14 @@ class TransmissionModel(lmfit.Model):
                 active_params = group if group else [p for p in self.params if self.params[p].vary]
                 for name in active_params:
                     if name in params:
-                        params[name].vary = True
-                        unfrozen_count += 1
-                        if verbose:
-                            print(f"  Unfrozen: {name}")
+                        # Only set vary=True if the parameter's original setting allows it
+                        if name in self.params and self.params[name].vary:
+                            params[name].vary = True
+                            unfrozen_count += 1
+                            if verbose:
+                                print(f"  Unfrozen: {name}")
+                        elif verbose:
+                            print(f"  Skipping {name} (vary=False set by user)")
                     else:
                         warnings.warn(f"Parameter '{name}' not found in params")
 

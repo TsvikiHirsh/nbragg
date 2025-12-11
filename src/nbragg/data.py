@@ -22,10 +22,8 @@ class Data:
         Distance (meters) used in the energy conversion from time-of-flight.
     tstep : float or None
         Time step (seconds) for converting time-of-flight to energy.
-    sys_err : float or None
-        Fractional systematic error included in transmission calculation.
     """
-    
+
     def __init__(self, **kwargs):
         """
         Initializes the Data object with optional keyword arguments.
@@ -41,7 +39,6 @@ class Data:
         self.openbeam = None
         self.L = None
         self.tstep = None
-        self.sys_err = None
     
     @classmethod
     def _read_counts(cls, input_data, names=None):
@@ -120,11 +117,12 @@ class Data:
     @classmethod
     def from_counts(cls, signal, openbeam,
                     empty_signal: str = "", empty_openbeam: str = "",
-                    tstep: float = 10.0e-6, L: float = 9, sys_err: float = 0.):
+                    tstep: float = 10.0e-6, L: float = 9,
+                    L0: float = 1.0, t0: float = 0., dropna: bool = False):
         """
-        Creates a Data object from signal and open beam counts data, calculates transmission, 
+        Creates a Data object from signal and open beam counts data, calculates transmission,
         and converts tof to wavelength using energy-wavelength conversion.
-        
+
         Parameters:
         -----------
         signal : str or pandas.DataFrame
@@ -132,19 +130,23 @@ class Data:
         openbeam : str or pandas.DataFrame
             Path to the CSV file or DataFrame containing the open beam data (tof, counts, err).
         empty_signal : str or pandas.DataFrame, optional
-            Path to the CSV file or DataFrame containing the empty signal data for background correction. 
+            Path to the CSV file or DataFrame containing the empty signal data for background correction.
             Default is an empty string.
         empty_openbeam : str or pandas.DataFrame, optional
-            Path to the CSV file or DataFrame containing the empty open beam data for background correction. 
+            Path to the CSV file or DataFrame containing the empty open beam data for background correction.
             Default is an empty string.
         tstep : float, optional
             Time step (seconds) for converting time-of-flight (tof) to energy. Default is 10.0e-6.
         L : float, optional
             Distance (meters) used in the energy conversion from time-of-flight. Default is 9 m.
-        sys_err : float, optional
-            Fractional systematical error to include in the transmission calculation 
-            (e.g. sys_err=0.01 will include a 1% systematical error to the uncertainty)
-        
+        L0 : float, optional
+            Flight path scale factor from vary_tof optimization. Default is 1.0.
+            Values > 1.0 indicate a longer path, < 1.0 a shorter path.
+        t0 : float, optional
+            Time offset correction (in tof units) from vary_tof optimization. Default is 0.
+        dropna : bool, optional
+            If True, remove rows with NaN values from the data table. Default is False.
+
         Returns:
         --------
         Data
@@ -153,32 +155,42 @@ class Data:
         # Read signal and open beam counts
         signal = cls._read_counts(signal)
         openbeam = cls._read_counts(openbeam)
-        
-        # Convert tof to energy using provided time step and distance
-        signal["energy"] = utils.time2energy(signal["tof"] * tstep, L)
-        
+
+        # Apply L0 and t0 corrections using the same formula as in TransmissionModel._tof_correction
+        # dtof = (1.0 - L0) * tof + t0, then corrected_tof = tof + dtof
+        dtof = (1.0 - L0) * signal["tof"] + t0
+        corrected_tof = signal["tof"] + dtof
+
+        # Convert tof to energy using corrected time and nominal distance
+        signal["energy"] = utils.time2energy(corrected_tof * tstep, L)
+
         # Convert energy to wavelength (Angstroms)
         signal["wavelength"] = signal["energy"].apply(NC.ekin2wl)
-        
+
         # Calculate transmission and associated error
         transmission = signal["counts"] / openbeam["counts"]
-        err = transmission * np.sqrt((signal["err"] / signal["counts"])**2 + 
-                                    (openbeam["err"] / openbeam["counts"])**2 + sys_err**2)
-        
+        err = transmission * np.sqrt((signal["err"] / signal["counts"])**2 +
+                                    (openbeam["err"] / openbeam["counts"])**2)
+
         # If background (empty) data is provided, apply correction
-        if empty_signal and empty_openbeam:
+        # Check if empty_signal/empty_openbeam are non-empty (not empty string, not None, not empty DataFrame)
+        has_empty_signal = (isinstance(empty_signal, pd.DataFrame) and not empty_signal.empty) or \
+                          (isinstance(empty_signal, str) and empty_signal)
+        has_empty_openbeam = (isinstance(empty_openbeam, pd.DataFrame) and not empty_openbeam.empty) or \
+                            (isinstance(empty_openbeam, str) and empty_openbeam)
+
+        if has_empty_signal and has_empty_openbeam:
             empty_signal = cls._read_counts(empty_signal)
             empty_openbeam = cls._read_counts(empty_openbeam)
-            
+
             transmission *= empty_openbeam["counts"] / empty_signal["counts"]
             err = transmission * np.sqrt(
-                (signal["err"] / signal["counts"])**2 + 
+                (signal["err"] / signal["counts"])**2 +
                 (openbeam["err"] / openbeam["counts"])**2 +
-                (empty_signal["err"] / empty_signal["counts"])**2 + 
-                (empty_openbeam["err"] / empty_openbeam["counts"])**2 +
-                sys_err**2
+                (empty_signal["err"] / empty_signal["counts"])**2 +
+                (empty_openbeam["err"] / empty_openbeam["counts"])**2
             )
-        
+
         # Construct a dataframe for wavelength, transmission, and error
         df = pd.DataFrame({
             "wavelength": signal["wavelength"],
@@ -189,6 +201,10 @@ class Data:
         # Set the label attribute from the signal file
         df.attrs["label"] = signal.attrs["label"]
 
+        # Drop NaN values if requested
+        if dropna:
+            df = df.dropna()
+
         # Create and return the Data object
         self_data = cls()
         self_data.table = df
@@ -197,40 +213,61 @@ class Data:
         self_data.openbeam = openbeam
         self_data.L = L
         self_data.tstep = tstep
-        self_data.sys_err = sys_err
 
         return self_data
 
     @classmethod
-    def from_transmission(cls, filename: str, index: str ="wavelength"):
+    def from_transmission(cls, input_data, index: str = "wavelength", dropna: bool = False):
         """
-        Creates a Data object directly from a transmission data file containing energy, transmission, and error values.
-        Converts energy to wavelength and sets wavelength as the index.
-        
+        Creates a Data object directly from transmission data containing wavelength/energy, transmission, and error values.
+
         Parameters:
         -----------
-        filename : str
-            Path to the file containing the transmission data (energy, transmission, error) separated by whitespace.
-        index : str 
-            Optional energy to wavelegth convertion: If the index is "energy" it will be converted to wavelength
-        
+        input_data : str or pandas.DataFrame
+            Path to a file containing the transmission data (wavelength/energy, transmission, error) separated by whitespace,
+            or a pandas DataFrame with the transmission data.
+        index : str, optional
+            Name of the first column. If "energy", values will be converted to wavelength. Default is "wavelength".
+        dropna : bool, optional
+            If True, remove rows with NaN values from the data table. Default is False.
+
         Returns:
         --------
         Data
             A Data object with the transmission data loaded into a dataframe.
         """
-        df = pd.read_csv(filename, sep=r"\s+")
-        df.columns = [index, "trans", "err"]
-        
-        if index=="energy":
-        # Convert energy to wavelength (Angstroms)
+        # Handle both file paths and DataFrames
+        if isinstance(input_data, str):
+            df = pd.read_csv(input_data, sep=r"\s+")
+            df.columns = [index, "trans", "err"]
+        elif isinstance(input_data, pd.DataFrame):
+            df = input_data.copy()
+            # Use the provided column names or assume they're already correct
+            if len(df.columns) == 3:
+                df.columns = [index, "trans", "err"]
+            elif set(["trans", "err"]).issubset(df.columns):
+                # Already has trans and err, just ensure index column is named correctly
+                if index not in df.columns and len(df.columns) >= 3:
+                    # Rename the first column that's not trans or err
+                    for col in df.columns:
+                        if col not in ["trans", "err"]:
+                            df = df.rename(columns={col: index})
+                            break
+        else:
+            raise TypeError("input_data must be a string (file path) or a pandas DataFrame")
+
+        # Convert energy to wavelength if needed
+        if index == "energy":
             df["wavelength"] = df["energy"].apply(NC.ekin2wl)
 
-        
-        # Create Data object and assign the dataframe with wavelength as index
+        # Drop NaN values if requested
+        if dropna:
+            df = df.dropna()
+
+        # Create Data object and assign the dataframe
         self_data = cls()
-        self_data.table = df#.set_index("wavelength")
-        
+        self_data.table = df
+
         return self_data
     
     def __add__(self, other):
@@ -279,11 +316,9 @@ class Data:
 
         # Calculate transmission and error with combined counts
         transmission = combined_signal["counts"] / combined_openbeam["counts"]
-        sys_err = self.sys_err if self.sys_err is not None else 0.
         err = transmission * np.sqrt(
             (combined_signal["err"] / combined_signal["counts"])**2 +
-            (combined_openbeam["err"] / combined_openbeam["counts"])**2 +
-            sys_err**2
+            (combined_openbeam["err"] / combined_openbeam["counts"])**2
         )
 
         # Create new dataframe with combined results
@@ -306,7 +341,6 @@ class Data:
         result.openbeam = combined_openbeam
         result.L = self.L
         result.tstep = self.tstep
-        result.sys_err = sys_err
 
         return result
 
@@ -338,8 +372,36 @@ class Data:
         self.openbeam = result.openbeam
         self.L = result.L
         self.tstep = result.tstep
-        self.sys_err = result.sys_err
         return self
+
+    def dropna(self, inplace=False):
+        """
+        Remove rows with NaN values from the data table.
+
+        Parameters:
+        -----------
+        inplace : bool, optional
+            If True, modify the Data object in place and return self.
+            If False, return a new Data object with NaN values removed. Default is False.
+
+        Returns:
+        --------
+        Data or None
+            Returns a new Data object if inplace=False, or None if inplace=True.
+        """
+        if inplace:
+            self.table = self.table.dropna()
+            return self
+        else:
+            # Create a new Data object with dropna applied
+            new_data = Data()
+            new_data.table = self.table.dropna() if self.table is not None else None
+            new_data.tgrid = self.tgrid
+            new_data.signal = self.signal
+            new_data.openbeam = self.openbeam
+            new_data.L = self.L
+            new_data.tstep = self.tstep
+            return new_data
 
     def plot(self, **kwargs):
         """

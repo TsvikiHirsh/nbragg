@@ -63,18 +63,107 @@ If you have raw counts (signal and open beam):
 .. code-block:: python
 
     data = nbragg.Data.from_counts(
-        signal_file="sample_counts.csv",
-        openbeam_file="openbeam_counts.csv"
+        signal="sample_counts.csv",
+        openbeam="openbeam_counts.csv",
+        L=10.0,      # Flight path length in meters
+        tstep=10e-6  # Time step in seconds
     )
 
 Expected CSV format:
 
 .. code-block:: text
 
-    slice,counts,error
+    tof,counts,err
     0,1000,31.6
     1,1050,32.4
     ...
+
+With empty region correction for background subtraction:
+
+.. code-block:: python
+
+    data = nbragg.Data.from_counts(
+        signal="sample_counts.csv",
+        openbeam="openbeam_counts.csv",
+        empty_signal="empty_sample.csv",
+        empty_openbeam="empty_openbeam.csv",
+        L=10.0,
+        tstep=10e-6
+    )
+
+Using DataFrames Instead of Files
+----------------------------------
+
+Both ``from_counts`` and ``from_transmission`` accept pandas DataFrames in addition to file paths:
+
+.. code-block:: python
+
+    import pandas as pd
+    import nbragg
+
+    # Create or load a DataFrame
+    df = pd.DataFrame({
+        'wavelength': [1.0, 1.1, 1.2],
+        'trans': [0.95, 0.94, 0.93],
+        'err': [0.01, 0.01, 0.01]
+    })
+
+    data = nbragg.Data.from_transmission(df)
+
+This is useful when data is already in memory or needs preprocessing.
+
+Time-of-Flight Corrections
+---------------------------
+
+If you've optimized L0 and t0 parameters using ``vary_tof``, you can apply these corrections when loading data:
+
+.. code-block:: python
+
+    # After optimizing with vary_tof=True, you get L0 and t0 values
+    data = nbragg.Data.from_counts(
+        signal="sample_counts.csv",
+        openbeam="openbeam_counts.csv",
+        L=10.0,
+        tstep=10e-6,
+        L0=1.05,   # Flight path scale factor (default 1.0)
+        t0=5.0     # Time offset correction (tof units)
+    )
+
+The corrections are applied as:
+
+- **L0** is a scale factor (default 1.0):
+
+  - L0 > 1.0: longer flight path → TOF is reduced
+  - L0 < 1.0: shorter flight path → TOF is increased
+
+- **t0** is an additive time offset in TOF units
+
+- Formula: ``corrected_tof = tof + (1.0 - L0) * tof + t0``
+
+Use the same L0 and t0 values you obtained from fitting with ``vary_tof=True``.
+
+Handling NaN Values
+-------------------
+
+Remove rows with NaN values during data loading:
+
+.. code-block:: python
+
+    # Remove NaN values when loading
+    data = nbragg.Data.from_transmission("data.csv", dropna=True)
+
+Or remove them after loading:
+
+.. code-block:: python
+
+    # Load data
+    data = nbragg.Data.from_transmission("data.csv")
+
+    # Remove NaN values in place
+    data.dropna(inplace=True)
+
+    # Or create a new Data object without NaN
+    clean_data = data.dropna()
 
 Defining Materials
 ==================
