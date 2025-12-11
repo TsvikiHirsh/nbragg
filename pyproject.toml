@@ -32,7 +32,8 @@ dependencies = [
 "lmfit",
 "setuptools",
 "ncrystal",
-"tqdm"
+"tqdm",
+"joblib"
 ]
 
 [project.optional-dependencies]

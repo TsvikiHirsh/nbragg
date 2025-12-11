@@ -39,6 +39,12 @@ class Data:
         self.openbeam = None
         self.L = None
         self.tstep = None
+
+        # Grouped data attributes
+        self.is_grouped = False
+        self.groups = None  # Dict mapping index -> table
+        self.indices = None  # List of indices (tuples for 2D, ints for 1D, strings for named)
+        self.group_shape = None  # Tuple (nx, ny) for 2D, (n,) for 1D, None for named
     
     @classmethod
     def _read_counts(cls, input_data, names=None):
@@ -269,7 +275,281 @@ class Data:
         self_data.table = df
 
         return self_data
-    
+
+    @classmethod
+    def from_grouped(cls, signal, openbeam,
+                     empty_signal: str = "", empty_openbeam: str = "",
+                     tstep: float = 10.0e-6, L: float = 9,
+                     L0: float = 1.0, t0: float = 0., dropna: bool = False,
+                     pattern: str = "auto", indices: list = None, verbosity: int = 1):
+        """
+        Creates a Data object from grouped counts data using glob patterns.
+
+        Supports 1D arrays, 2D grids, and named indices for spatially-resolved analysis.
+
+        Parameters:
+        -----------
+        signal : str
+            Glob pattern for signal files (e.g., "archive/pixel_*.csv" or "data/grid_*_x*_y*.csv").
+        openbeam : str
+            Glob pattern for openbeam files.
+        empty_signal : str, optional
+            Glob pattern for empty signal files for background correction.
+        empty_openbeam : str, optional
+            Glob pattern for empty openbeam files for background correction.
+        tstep : float, optional
+            Time step (seconds) for converting time-of-flight to energy. Default is 10.0e-6.
+        L : float, optional
+            Distance (meters) used in the energy conversion from time-of-flight. Default is 9 m.
+        L0 : float, optional
+            Flight path scale factor from vary_tof optimization. Default is 1.0.
+        t0 : float, optional
+            Time offset correction (in tof units) from vary_tof optimization. Default is 0.
+        dropna : bool, optional
+            If True, remove rows with NaN values from data tables. Default is False.
+        pattern : str, optional
+            Coordinate extraction pattern. Default is "auto" which tries common patterns:
+            - "x{x}_y{y}" for 2D grids (e.g., "grid_x10_y20.csv")
+            - "idx{i}" or "pixel_{i}" for 1D arrays
+            Custom patterns can use {x}, {y}, {i}, or {name}.
+        indices : list, optional
+            If provided, use these indices instead of extracting from filenames.
+            Can be list of ints (1D), list of tuples (2D), or list of strings (named).
+        verbosity : int, optional
+            Verbosity level. If >= 1, shows progress bar. Default is 1.
+
+        Returns:
+        --------
+        Data
+            A Data object with grouped data stored in self.groups.
+
+        Examples:
+        ---------
+        # 2D grid from filenames like "pixel_x10_y20.csv"
+        >>> data = Data.from_grouped("folder/pixel_*.csv", "folder_ob/pixel_*.csv")
+
+        # 1D array with custom indices
+        >>> data = Data.from_grouped("data/det_*.csv", "data_ob/det_*.csv", indices=[0, 1, 2, 3])
+
+        # Named groups
+        >>> data = Data.from_grouped("samples/*.csv", "ref/*.csv", indices=["sample1", "sample2"])
+        """
+        import glob
+        import re
+        import os
+
+        # Find all matching files
+        signal_files = sorted(glob.glob(signal))
+        openbeam_files = sorted(glob.glob(openbeam))
+
+        if not signal_files:
+            raise ValueError(f"No files found matching pattern: {signal}")
+        if not openbeam_files:
+            raise ValueError(f"No files found matching pattern: {openbeam}")
+        if len(signal_files) != len(openbeam_files):
+            raise ValueError(f"Mismatch: {len(signal_files)} signal files vs {len(openbeam_files)} openbeam files")
+
+        # Handle empty beam files if provided
+        empty_signal_files = []
+        empty_openbeam_files = []
+        use_single_empty = False  # Flag for single empty file reuse
+
+        if empty_signal and empty_openbeam:
+            empty_signal_files = sorted(glob.glob(empty_signal))
+            empty_openbeam_files = sorted(glob.glob(empty_openbeam))
+
+            # Allow single empty file to be reused for all groups
+            if len(empty_signal_files) == 1 and len(empty_openbeam_files) == 1:
+                use_single_empty = True
+            elif len(empty_signal_files) != len(signal_files) or len(empty_openbeam_files) != len(signal_files):
+                raise ValueError(
+                    f"Empty file count mismatch: {len(empty_signal_files)} empty signal, "
+                    f"{len(empty_openbeam_files)} empty openbeam vs {len(signal_files)} signal files. "
+                    f"Provide either 1 empty file (reused for all) or one per signal file."
+                )
+
+        # Extract or use provided indices
+        if indices is not None:
+            # Convert numpy arrays to list
+            import numpy as np
+            if isinstance(indices, np.ndarray):
+                indices = indices.tolist()
+
+            # User-provided indices
+            if len(indices) != len(signal_files):
+                raise ValueError(f"Number of indices ({len(indices)}) must match number of files ({len(signal_files)})")
+            extracted_indices = indices
+        else:
+            # Auto-extract from filenames
+            extracted_indices = cls._extract_indices_from_filenames(signal_files, pattern)
+
+        # Determine group dimensionality and shape
+        group_shape, is_2d, is_1d = cls._determine_group_shape(extracted_indices)
+
+        # Create Data object
+        self_data = cls()
+        self_data.is_grouped = True
+        self_data.indices = extracted_indices
+        self_data.group_shape = group_shape
+        self_data.groups = {}
+        self_data.L = L
+        self_data.tstep = tstep
+
+        # Prepare iterator with optional progress bar
+        if verbosity >= 1:
+            try:
+                from tqdm.auto import tqdm
+                iterator = tqdm(enumerate(extracted_indices), total=len(extracted_indices),
+                               desc=f"Loading {len(extracted_indices)} groups")
+            except ImportError:
+                iterator = enumerate(extracted_indices)
+        else:
+            iterator = enumerate(extracted_indices)
+
+        # Load each group
+        for i, idx in iterator:
+            sig_file = signal_files[i]
+            ob_file = openbeam_files[i]
+
+            # Handle empty files - use single file if available, otherwise per-group
+            if use_single_empty:
+                es_file = empty_signal_files[0]
+                eo_file = empty_openbeam_files[0]
+            else:
+                es_file = empty_signal_files[i] if empty_signal_files else ""
+                eo_file = empty_openbeam_files[i] if empty_openbeam_files else ""
+
+            # Create individual Data object for this group
+            group_data = cls.from_counts(
+                signal=sig_file,
+                openbeam=ob_file,
+                empty_signal=es_file,
+                empty_openbeam=eo_file,
+                tstep=tstep,
+                L=L,
+                L0=L0,
+                t0=t0,
+                dropna=dropna
+            )
+
+            # Store in groups dict
+            self_data.groups[idx] = group_data.table
+
+        # Set first group as default table for compatibility
+        self_data.table = self_data.groups[extracted_indices[0]]
+
+        return self_data
+
+    @classmethod
+    def _extract_indices_from_filenames(cls, filenames, pattern):
+        """Extract indices from filenames based on pattern."""
+        import re
+        import os
+
+        indices = []
+
+        # Auto-detect pattern if needed
+        if pattern == "auto":
+            # Try common patterns
+            test_name = os.path.basename(filenames[0])
+
+            # Try 2D patterns - look for _x or _y to avoid matching dimension specs like 16x16
+            match_2d = re.search(r'_x(\d+).*_y(\d+)', test_name, re.IGNORECASE)
+            if not match_2d:
+                # Try without underscores but with word boundaries
+                match_2d = re.search(r'\bx(\d+)[_\s].*\by(\d+)', test_name, re.IGNORECASE)
+
+            if match_2d:
+                pattern = "_x{x}_y{y}"
+            else:
+                # Try 1D patterns - look for trailing numbers or with keywords
+                match_1d = re.search(r'(?:idx|pixel|det)[_\s]*(\d+)', test_name, re.IGNORECASE)
+                if not match_1d:
+                    # Try just trailing number before extension
+                    match_1d = re.search(r'_(\d+)\.', test_name)
+
+                if match_1d:
+                    pattern = "idx{i}"
+                else:
+                    # Fall back to sequential indexing
+                    return list(range(len(filenames)))
+
+        # Extract based on pattern
+        for fname in filenames:
+            basename = os.path.basename(fname)
+
+            if "{x}" in pattern and "{y}" in pattern:
+                # 2D grid pattern - try multiple patterns
+                # First try with underscores
+                match = re.search(r'_x(\d+).*_y(\d+)', basename, re.IGNORECASE)
+                if not match:
+                    # Try with word boundaries
+                    match = re.search(r'\bx(\d+)[_\s].*\by(\d+)', basename, re.IGNORECASE)
+                if not match:
+                    # Try simple pattern as last resort
+                    match = re.search(r'(?<![\dx])x(\d+).*(?<![\dx])y(\d+)', basename, re.IGNORECASE)
+
+                if match:
+                    x, y = int(match.group(1)), int(match.group(2))
+                    indices.append((x, y))
+                else:
+                    raise ValueError(f"Could not extract x,y coordinates from: {basename}. "
+                                   f"Filename should contain _x<num> and _y<num> patterns.")
+
+            elif "{i}" in pattern:
+                # 1D array pattern - try multiple approaches
+                # First try with keywords
+                match = re.search(r'(?:idx|pixel|det)[_\s]*(\d+)', basename, re.IGNORECASE)
+                if not match:
+                    # Try trailing number before extension
+                    match = re.search(r'_(\d+)\.', basename)
+                if not match:
+                    # Last resort - any number in the filename (rightmost)
+                    matches = re.findall(r'(\d+)', basename)
+                    if matches:
+                        match = type('obj', (object,), {'group': lambda self, n: matches[-1]})()
+
+                if match:
+                    indices.append(int(match.group(1)))
+                else:
+                    raise ValueError(f"Could not extract index from: {basename}")
+
+            elif "{name}" in pattern:
+                # Named groups - use filename without extension
+                name = os.path.splitext(basename)[0]
+                indices.append(name)
+
+            else:
+                # Unknown pattern - use sequential
+                indices.append(len(indices))
+
+        return indices
+
+    @classmethod
+    def _determine_group_shape(cls, indices):
+        """Determine group shape and dimensionality from indices."""
+        # Check for empty indices (works with both lists and numpy arrays)
+        if len(indices) == 0:
+            return None, False, False
+
+        first_idx = indices[0]
+
+        # Check if 2D (tuples)
+        if isinstance(first_idx, tuple) and len(first_idx) == 2:
+            # 2D grid - use max coordinates + 1 to handle sparse grids
+            xs = [idx[0] for idx in indices]
+            ys = [idx[1] for idx in indices]
+            return (max(ys) + 1, max(xs) + 1), True, False
+
+        # Check if 1D (ints)
+        elif isinstance(first_idx, (int, int.__class__)):
+            # 1D array
+            return (len(indices),), False, True
+
+        # Named indices (strings)
+        else:
+            return None, False, False
+
     def __add__(self, other):
         """
         Adds two Data objects together by combining their signal and openbeam counts,
@@ -403,12 +683,19 @@ class Data:
             new_data.tstep = self.tstep
             return new_data
 
-    def plot(self, **kwargs):
+    def plot(self, index=None, **kwargs):
         """
         Plots the transmission data with error bars.
-        
+
         Parameters:
         -----------
+        index : int, tuple, or str, optional
+            For grouped data, specify which group to plot:
+            - int: 1D array index
+            - tuple: (x, y) for 2D grid
+            - str: named index
+            If None and data is grouped, plots first group.
+            If None and data is not grouped, plots the main table.
         **kwargs : dict, optional
             Additional plotting parameters:
             - xlim : tuple, optional
@@ -423,7 +710,7 @@ class Data:
               Label for the y-axis (default: "Transmission").
             - logx : bool, optional
               Whether to plot the x-axis on a logarithmic scale (default: False).
-        
+
         Returns:
         --------
         matplotlib.Axes
@@ -435,8 +722,146 @@ class Data:
         xlabel = kwargs.pop("xlabel", "wavelength [Å]")
         ylabel = kwargs.pop("ylabel", "Transmission")
         logx = kwargs.pop("logx", False)  # Default is linear scale for wavelength
-        
+
+        # Determine which table to plot and set label
+        plot_label = kwargs.pop("label", None)
+        if self.is_grouped:
+            # For grouped data
+            if index is None:
+                # Default to first group
+                index = self.indices[0]
+            if index not in self.groups:
+                raise ValueError(f"Index {index} not found in groups. Available indices: {self.indices}")
+            table_to_plot = self.groups[index]
+            # Add index to label if not provided
+            if plot_label is None:
+                plot_label = f"Index {index}"
+        else:
+            # For non-grouped data
+            if index is not None:
+                raise ValueError("Cannot specify index for non-grouped data")
+            table_to_plot = self.table
+
         # Plot the data with error bars
-        return self.table.dropna().plot(x="wavelength",y="trans", yerr="err",
-                                        xlim=xlim, ylim=ylim, logx=logx, ecolor=ecolor,
-                                        xlabel=xlabel, ylabel=ylabel, **kwargs)
+        ax = table_to_plot.dropna().plot(x="wavelength",y="trans", yerr="err",
+                                         xlim=xlim, ylim=ylim, logx=logx, ecolor=ecolor,
+                                         xlabel=xlabel, ylabel=ylabel, label=plot_label, **kwargs)
+
+        # Add legend if label was set
+        if plot_label is not None:
+            ax.legend()
+
+        return ax
+
+    def plot_map(self, wlmin=1.0, wlmax=5.0, **kwargs):
+        """
+        Plot transmission map averaged over wavelength range for grouped data.
+
+        Parameters:
+        -----------
+        wlmin : float, optional
+            Minimum wavelength for averaging (default: 1.0 Å).
+        wlmax : float, optional
+            Maximum wavelength for averaging (default: 5.0 Å).
+        **kwargs : dict, optional
+            Additional plotting parameters:
+            - cmap : str, optional
+              Colormap for 2D maps (default: 'viridis').
+            - title : str, optional
+              Plot title (default: auto-generated).
+            - vmin, vmax : float, optional
+              Color scale limits for 2D maps.
+            - figsize : tuple, optional
+              Figure size (width, height) in inches.
+
+        Returns:
+        --------
+        matplotlib.Axes
+            The axes of the plot.
+
+        Raises:
+        -------
+        ValueError
+            If called on non-grouped data.
+
+        Examples:
+        ---------
+        >>> # For 2D grid data
+        >>> data = Data.from_grouped("pixel_x*_y*.csv", "ob_x*_y*.csv", L=10, tstep=10e-6)
+        >>> data.plot_map(wlmin=2.0, wlmax=4.0)
+
+        >>> # For 1D array data
+        >>> data = Data.from_grouped("pixel_*.csv", "ob_*.csv", L=10, tstep=10e-6)
+        >>> data.plot_map(wlmin=1.0, wlmax=3.0)
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if not self.is_grouped:
+            raise ValueError("plot_map only works for grouped data")
+
+        # Extract kwargs
+        cmap = kwargs.pop("cmap", "viridis")
+        title = kwargs.pop("title", None)
+        vmin = kwargs.pop("vmin", None)
+        vmax = kwargs.pop("vmax", None)
+        figsize = kwargs.pop("figsize", None)
+
+        # Calculate average transmission for each group
+        avg_trans = {}
+        for idx in self.indices:
+            table = self.groups[idx]
+            mask = (table['wavelength'] >= wlmin) & (table['wavelength'] <= wlmax)
+            avg_trans[idx] = table.loc[mask, 'trans'].mean()
+
+        # Create visualization based on group_shape
+        if self.group_shape and len(self.group_shape) == 2:
+            # 2D imshow
+            ny, nx = self.group_shape
+            trans_array = np.full((ny, nx), np.nan)
+
+            for idx in self.indices:
+                if isinstance(idx, tuple) and len(idx) == 2:
+                    y, x = idx
+                    trans_array[y, x] = avg_trans[idx]
+
+            fig, ax = plt.subplots(figsize=figsize)
+            im = ax.imshow(trans_array, cmap=cmap, origin='lower', vmin=vmin, vmax=vmax, **kwargs)
+            ax.set_xlabel("X pixel")
+            ax.set_ylabel("Y pixel")
+            if title is None:
+                title = f"Average Transmission Map ({wlmin:.1f}-{wlmax:.1f} Å)"
+            ax.set_title(title)
+            plt.colorbar(im, ax=ax, label="Transmission")
+            return ax
+
+        elif self.group_shape and len(self.group_shape) == 1:
+            # 1D line plot
+            indices_array = np.array(self.indices)
+            trans_values = np.array([avg_trans[idx] for idx in self.indices])
+
+            fig, ax = plt.subplots(figsize=figsize)
+            ax.plot(indices_array, trans_values, 'o-', **kwargs)
+            ax.set_xlabel("Pixel index")
+            ax.set_ylabel("Average Transmission")
+            if title is None:
+                title = f"Average Transmission ({wlmin:.1f}-{wlmax:.1f} Å)"
+            ax.set_title(title)
+            ax.grid(True, alpha=0.3)
+            return ax
+
+        else:
+            # Bar chart for named indices
+            fig, ax = plt.subplots(figsize=figsize)
+            positions = np.arange(len(self.indices))
+            trans_values = [avg_trans[idx] for idx in self.indices]
+
+            ax.bar(positions, trans_values, **kwargs)
+            ax.set_xticks(positions)
+            ax.set_xticklabels(self.indices, rotation=45, ha='right')
+            ax.set_ylabel("Average Transmission")
+            if title is None:
+                title = f"Average Transmission ({wlmin:.1f}-{wlmax:.1f} Å)"
+            ax.set_title(title)
+            plt.tight_layout()
+            return ax

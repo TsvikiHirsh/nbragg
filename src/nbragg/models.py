@@ -78,6 +78,230 @@ def _save_result_impl(result, filename: str):
         result.model.params = original_params
 
 
+class GroupedFitResult:
+    """
+    Container for fit results from grouped data.
+
+    Stores multiple ModelResult objects indexed by their group identifiers
+    (integers, tuples, or strings depending on the data structure).
+
+    Attributes:
+    -----------
+    results : dict
+        Dictionary mapping group indices to lmfit.ModelResult objects.
+    indices : list
+        List of group indices in order.
+    group_shape : tuple or None
+        Shape of the grouped data ((ny, nx) for 2D, (n,) for 1D, None for named).
+
+    Examples:
+    ---------
+    >>> # Access individual results
+    >>> grouped_result = model.fit(grouped_data)
+    >>> result_0_0 = grouped_result[(0, 0)]
+    >>> result_0_0.plot()
+
+    >>> # Plot parameter map
+    >>> grouped_result.plot_parameter_map("thickness")
+
+    >>> # Print summary
+    >>> grouped_result.summary()
+    """
+
+    def __init__(self, group_shape=None):
+        """
+        Initialize an empty GroupedFitResult.
+
+        Parameters:
+        -----------
+        group_shape : tuple or None
+            Shape of the grouped data.
+        """
+        self.results = {}
+        self.indices = []
+        self.group_shape = group_shape
+
+    def add_result(self, index, result):
+        """
+        Add a fit result for a specific group.
+
+        Parameters:
+        -----------
+        index : int, tuple, or str
+            The group index.
+        result : lmfit.ModelResult
+            The fit result for this group.
+        """
+        self.results[index] = result
+        if index not in self.indices:
+            self.indices.append(index)
+
+    def __getitem__(self, index):
+        """Access a specific group's result."""
+        if index not in self.results:
+            raise KeyError(f"Index {index} not found in results. Available: {self.indices}")
+        return self.results[index]
+
+    def __len__(self):
+        """Return number of group results."""
+        return len(self.results)
+
+    def __repr__(self):
+        """String representation."""
+        return f"GroupedFitResult({len(self.results)} groups, shape={self.group_shape})"
+
+    def plot(self, index, **kwargs):
+        """
+        Plot a specific group's fit result.
+
+        Parameters:
+        -----------
+        index : int, tuple, or str
+            The group index to plot.
+        **kwargs
+            Additional plotting parameters passed to result.plot().
+
+        Returns:
+        --------
+        matplotlib.Axes
+            The plot axes.
+        """
+        return self.results[index].plot(**kwargs)
+
+    def plot_parameter_map(self, param_name, **kwargs):
+        """
+        Plot spatial map of a fitted parameter value.
+
+        Parameters:
+        -----------
+        param_name : str
+            Name of the parameter to visualize.
+        **kwargs : dict, optional
+            Additional plotting parameters:
+            - cmap : str, optional
+              Colormap for 2D maps (default: 'viridis').
+            - title : str, optional
+              Plot title (default: auto-generated).
+            - vmin, vmax : float, optional
+              Color scale limits.
+            - figsize : tuple, optional
+              Figure size (width, height) in inches.
+
+        Returns:
+        --------
+        matplotlib.Axes
+            The plot axes.
+
+        Examples:
+        ---------
+        >>> grouped_result.plot_parameter_map("thickness")
+        >>> grouped_result.plot_parameter_map("norm", cmap='plasma')
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        # Extract parameter values
+        param_values = {}
+        for idx in self.indices:
+            result = self.results[idx]
+            if param_name in result.params:
+                param_values[idx] = result.params[param_name].value
+            else:
+                raise ValueError(f"Parameter '{param_name}' not found in fit results")
+
+        # Extract kwargs
+        cmap = kwargs.pop("cmap", "viridis")
+        title = kwargs.pop("title", None)
+        vmin = kwargs.pop("vmin", None)
+        vmax = kwargs.pop("vmax", None)
+        figsize = kwargs.pop("figsize", None)
+
+        # Create visualization based on group_shape
+        if self.group_shape and len(self.group_shape) == 2:
+            # 2D imshow
+            ny, nx = self.group_shape
+            param_array = np.full((ny, nx), np.nan)
+
+            for idx in self.indices:
+                if isinstance(idx, tuple) and len(idx) == 2:
+                    y, x = idx
+                    param_array[y, x] = param_values[idx]
+
+            fig, ax = plt.subplots(figsize=figsize)
+            im = ax.imshow(param_array, cmap=cmap, origin='lower', vmin=vmin, vmax=vmax, **kwargs)
+            ax.set_xlabel("X pixel")
+            ax.set_ylabel("Y pixel")
+            if title is None:
+                title = f"{param_name} Map"
+            ax.set_title(title)
+            plt.colorbar(im, ax=ax, label=param_name)
+            return ax
+
+        elif self.group_shape and len(self.group_shape) == 1:
+            # 1D line plot
+            indices_array = np.array(self.indices)
+            values = np.array([param_values[idx] for idx in self.indices])
+
+            fig, ax = plt.subplots(figsize=figsize)
+            ax.plot(indices_array, values, 'o-', **kwargs)
+            ax.set_xlabel("Pixel index")
+            ax.set_ylabel(param_name)
+            if title is None:
+                title = f"{param_name} vs Pixel"
+            ax.set_title(title)
+            ax.grid(True, alpha=0.3)
+            return ax
+
+        else:
+            # Bar chart for named indices
+            fig, ax = plt.subplots(figsize=figsize)
+            positions = np.arange(len(self.indices))
+            values = [param_values[idx] for idx in self.indices]
+
+            ax.bar(positions, values, **kwargs)
+            ax.set_xticks(positions)
+            ax.set_xticklabels(self.indices, rotation=45, ha='right')
+            ax.set_ylabel(param_name)
+            if title is None:
+                title = f"{param_name} by Group"
+            ax.set_title(title)
+            plt.tight_layout()
+            return ax
+
+    def summary(self):
+        """
+        Print summary statistics for all group fits.
+
+        Returns a pandas DataFrame with fit statistics for each group.
+
+        Returns:
+        --------
+        pandas.DataFrame
+            Summary table with columns: index, success, chi_square, nfev, etc.
+        """
+        import pandas as pd
+
+        summary_data = []
+        for idx in self.indices:
+            result = self.results[idx]
+            row = {
+                'index': str(idx),
+                'success': result.success if hasattr(result, 'success') else None,
+                'chisqr': result.chisqr if hasattr(result, 'chisqr') else None,
+                'redchi': result.redchi if hasattr(result, 'redchi') else None,
+                'nfev': result.nfev if hasattr(result, 'nfev') else None,
+                'nvarys': result.nvarys if hasattr(result, 'nvarys') else None,
+            }
+            summary_data.append(row)
+
+        df = pd.DataFrame(summary_data)
+        print("\nGrouped Fit Results Summary")
+        print("=" * 80)
+        print(df.to_string(index=False))
+        print("=" * 80)
+        return df
+
+
 class TransmissionModel(lmfit.Model):
     def __init__(self, cross_section,
                 params: "lmfit.Parameters" = None,
@@ -365,7 +589,26 @@ class TransmissionModel(lmfit.Model):
         # Set custom stages on the model and fit
         >>> model.stages = {"stage1": ["b0", "b1"], "stage2": "all"}
         >>> result = model.fit(data)
+
+        # For grouped data with parallel fitting
+        >>> grouped_result = model.fit(grouped_data, n_jobs=10)
+        >>> result_0_0 = grouped_result[(0, 0)]
+        >>> grouped_result.plot_parameter_map("thickness")
         """
+        # Check if data is grouped and route to parallel fitting
+        if hasattr(data, 'is_grouped') and data.is_grouped:
+            n_jobs = kwargs.pop('n_jobs', 10)
+            return self._fit_grouped(
+                data, params, wlmin, wlmax,
+                method=method,
+                xtol=xtol, ftol=ftol, gtol=gtol,
+                verbose=verbose,
+                progress_bar=progress_bar,
+                stages=stages,
+                n_jobs=n_jobs,
+                **kwargs
+            )
+
         # Handle stages argument
         if stages is not None:
             if isinstance(stages, str) and stages == "all":
@@ -1076,8 +1319,102 @@ class TransmissionModel(lmfit.Model):
         # Add save() method to the result
         return _add_save_method_to_result(fit_result)
 
+    def _fit_grouped(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
+                     method: str = "rietveld",
+                     xtol: float = None, ftol: float = None, gtol: float = None,
+                     verbose: bool = False,
+                     progress_bar: bool = True,
+                     stages: Optional[Union[str, Dict[str, Union[str, List[str]]]]] = None,
+                     n_jobs: int = 10,
+                     **kwargs):
+        """
+        Fit model to grouped data in parallel.
 
+        Parameters:
+        -----------
+        data : Data
+            Grouped data object with is_grouped=True.
+        params : lmfit.Parameters, optional
+            Parameters to use for fitting.
+        wlmin, wlmax : float
+            Wavelength range for fitting.
+        method : str
+            Fitting method: "least-squares", "rietveld", or "staged".
+        xtol, ftol, gtol : float, optional
+            Convergence tolerances.
+        verbose : bool
+            Show progress for individual fits.
+        progress_bar : bool
+            Show overall progress bar.
+        stages : str or dict, optional
+            Fitting stages configuration.
+        n_jobs : int
+            Number of parallel jobs (default: 10).
+        **kwargs
+            Additional arguments passed to fit.
 
+        Returns:
+        --------
+        GroupedFitResult
+            Container with fit results for each group.
+        """
+        from joblib import Parallel, delayed
+
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:
+            from tqdm import tqdm
+
+        # Prepare fit arguments
+        fit_kwargs = {
+            'params': params,
+            'wlmin': wlmin,
+            'wlmax': wlmax,
+            'method': method,
+            'xtol': xtol,
+            'ftol': ftol,
+            'gtol': gtol,
+            'verbose': verbose if verbose else False,  # Individual fits use verbose flag
+            'progress_bar': False,  # Disable individual progress bars
+            'stages': stages,
+            **kwargs
+        }
+
+        def fit_single_group(idx):
+            """Fit a single group."""
+            # Create temporary Data object for this group
+            from nbragg.data import Data
+            group_data = Data()
+            group_data.table = data.groups[idx]
+            group_data.L = data.L
+            group_data.tstep = data.tstep
+
+            # Fit using the same method
+            try:
+                result = self.fit(group_data, **fit_kwargs)
+            except Exception as e:
+                # warnings.warn(f"Fitting failed for group index {idx}: {e}")
+                result = None
+            return idx, result
+
+        # Parallel execution using threading backend (NCrystal objects can't be pickled)
+        if progress_bar:
+            results = Parallel(n_jobs=n_jobs, backend='threading')(
+                delayed(fit_single_group)(idx)
+                for idx in tqdm(data.indices, desc=f"Fitting {len(data.indices)} groups")
+            )
+        else:
+            results = Parallel(n_jobs=n_jobs, backend='threading')(
+                delayed(fit_single_group)(idx)
+                for idx in data.indices
+            )
+
+        # Collect results
+        grouped_result = GroupedFitResult(group_shape=data.group_shape)
+        for idx, result in results:
+            grouped_result.add_result(idx, result)
+
+        return grouped_result
 
     def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None, 
                                             method="rietveld", color=True):
