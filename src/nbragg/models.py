@@ -204,10 +204,11 @@ class GroupedFitResult:
         param_values = {}
         for idx in self.indices:
             result = self.results[idx]
-            if param_name in result.params:
-                param_values[idx] = result.params[param_name].value
-            else:
-                raise ValueError(f"Parameter '{param_name}' not found in fit results")
+            try:
+                if param_name in result.params:
+                    param_values[idx] = result.params[param_name].value
+            except Exception as e:
+                param_values[idx] = np.nan
 
         # Extract kwargs
         cmap = kwargs.pop("cmap", "viridis")
