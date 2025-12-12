@@ -772,6 +772,10 @@ class TransmissionModel(lmfit.Model):
         stages : str or dict, optional
             Fitting stages. Can be "all" or a dictionary of stage definitions.
             If None, uses self.stages.
+        n_jobs : int, optional
+            Number of parallel jobs for grouped data fitting (default: 10).
+            Only applies when fitting grouped data. Set to 1 for sequential fitting.
+            Set to -1 to use all available CPU cores.
         **kwargs
             Additional keyword arguments passed to `lmfit.Model.fit`.
 
@@ -1571,6 +1575,42 @@ class TransmissionModel(lmfit.Model):
             Container with fit results for each group.
         """
         from joblib import Parallel, delayed
+        import tempfile
+        import os
+
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:
+            from tqdm import tqdm
+
+        # NOTE: Due to NCrystal serialization limitations, multiprocessing doesn't work reliably
+        # NCrystal materials contain C pointers and dynamic material registrations that
+        # can't be transferred between processes. Use threading backend instead.
+        print("Note: Using threading backend for grouped fitting due to NCrystal serialization limitations.")
+        print("      Parallelism will be limited by Python's GIL, but results will be correct.")
+        if n_jobs > 4:
+            print(f"      Consider n_jobs=4 or less for better performance with threading.")
+
+        return self._fit_grouped_threading(data, params, wlmin, wlmax, method,
+                                           xtol, ftol, gtol, verbose, progress_bar,
+                                           stages, n_jobs, **kwargs)
+
+    def _fit_grouped_threading(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
+                               method: str = "rietveld",
+                               xtol: float = None, ftol: float = None, gtol: float = None,
+                               verbose: bool = False,
+                               progress_bar: bool = True,
+                               stages: Optional[Union[str, Dict[str, Union[str, List[str]]]]] = None,
+                               n_jobs: int = 10,
+                               **kwargs):
+        """
+        Fit model to grouped data using threading backend (fallback when multiprocessing fails).
+
+        Note: Threading doesn't provide true parallelism due to Python's GIL,
+        but works when objects can't be pickled.
+        """
+        from joblib import Parallel, delayed
+        import time
 
         try:
             from tqdm.auto import tqdm
@@ -1586,42 +1626,46 @@ class TransmissionModel(lmfit.Model):
             'xtol': xtol,
             'ftol': ftol,
             'gtol': gtol,
-            'verbose': verbose if verbose else False,  # Individual fits use verbose flag
-            'progress_bar': False,  # Disable individual progress bars
+            'verbose': verbose if verbose else False,
+            'progress_bar': False,
             'stages': stages,
             **kwargs
         }
 
         def fit_single_group(idx):
-            """Fit a single group."""
-            # Create temporary Data object for this group
+            """Fit a single group using threading."""
             from nbragg.data import Data
             group_data = Data()
             group_data.table = data.groups[idx]
             group_data.L = data.L
             group_data.tstep = data.tstep
 
-            # Fit using the same method
             try:
                 result = self.fit(group_data, **fit_kwargs)
             except Exception as e:
-                # warnings.warn(f"Fitting failed for group index {idx}: {e}")
                 result = None
             return idx, result
 
-        # Parallel execution using threading backend (NCrystal objects can't be pickled)
-        if progress_bar:
-            results = Parallel(n_jobs=n_jobs, backend='threading')(
-                delayed(fit_single_group)(idx)
-                for idx in tqdm(data.indices, desc=f"Fitting {len(data.indices)} groups")
-            )
-        else:
-            results = Parallel(n_jobs=n_jobs, backend='threading')(
-                delayed(fit_single_group)(idx)
-                for idx in data.indices
-            )
+        start_time = time.time()
+        backend = 'threading'
+        print(f"Using threading backend (limited parallelism due to Python GIL)...")
 
-        # Collect results, skipping failed fits
+        # Execute with threading
+        if progress_bar:
+            iterator = tqdm(data.indices, desc=f"Fitting {len(data.indices)} groups")
+        else:
+            iterator = data.indices
+
+        results = Parallel(
+            n_jobs=n_jobs,
+            backend=backend,
+            verbose=5 if verbose else 0
+        )(delayed(fit_single_group)(idx) for idx in iterator)
+
+        elapsed = time.time() - start_time
+        print(f"Completed in {elapsed:.2f}s using '{backend}' backend | {elapsed/len(data.indices):.3f}s per fit")
+
+        # Collect results
         grouped_result = GroupedFitResult(group_shape=data.group_shape)
         failed_indices = []
         for idx, result in results:
@@ -1630,7 +1674,6 @@ class TransmissionModel(lmfit.Model):
             else:
                 failed_indices.append(idx)
 
-        # Warn about failed fits
         if failed_indices and verbose:
             warnings.warn(f"Fitting failed for {len(failed_indices)}/{len(data.indices)} groups. "
                          f"Failed indices: {failed_indices[:10]}{'...' if len(failed_indices) > 10 else ''}")
