@@ -121,6 +121,20 @@ class GroupedFitResult:
         self.indices = []
         self.group_shape = group_shape
 
+    def _parse_string_index(self, string_idx):
+        """
+        Parse a string index back to its original form.
+        "(10, 20)" -> (10, 20)
+        "5" -> 5
+        "center" -> "center"
+        """
+        import ast
+        try:
+            parsed = ast.literal_eval(string_idx)
+            return parsed
+        except (ValueError, SyntaxError):
+            return string_idx
+
     def add_result(self, index, result):
         """
         Add a fit result for a specific group.
@@ -168,14 +182,23 @@ class GroupedFitResult:
         """
         return self.results[index].plot(**kwargs)
 
-    def plot_parameter_map(self, param_name, **kwargs):
+    def plot_parameter_map(self, param_name, query=None, kind='pcolormesh', **kwargs):
         """
-        Plot spatial map of a fitted parameter value.
+        Plot spatial map of a fitted parameter value, error, or fit statistic.
 
         Parameters:
         -----------
         param_name : str
-            Name of the parameter to visualize.
+            Name of the parameter to visualize. Can be:
+            - Parameter name: "thickness", "norm", etc.
+            - Parameter error: "thickness_err", "norm_err", etc.
+            - Fit statistic: "redchi", "chisqr", "aic", "bic"
+        query : str, optional
+            Pandas query string to filter results (e.g., "redchi < 2").
+            Can reference any parameter name, parameter_err, or statistic.
+        kind : str, optional
+            Plot type for 1D data: 'line', 'bar', or 'errorbar' (default: 'line').
+            Ignored for 2D data.
         **kwargs : dict, optional
             Additional plotting parameters:
             - cmap : str, optional
@@ -194,21 +217,84 @@ class GroupedFitResult:
 
         Examples:
         ---------
+        >>> # Plot parameter value
         >>> grouped_result.plot_parameter_map("thickness")
-        >>> grouped_result.plot_parameter_map("norm", cmap='plasma')
+        >>>
+        >>> # Plot parameter error
+        >>> grouped_result.plot_parameter_map("thickness_err")
+        >>>
+        >>> # Plot redchi map
+        >>> grouped_result.plot_parameter_map("redchi", cmap='hot')
+        >>>
+        >>> # Filter by redchi
+        >>> grouped_result.plot_parameter_map("thickness", query="redchi < 2")
+        >>>
+        >>> # Complex query
+        >>> grouped_result.plot_parameter_map("norm", query="redchi < 1.5 and thickness_err < 0.01")
+        >>>
+        >>> # 1D plot with error bars
+        >>> grouped_result.plot_parameter_map("thickness", kind='errorbar')
         """
         import matplotlib.pyplot as plt
         import numpy as np
+        import pandas as pd
 
-        # Extract parameter values
+        # Build DataFrame with all parameters, errors, and statistics
+        data_for_query = []
         param_values = {}
+
         for idx in self.indices:
             result = self.results[idx]
+            row = {'index': idx}
+
             try:
-                if param_name in result.params:
+                # Add all parameter values and errors
+                for pname in result.params:
+                    param = result.params[pname]
+                    row[pname] = param.value
+                    row[f"{pname}_err"] = param.stderr if param.stderr is not None else np.nan
+
+                # Add fit statistics
+                row['redchi'] = result.redchi if hasattr(result, 'redchi') else np.nan
+                row['chisqr'] = result.chisqr if hasattr(result, 'chisqr') else np.nan
+                row['aic'] = result.aic if hasattr(result, 'aic') else np.nan
+                row['bic'] = result.bic if hasattr(result, 'bic') else np.nan
+                row['nfev'] = result.nfev if hasattr(result, 'nfev') else np.nan
+
+                data_for_query.append(row)
+
+                # Extract the specific parameter value requested
+                if param_name.endswith('_err'):
+                    # Error requested
+                    base_param = param_name[:-4]
+                    if base_param in result.params:
+                        param_values[idx] = result.params[base_param].stderr
+                elif param_name in ['redchi', 'chisqr', 'aic', 'bic', 'nfev']:
+                    # Statistic requested
+                    param_values[idx] = getattr(result, param_name, np.nan)
+                elif param_name in result.params:
+                    # Parameter value requested
                     param_values[idx] = result.params[param_name].value
+                else:
+                    param_values[idx] = np.nan
+
             except Exception as e:
                 param_values[idx] = np.nan
+
+        # Apply query filter if provided
+        indices_to_plot = self.indices
+        if query:
+            df = pd.DataFrame(data_for_query)
+            try:
+                filtered_df = df.query(query)
+                indices_to_plot = [row['index'] for _, row in filtered_df.iterrows()]
+                # Mask out filtered indices
+                for idx in self.indices:
+                    if idx not in indices_to_plot:
+                        param_values[idx] = np.nan
+            except Exception as e:
+                print(f"Warning: Query failed: {e}")
+                print("Plotting all data without filtering.")
 
         # Extract kwargs
         cmap = kwargs.pop("cmap", "viridis")
@@ -220,9 +306,16 @@ class GroupedFitResult:
         # Create visualization based on group_shape
         if self.group_shape and len(self.group_shape) == 2:
             # 2D pcolormesh for proper block sizing
-            # Extract unique x and y coordinates
-            xs = sorted(set(idx[0] for idx in self.indices if isinstance(idx, tuple) and len(idx) == 2))
-            ys = sorted(set(idx[1] for idx in self.indices if isinstance(idx, tuple) and len(idx) == 2))
+            # Extract unique x and y coordinates by parsing string indices
+            xs = []
+            ys = []
+            for idx_str in self.indices:
+                idx = self._parse_string_index(idx_str)
+                if isinstance(idx, tuple) and len(idx) == 2:
+                    xs.append(idx[0])
+                    ys.append(idx[1])
+            xs = sorted(set(xs))
+            ys = sorted(set(ys))
 
             # Handle empty indices
             if len(xs) == 0 or len(ys) == 0:
@@ -245,11 +338,12 @@ class GroupedFitResult:
             x_map = {x: i for i, x in enumerate(xs)}
             y_map = {y: i for i, y in enumerate(ys)}
 
-            for idx in self.indices:
+            for idx_str in self.indices:
+                idx = self._parse_string_index(idx_str)
                 if isinstance(idx, tuple) and len(idx) == 2:
                     x, y = idx
                     if x in x_map and y in y_map:
-                        param_array[y_map[y], x_map[x]] = param_values[idx]
+                        param_array[y_map[y], x_map[x]] = param_values[idx_str]
 
             fig, ax = plt.subplots(figsize=figsize)
             im = ax.pcolormesh(x_edges, y_edges, param_array, cmap=cmap, vmin=vmin, vmax=vmax,
@@ -264,27 +358,76 @@ class GroupedFitResult:
             return ax
 
         elif self.group_shape and len(self.group_shape) == 1:
-            # 1D line plot
-            indices_array = np.array(self.indices)
+            # 1D plot with various styles - parse string indices back to ints
+            indices_array = np.array([self._parse_string_index(idx) for idx in self.indices])
             values = np.array([param_values[idx] for idx in self.indices])
 
+            # Get errors if available for errorbar plot
+            errors = None
+            if kind == 'errorbar' and not param_name.endswith('_err'):
+                # Try to get errors for the parameter
+                errors = []
+                for idx in self.indices:
+                    result = self.results[idx]
+                    if param_name in result.params:
+                        stderr = result.params[param_name].stderr
+                        errors.append(stderr if stderr is not None else 0)
+                    else:
+                        errors.append(0)
+                errors = np.array(errors)
+
             fig, ax = plt.subplots(figsize=figsize)
-            ax.plot(indices_array, values, 'o-', **kwargs)
-            ax.set_xlabel("Pixel index")
+
+            if kind == 'line':
+                ax.plot(indices_array, values, 'o-', **kwargs)
+            elif kind == 'bar':
+                ax.bar(indices_array, values, **kwargs)
+            elif kind == 'errorbar':
+                if errors is not None:
+                    ax.errorbar(indices_array, values, yerr=errors, fmt='o-', capsize=5, **kwargs)
+                else:
+                    ax.plot(indices_array, values, 'o-', **kwargs)
+            else:
+                raise ValueError(f"Unknown kind '{kind}'. Must be 'line', 'bar', or 'errorbar'.")
+
+            ax.set_xlabel("Index")
             ax.set_ylabel(param_name)
             if title is None:
-                title = f"{param_name} vs Pixel"
+                title = f"{param_name} vs Index"
             ax.set_title(title)
             ax.grid(True, alpha=0.3)
             return ax
 
         else:
-            # Bar chart for named indices
+            # Named indices - bar or line plot
             fig, ax = plt.subplots(figsize=figsize)
             positions = np.arange(len(self.indices))
             values = [param_values[idx] for idx in self.indices]
 
-            ax.bar(positions, values, **kwargs)
+            # Get errors if available for errorbar plot
+            errors = None
+            if kind == 'errorbar' and not param_name.endswith('_err'):
+                errors = []
+                for idx in self.indices:
+                    result = self.results[idx]
+                    if param_name in result.params:
+                        stderr = result.params[param_name].stderr
+                        errors.append(stderr if stderr is not None else 0)
+                    else:
+                        errors.append(0)
+
+            if kind == 'line':
+                ax.plot(positions, values, 'o-', **kwargs)
+            elif kind == 'bar':
+                ax.bar(positions, values, **kwargs)
+            elif kind == 'errorbar':
+                if errors is not None:
+                    ax.errorbar(positions, values, yerr=errors, fmt='o', capsize=5, **kwargs)
+                else:
+                    ax.plot(positions, values, 'o', **kwargs)
+            else:
+                raise ValueError(f"Unknown kind '{kind}'. Must be 'line', 'bar', or 'errorbar'.")
+
             ax.set_xticks(positions)
             ax.set_xticklabels(self.indices, rotation=45, ha='right')
             ax.set_ylabel(param_name)

@@ -43,9 +43,57 @@ class Data:
         # Grouped data attributes
         self.is_grouped = False
         self.groups = None  # Dict mapping index -> table
-        self.indices = None  # List of indices (tuples for 2D, ints for 1D, strings for named)
+        self.indices = None  # List of string indices
         self.group_shape = None  # Tuple (nx, ny) for 2D, (n,) for 1D, None for named
-    
+
+    def _normalize_index(self, index):
+        """
+        Normalize index for group lookup.
+        Converts tuples like (10, 20) to strings like "(10, 20)" for consistent access.
+
+        Parameters:
+        -----------
+        index : int, tuple, or str
+            The index to normalize
+
+        Returns:
+        --------
+        str
+            String representation of the index
+        """
+        if isinstance(index, tuple):
+            return str(index)  # (10, 20) -> "(10, 20)"
+        elif isinstance(index, str):
+            return index  # "center" -> "center" or "(10, 20)" -> "(10, 20)"
+        else:
+            return str(index)  # 5 -> "5"
+
+    def _parse_string_index(self, string_idx):
+        """
+        Parse a string index back to its original form.
+        "(10, 20)" -> (10, 20)
+        "5" -> 5
+        "center" -> "center"
+
+        Parameters:
+        -----------
+        string_idx : str
+            String representation of index
+
+        Returns:
+        --------
+        tuple, int, or str
+            Original index form
+        """
+        import ast
+        try:
+            # Try to parse as Python literal (for tuples and ints)
+            parsed = ast.literal_eval(string_idx)
+            return parsed
+        except (ValueError, SyntaxError):
+            # If parsing fails, it's a named string
+            return string_idx
+
     @classmethod
     def _read_counts(cls, input_data, names=None):
         """
@@ -103,7 +151,7 @@ class Data:
         else:
             raise TypeError("input_data must be a string (file path) or a pandas DataFrame")
         
-        # Ensure DataFrame has 'err' column
+        # Ensure DataFrame has 'err' column with valid values
         if "err" not in df.columns:
             # Try to find alternative error column names
             error_column_alternatives = ['error', 'std', 'std_dev', 'uncertainty']
@@ -114,6 +162,10 @@ class Data:
             else:
                 # If no error column found, calculate as sqrt of counts
                 df["err"] = np.sqrt(df["counts"])
+        elif df["err"].isna().all():
+            # If err column exists but is all NaN (happens when reading 2-column CSV with 3 names)
+            # calculate errors as sqrt of counts
+            df["err"] = np.sqrt(df["counts"])
         
         # Ensure consistent column order and names
         df = df[default_names[:len(df.columns)]]
@@ -291,8 +343,9 @@ class Data:
         -----------
         signal : str
             Glob pattern for signal files (e.g., "archive/pixel_*.csv" or "data/grid_*_x*_y*.csv").
+            Can also be a folder path - all .csv files in the folder will be loaded.
         openbeam : str
-            Glob pattern for openbeam files.
+            Glob pattern for openbeam files. Can also be a folder path.
         empty_signal : str, optional
             Glob pattern for empty signal files for background correction.
         empty_openbeam : str, optional
@@ -338,9 +391,16 @@ class Data:
         import re
         import os
 
-        # Find all matching files
-        signal_files = sorted(glob.glob(signal))
-        openbeam_files = sorted(glob.glob(openbeam))
+        # Find all matching files (support folder input)
+        if os.path.isdir(signal):
+            signal_files = sorted(glob.glob(os.path.join(signal, "*.csv")))
+        else:
+            signal_files = sorted(glob.glob(signal))
+
+        if os.path.isdir(openbeam):
+            openbeam_files = sorted(glob.glob(os.path.join(openbeam, "*.csv")))
+        else:
+            openbeam_files = sorted(glob.glob(openbeam))
 
         if not signal_files:
             raise ValueError(f"No files found matching pattern: {signal}")
@@ -383,8 +443,23 @@ class Data:
             # Auto-extract from filenames
             extracted_indices = cls._extract_indices_from_filenames(signal_files, pattern)
 
-        # Determine group dimensionality and shape
+        # Determine group dimensionality and shape BEFORE converting to strings
         group_shape, is_2d, is_1d = cls._determine_group_shape(extracted_indices)
+
+        # Convert all indices to strings for consistent access
+        # For 2D: (10, 20) -> "(10, 20)"
+        # For 1D: 5 -> "5"
+        # For named: "center" -> "center"
+        string_indices = []
+        for idx in extracted_indices:
+            if isinstance(idx, tuple):
+                string_indices.append(str(idx))  # "(10, 20)"
+            elif isinstance(idx, str):
+                string_indices.append(idx)  # "center"
+            else:
+                string_indices.append(str(idx))  # "5"
+
+        extracted_indices = string_indices
 
         # Create Data object
         self_data = cls()
@@ -471,8 +546,8 @@ class Data:
                 if match_1d:
                     pattern = "idx{i}"
                 else:
-                    # Fall back to sequential indexing
-                    return list(range(len(filenames)))
+                    # No pattern found - use filenames as indices (for named ROIs)
+                    pattern = "{name}"
 
         # Extract based on pattern
         for fname in filenames:
@@ -555,6 +630,8 @@ class Data:
         Adds two Data objects together by combining their signal and openbeam counts,
         then recalculating transmission with improved statistics.
 
+        For grouped data, adds corresponding groups together to create a new grouped Data object.
+
         Parameters:
         -----------
         other : Data
@@ -569,60 +646,104 @@ class Data:
         -------
         ValueError
             If L or tstep parameters differ between the two Data objects.
+            If grouped data don't have matching indices.
         TypeError
             If the objects don't have the necessary attributes for addition.
         """
-        # Validate that both objects have the necessary attributes
-        if self.signal is None or self.openbeam is None:
-            raise TypeError("Cannot add Data objects: this object was not created with from_counts()")
-        if other.signal is None or other.openbeam is None:
-            raise TypeError("Cannot add Data objects: other object was not created with from_counts()")
-
         # Check that L and tstep are identical
         if self.L != other.L:
             raise ValueError(f"Cannot add Data objects with different L values: {self.L} != {other.L}")
         if self.tstep != other.tstep:
             raise ValueError(f"Cannot add Data objects with different tstep values: {self.tstep} != {other.tstep}")
 
-        # Add signal counts
-        combined_signal = self.signal.copy()
-        combined_signal["counts"] = self.signal["counts"] + other.signal["counts"]
-        combined_signal["err"] = np.sqrt(self.signal["err"]**2 + other.signal["err"]**2)
+        # Handle grouped data addition
+        if self.is_grouped and other.is_grouped:
+            # Check that indices match
+            if set(self.indices) != set(other.indices):
+                raise ValueError(
+                    f"Cannot add grouped Data objects with different indices.\n"
+                    f"self indices: {self.indices}\n"
+                    f"other indices: {other.indices}"
+                )
 
-        # Add openbeam counts
-        combined_openbeam = self.openbeam.copy()
-        combined_openbeam["counts"] = self.openbeam["counts"] + other.openbeam["counts"]
-        combined_openbeam["err"] = np.sqrt(self.openbeam["err"]**2 + other.openbeam["err"]**2)
+            # Create new grouped Data object
+            result = Data()
+            result.is_grouped = True
+            result.indices = self.indices.copy()
+            result.group_shape = self.group_shape
+            result.groups = {}
+            result.L = self.L
+            result.tstep = self.tstep
 
-        # Calculate transmission and error with combined counts
-        transmission = combined_signal["counts"] / combined_openbeam["counts"]
-        err = transmission * np.sqrt(
-            (combined_signal["err"] / combined_signal["counts"])**2 +
-            (combined_openbeam["err"] / combined_openbeam["counts"])**2
-        )
+            # Add each group pair
+            for idx in self.indices:
+                # Get tables for this index from both objects
+                table1 = self.groups[idx]
+                table2 = other.groups[idx]
 
-        # Create new dataframe with combined results
-        df = pd.DataFrame({
-            "wavelength": combined_signal["wavelength"],
-            "trans": transmission,
-            "err": err
-        })
+                # Simple addition: combine transmission values
+                # (Ideally we'd combine counts, but grouped data may not have signal/openbeam stored)
+                combined_table = table1.copy()
+                combined_table['trans'] = (table1['trans'] + table2['trans']) / 2  # Average
+                # Error propagation for averaged values
+                if 'err' in table1.columns and 'err' in table2.columns:
+                    combined_table['err'] = np.sqrt(table1['err']**2 + table2['err']**2) / 2
 
-        # Combine labels
-        label1 = self.table.attrs.get("label", "data1")
-        label2 = other.table.attrs.get("label", "data2")
-        df.attrs["label"] = f"{label1}+{label2}"
+                result.groups[idx] = combined_table
 
-        # Create new Data object
-        result = Data()
-        result.table = df
-        result.tgrid = self.tgrid
-        result.signal = combined_signal
-        result.openbeam = combined_openbeam
-        result.L = self.L
-        result.tstep = self.tstep
+            return result
 
-        return result
+        # Handle non-grouped data addition
+        elif not self.is_grouped and not other.is_grouped:
+            # Validate that both objects have the necessary attributes
+            if self.signal is None or self.openbeam is None:
+                raise TypeError("Cannot add Data objects: this object was not created with from_counts()")
+            if other.signal is None or other.openbeam is None:
+                raise TypeError("Cannot add Data objects: other object was not created with from_counts()")
+
+            # Add signal counts
+            combined_signal = self.signal.copy()
+            combined_signal["counts"] = self.signal["counts"] + other.signal["counts"]
+            combined_signal["err"] = np.sqrt(self.signal["err"]**2 + other.signal["err"]**2)
+
+            # Add openbeam counts
+            combined_openbeam = self.openbeam.copy()
+            combined_openbeam["counts"] = self.openbeam["counts"] + other.openbeam["counts"]
+            combined_openbeam["err"] = np.sqrt(self.openbeam["err"]**2 + other.openbeam["err"]**2)
+
+            # Calculate transmission and error with combined counts
+            transmission = combined_signal["counts"] / combined_openbeam["counts"]
+            err = transmission * np.sqrt(
+                (combined_signal["err"] / combined_signal["counts"])**2 +
+                (combined_openbeam["err"] / combined_openbeam["counts"])**2
+            )
+
+            # Create new dataframe with combined results
+            df = pd.DataFrame({
+                "wavelength": combined_signal["wavelength"],
+                "trans": transmission,
+                "err": err
+            })
+
+            # Combine labels
+            label1 = self.table.attrs.get("label", "data1")
+            label2 = other.table.attrs.get("label", "data2")
+            df.attrs["label"] = f"{label1}+{label2}"
+
+            # Create new Data object
+            result = Data()
+            result.table = df
+            result.tgrid = self.tgrid
+            result.signal = combined_signal
+            result.openbeam = combined_openbeam
+            result.L = self.L
+            result.tstep = self.tstep
+
+            return result
+
+        else:
+            # Mismatch between grouped and non-grouped
+            raise TypeError("Cannot add grouped and non-grouped Data objects")
 
     def __iadd__(self, other):
         """
@@ -730,9 +851,11 @@ class Data:
             if index is None:
                 # Default to first group
                 index = self.indices[0]
-            if index not in self.groups:
+            # Normalize index for lookup (supports tuple, int, or string access)
+            normalized_index = self._normalize_index(index)
+            if normalized_index not in self.groups:
                 raise ValueError(f"Index {index} not found in groups. Available indices: {self.indices}")
-            table_to_plot = self.groups[index]
+            table_to_plot = self.groups[normalized_index]
             # Add index to label if not provided
             if plot_label is None:
                 plot_label = f"Index {index}"
@@ -817,9 +940,16 @@ class Data:
         # Create visualization based on group_shape
         if self.group_shape and len(self.group_shape) == 2:
             # 2D pcolormesh for proper block sizing
-            # Extract unique x and y coordinates
-            xs = sorted(set(idx[0] for idx in self.indices if isinstance(idx, tuple) and len(idx) == 2))
-            ys = sorted(set(idx[1] for idx in self.indices if isinstance(idx, tuple) and len(idx) == 2))
+            # Extract unique x and y coordinates by parsing string indices
+            xs = []
+            ys = []
+            for idx_str in self.indices:
+                idx = self._parse_string_index(idx_str)
+                if isinstance(idx, tuple) and len(idx) == 2:
+                    xs.append(idx[0])
+                    ys.append(idx[1])
+            xs = sorted(set(xs))
+            ys = sorted(set(ys))
 
             # Calculate grid spacing (block size)
             x_spacing = xs[1] - xs[0] if len(xs) > 1 else 1
@@ -839,11 +969,12 @@ class Data:
             x_map = {x: i for i, x in enumerate(xs)}
             y_map = {y: i for i, y in enumerate(ys)}
 
-            for idx in self.indices:
+            for idx_str in self.indices:
+                idx = self._parse_string_index(idx_str)
                 if isinstance(idx, tuple) and len(idx) == 2:
                     x, y = idx
                     if x in x_map and y in y_map:
-                        trans_array[y_map[y], x_map[x]] = avg_trans[idx]
+                        trans_array[y_map[y], x_map[x]] = avg_trans[idx_str]
 
             fig, ax = plt.subplots(figsize=figsize)
             im = ax.pcolormesh(x_edges, y_edges, trans_array, cmap=cmap, vmin=vmin, vmax=vmax,
@@ -858,8 +989,8 @@ class Data:
             return ax
 
         elif self.group_shape and len(self.group_shape) == 1:
-            # 1D line plot
-            indices_array = np.array(self.indices)
+            # 1D line plot - parse string indices back to integers
+            indices_array = np.array([self._parse_string_index(idx) for idx in self.indices])
             trans_values = np.array([avg_trans[idx] for idx in self.indices])
 
             fig, ax = plt.subplots(figsize=figsize)

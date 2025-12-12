@@ -146,14 +146,15 @@ class TestFromGrouped2D:
         assert len(data.indices) == 4
         assert data.group_shape == (2, 2)
 
-        # Check indices are tuples
-        assert all(isinstance(idx, tuple) for idx in data.indices)
-        assert all(len(idx) == 2 for idx in data.indices)
+        # Check indices are strings
+        assert all(isinstance(idx, str) for idx in data.indices)
+        # Check that they represent 2D tuples like "(0, 0)"
+        assert "(0, 0)" in data.indices or (0, 0) in [data._parse_string_index(idx) for idx in data.indices]
 
-        # Check groups dict
+        # Check groups dict - can access with tuple or string
         assert len(data.groups) == 4
-        assert (0, 0) in data.groups
-        assert (1, 1) in data.groups
+        assert data._normalize_index((0, 0)) in data.groups
+        assert data._normalize_index((1, 1)) in data.groups
 
     def test_2d_grid_data_content(self, temp_dir, create_test_counts_files):
         """Test that loaded 2D data has correct structure."""
@@ -208,8 +209,8 @@ class TestFromGrouped1D:
         assert len(data.indices) == 5
         assert data.group_shape == (5,)
 
-        # Check indices are ints
-        assert all(isinstance(idx, int) for idx in data.indices)
+        # Check indices are strings (converted from ints)
+        assert all(isinstance(idx, str) for idx in data.indices)
 
     def test_1d_with_custom_indices(self, temp_dir, create_test_counts_files):
         """Test 1D loading with user-provided indices."""
@@ -225,10 +226,11 @@ class TestFromGrouped1D:
             indices=custom_indices
         )
 
-        assert data.indices == custom_indices
-        assert 10 in data.groups
-        assert 20 in data.groups
-        assert 30 in data.groups
+        # Indices should be converted to strings
+        assert data.indices == ["10", "20", "30"]
+        assert "10" in data.groups or data._normalize_index(10) in data.groups
+        assert "20" in data.groups or data._normalize_index(20) in data.groups
+        assert "30" in data.groups or data._normalize_index(30) in data.groups
 
 
 class TestFromGroupedNamed:
@@ -309,11 +311,11 @@ class TestPatternExtraction:
             tstep=10e-6
         )
 
-        # Check extracted coordinates
-        assert (0, 0) in data.indices
-        assert (0, 1) in data.indices
-        assert (1, 0) in data.indices
-        assert (1, 1) in data.indices
+        # Check extracted coordinates (now string format)
+        assert "(0, 0)" in data.indices
+        assert "(0, 1)" in data.indices
+        assert "(1, 0)" in data.indices
+        assert "(1, 1)" in data.indices
 
     def test_extract_1d_indices(self, temp_dir, create_test_counts_files):
         """Test extraction of 1D indices from filenames."""
@@ -326,11 +328,11 @@ class TestPatternExtraction:
             tstep=10e-6
         )
 
-        # Check extracted indices
-        assert 0 in data.indices
-        assert 1 in data.indices
-        assert 2 in data.indices
-        assert 3 in data.indices
+        # Check extracted indices (now string format)
+        assert "0" in data.indices
+        assert "1" in data.indices
+        assert "2" in data.indices
+        assert "3" in data.indices
 
 
 class TestGroupedDataAccess:
@@ -347,8 +349,8 @@ class TestGroupedDataAccess:
             tstep=10e-6
         )
 
-        # Access specific group
-        group_0_0 = data.groups[(0, 0)]
+        # Access specific group (with normalized index)
+        group_0_0 = data.groups[data._normalize_index((0, 0))]
         assert isinstance(group_0_0, pd.DataFrame)
         assert 'wavelength' in group_0_0.columns
 
