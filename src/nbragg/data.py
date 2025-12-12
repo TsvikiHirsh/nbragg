@@ -816,19 +816,41 @@ class Data:
 
         # Create visualization based on group_shape
         if self.group_shape and len(self.group_shape) == 2:
-            # 2D imshow
-            ny, nx = self.group_shape
-            trans_array = np.full((ny, nx), np.nan)
+            # 2D pcolormesh for proper block sizing
+            # Extract unique x and y coordinates
+            xs = sorted(set(idx[0] for idx in self.indices if isinstance(idx, tuple) and len(idx) == 2))
+            ys = sorted(set(idx[1] for idx in self.indices if isinstance(idx, tuple) and len(idx) == 2))
+
+            # Calculate grid spacing (block size)
+            x_spacing = xs[1] - xs[0] if len(xs) > 1 else 1
+            y_spacing = ys[1] - ys[0] if len(ys) > 1 else 1
+
+            # Create coordinate arrays including edges for pcolormesh
+            # Add half-spacing to create cell edges
+            x_edges = np.array(xs) - x_spacing / 2
+            x_edges = np.append(x_edges, xs[-1] + x_spacing / 2)
+            y_edges = np.array(ys) - y_spacing / 2
+            y_edges = np.append(y_edges, ys[-1] + y_spacing / 2)
+
+            # Create 2D array for values
+            trans_array = np.full((len(ys), len(xs)), np.nan)
+
+            # Map indices to array positions
+            x_map = {x: i for i, x in enumerate(xs)}
+            y_map = {y: i for i, y in enumerate(ys)}
 
             for idx in self.indices:
                 if isinstance(idx, tuple) and len(idx) == 2:
-                    y, x = idx
-                    trans_array[y, x] = avg_trans[idx]
+                    x, y = idx
+                    if x in x_map and y in y_map:
+                        trans_array[y_map[y], x_map[x]] = avg_trans[idx]
 
             fig, ax = plt.subplots(figsize=figsize)
-            im = ax.imshow(trans_array, cmap=cmap, origin='lower', vmin=vmin, vmax=vmax, **kwargs)
-            ax.set_xlabel("X pixel")
-            ax.set_ylabel("Y pixel")
+            im = ax.pcolormesh(x_edges, y_edges, trans_array, cmap=cmap, vmin=vmin, vmax=vmax,
+                              shading='flat', **kwargs)
+            ax.set_xlabel("X coordinate")
+            ax.set_ylabel("Y coordinate")
+            ax.set_aspect('equal')
             if title is None:
                 title = f"Average Transmission Map ({wlmin:.1f}-{wlmax:.1f} Å)"
             ax.set_title(title)

@@ -219,19 +219,44 @@ class GroupedFitResult:
 
         # Create visualization based on group_shape
         if self.group_shape and len(self.group_shape) == 2:
-            # 2D imshow
-            ny, nx = self.group_shape
-            param_array = np.full((ny, nx), np.nan)
+            # 2D pcolormesh for proper block sizing
+            # Extract unique x and y coordinates
+            xs = sorted(set(idx[0] for idx in self.indices if isinstance(idx, tuple) and len(idx) == 2))
+            ys = sorted(set(idx[1] for idx in self.indices if isinstance(idx, tuple) and len(idx) == 2))
+
+            # Handle empty indices
+            if len(xs) == 0 or len(ys) == 0:
+                raise ValueError("No valid 2D indices found for plotting")
+
+            # Calculate grid spacing (block size)
+            x_spacing = xs[1] - xs[0] if len(xs) > 1 else 1
+            y_spacing = ys[1] - ys[0] if len(ys) > 1 else 1
+
+            # Create coordinate arrays including edges for pcolormesh
+            x_edges = np.array(xs) - x_spacing / 2
+            x_edges = np.append(x_edges, xs[-1] + x_spacing / 2)
+            y_edges = np.array(ys) - y_spacing / 2
+            y_edges = np.append(y_edges, ys[-1] + y_spacing / 2)
+
+            # Create 2D array for values
+            param_array = np.full((len(ys), len(xs)), np.nan)
+
+            # Map indices to array positions
+            x_map = {x: i for i, x in enumerate(xs)}
+            y_map = {y: i for i, y in enumerate(ys)}
 
             for idx in self.indices:
                 if isinstance(idx, tuple) and len(idx) == 2:
-                    y, x = idx
-                    param_array[y, x] = param_values[idx]
+                    x, y = idx
+                    if x in x_map and y in y_map:
+                        param_array[y_map[y], x_map[x]] = param_values[idx]
 
             fig, ax = plt.subplots(figsize=figsize)
-            im = ax.imshow(param_array, cmap=cmap, origin='lower', vmin=vmin, vmax=vmax, **kwargs)
-            ax.set_xlabel("X pixel")
-            ax.set_ylabel("Y pixel")
+            im = ax.pcolormesh(x_edges, y_edges, param_array, cmap=cmap, vmin=vmin, vmax=vmax,
+                              shading='flat', **kwargs)
+            ax.set_xlabel("X coordinate")
+            ax.set_ylabel("Y coordinate")
+            ax.set_aspect('equal')
             if title is None:
                 title = f"{param_name} Map"
             ax.set_title(title)
@@ -301,6 +326,192 @@ class GroupedFitResult:
         print(df.to_string(index=False))
         print("=" * 80)
         return df
+
+    def save(self, filename: str, compact: bool = False, model_filename: str = None):
+        """
+        Save grouped fit results to a single JSON file.
+
+        Parameters:
+        -----------
+        filename : str
+            Path to the output JSON file.
+        compact : bool, optional
+            If True, save only essential data (params, errors, redchi2) to save memory.
+            If False (default), save full fit results.
+        model_filename : str, optional
+            Path to save the model configuration. Only used if compact=False.
+            If None, model is saved to filename.replace('.json', '_model.json').
+        """
+        import json
+
+        # Prepare grouped results structure
+        grouped_state = {
+            'version': '1.0',
+            'class': 'GroupedFitResult',
+            'group_shape': self.group_shape,
+            'indices': [str(idx) for idx in self.indices],  # Convert to strings for JSON
+            'results': {}
+        }
+
+        # Save each result
+        for idx in self.indices:
+            result = self.results[idx]
+            idx_str = str(idx)
+
+            if compact:
+                # Save only essential data for map plotting
+                result_data = {
+                    'compact': True,
+                    'params': {},
+                    'redchi': result.redchi if hasattr(result, 'redchi') else None,
+                    'chisqr': result.chisqr if hasattr(result, 'chisqr') else None,
+                    'success': result.success if hasattr(result, 'success') else None,
+                }
+                # Extract parameter values and errors
+                for param_name in result.params:
+                    param = result.params[param_name]
+                    result_data['params'][param_name] = {
+                        'value': param.value,
+                        'stderr': param.stderr,
+                        'vary': param.vary,
+                    }
+            else:
+                # Save full result
+                result_data = {
+                    'compact': False,
+                    'params': result.params.dumps(),
+                    'init_params': result.init_params.dumps() if hasattr(result, 'init_params') else None,
+                    'success': result.success if hasattr(result, 'success') else None,
+                    'message': result.message if hasattr(result, 'message') else None,
+                    'nfev': result.nfev if hasattr(result, 'nfev') else None,
+                    'nvarys': result.nvarys if hasattr(result, 'nvarys') else None,
+                    'ndata': result.ndata if hasattr(result, 'ndata') else None,
+                    'nfree': result.nfree if hasattr(result, 'nfree') else None,
+                    'chisqr': result.chisqr if hasattr(result, 'chisqr') else None,
+                    'redchi': result.redchi if hasattr(result, 'redchi') else None,
+                    'aic': result.aic if hasattr(result, 'aic') else None,
+                    'bic': result.bic if hasattr(result, 'bic') else None,
+                }
+
+            grouped_state['results'][idx_str] = result_data
+
+        # Save to file
+        with open(filename, 'w') as f:
+            json.dump(grouped_state, f, indent=2)
+
+        # Save model if not compact
+        if not compact and model_filename != '' and len(self.indices) > 0:
+            if model_filename is None:
+                model_filename = filename.replace('.json', '_model.json')
+                if model_filename == filename:
+                    model_filename = filename.replace('.json', '') + '_model.json'
+
+            # Get model from first result
+            first_result = self.results[self.indices[0]]
+            if hasattr(first_result, 'model') and isinstance(first_result.model, TransmissionModel):
+                first_result.model.save(model_filename)
+
+    @classmethod
+    def load(cls, filename: str, model_filename: str = None, model: 'TransmissionModel' = None):
+        """
+        Load grouped fit results from a JSON file.
+
+        Parameters:
+        -----------
+        filename : str
+            Path to the saved JSON file.
+        model_filename : str, optional
+            Path to the model configuration file. Only needed if full results were saved.
+        model : TransmissionModel, optional
+            Existing model to use instead of loading from file.
+
+        Returns:
+        --------
+        GroupedFitResult
+            Loaded grouped fit results.
+        """
+        import json
+        import ast
+
+        with open(filename, 'r') as f:
+            grouped_state = json.load(f)
+
+        # Create new instance
+        group_shape = tuple(grouped_state['group_shape']) if grouped_state['group_shape'] else None
+        grouped_result = cls(group_shape=group_shape)
+
+        # Parse indices back to original types
+        indices_str = grouped_state['indices']
+        indices = []
+        for idx_str in indices_str:
+            try:
+                # Try to evaluate as tuple/int
+                idx = ast.literal_eval(idx_str)
+            except (ValueError, SyntaxError):
+                # Keep as string
+                idx = idx_str
+            indices.append(idx)
+
+        # Load each result
+        for idx in indices:
+            idx_str = str(idx)
+            result_data = grouped_state['results'][idx_str]
+
+            if result_data['compact']:
+                # Create a minimal result object for compact storage
+                # This is a simple container, not a full ModelResult
+                class CompactResult:
+                    def __init__(self, data):
+                        from lmfit import Parameters
+                        self.params = Parameters()
+                        for param_name, param_data in data['params'].items():
+                            self.params.add(param_name,
+                                          value=param_data['value'],
+                                          vary=param_data['vary'])
+                            self.params[param_name].stderr = param_data['stderr']
+                        self.redchi = data['redchi']
+                        self.chisqr = data['chisqr']
+                        self.success = data['success']
+                        self.compact = True
+
+                result = CompactResult(result_data)
+            else:
+                # Reconstruct full ModelResult
+                from lmfit import Parameters, minimize
+                from lmfit.model import ModelResult
+
+                # Load or use provided model
+                if model is None:
+                    if model_filename is None:
+                        model_filename = filename.replace('.json', '_model.json')
+                        if model_filename == filename:
+                            model_filename = filename.replace('.json', '') + '_model.json'
+                    model = TransmissionModel.load(model_filename)
+
+                # Create minimal result object
+                params = Parameters()
+                params.loads(result_data['params'])
+
+                result = ModelResult(model, params)
+                result.success = result_data['success']
+                result.message = result_data['message']
+                result.nfev = result_data['nfev']
+                result.nvarys = result_data['nvarys']
+                result.ndata = result_data['ndata']
+                result.nfree = result_data['nfree']
+                result.chisqr = result_data['chisqr']
+                result.redchi = result_data['redchi']
+                result.aic = result_data['aic']
+                result.bic = result_data['bic']
+
+                if result_data['init_params']:
+                    init_params = Parameters()
+                    init_params.loads(result_data['init_params'])
+                    result.init_params = init_params
+
+            grouped_result.add_result(idx, result)
+
+        return grouped_result
 
 
 class TransmissionModel(lmfit.Model):
@@ -1410,10 +1621,19 @@ class TransmissionModel(lmfit.Model):
                 for idx in data.indices
             )
 
-        # Collect results
+        # Collect results, skipping failed fits
         grouped_result = GroupedFitResult(group_shape=data.group_shape)
+        failed_indices = []
         for idx, result in results:
-            grouped_result.add_result(idx, result)
+            if result is not None:
+                grouped_result.add_result(idx, result)
+            else:
+                failed_indices.append(idx)
+
+        # Warn about failed fits
+        if failed_indices and verbose:
+            warnings.warn(f"Fitting failed for {len(failed_indices)}/{len(data.indices)} groups. "
+                         f"Failed indices: {failed_indices[:10]}{'...' if len(failed_indices) > 10 else ''}")
 
         return grouped_result
 
