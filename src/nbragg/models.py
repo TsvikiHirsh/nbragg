@@ -193,9 +193,11 @@ class GroupedFitResult:
         result : lmfit.ModelResult
             The fit result for this group.
         """
-        self.results[index] = result
-        if index not in self.indices:
-            self.indices.append(index)
+        # Normalize index for consistent storage
+        normalized_index = self._normalize_index(index)
+        self.results[normalized_index] = result
+        if normalized_index not in self.indices:
+            self.indices.append(normalized_index)
 
     def __getitem__(self, index):
         """
@@ -244,7 +246,23 @@ class GroupedFitResult:
         if normalized_index not in self.results:
             raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
 
-        return self.results[normalized_index].plot(**kwargs)
+        # Get the individual fit result
+        fit_result = self.results[normalized_index]
+
+        # Call the model's plot method but temporarily set fit_result to the correct one
+        # This is needed because ModelResult.plot() delegates to Model.plot() where
+        # self is the shared Model instance, not the individual ModelResult
+        model = fit_result.model
+        original_fit_result = getattr(model, 'fit_result', None)
+        try:
+            model.fit_result = fit_result
+            return model.plot(**kwargs)
+        finally:
+            # Restore original fit_result
+            if original_fit_result is not None:
+                model.fit_result = original_fit_result
+            elif hasattr(model, 'fit_result'):
+                delattr(model, 'fit_result')
 
     def plot_parameter_map(self, param_name, query=None, kind=None, **kwargs):
         """
@@ -630,12 +648,25 @@ class GroupedFitResult:
         if normalized_index not in self.results:
             raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
 
-        result = self.results[normalized_index]
+        # Get the individual fit result
+        fit_result = self.results[normalized_index]
 
-        if hasattr(result, 'plot_total_xs'):
-            return result.plot_total_xs(**kwargs)
-        else:
+        if not hasattr(fit_result, 'plot_total_xs'):
             raise AttributeError(f"Result for index {index} does not have a plot_total_xs method")
+
+        # Temporarily set model.fit_result to the correct one for this plot
+        # (same issue as in plot() method - ModelResult delegates to shared Model)
+        model = fit_result.model
+        original_fit_result = getattr(model, 'fit_result', None)
+        try:
+            model.fit_result = fit_result
+            return model.plot_total_xs(**kwargs)
+        finally:
+            # Restore original fit_result
+            if original_fit_result is not None:
+                model.fit_result = original_fit_result
+            elif hasattr(model, 'fit_result'):
+                delattr(model, 'fit_result')
 
     def _repr_html_(self):
         """
@@ -1961,11 +1992,11 @@ class TransmissionModel(lmfit.Model):
         except ImportError:
             from tqdm import tqdm
 
-        # NOTE: Due to NCrystal serialization limitations, multiprocessing doesn't work reliably
-        # NCrystal materials contain C pointers and dynamic material registrations that
-        # can't be transferred between processes. Use threading backend instead.
-        print("Note: Using threading backend for grouped fitting due to NCrystal serialization limitations.")
-        print("      Parallelism will be limited by Python's GIL, but results will be correct.")
+        # # NOTE: Due to NCrystal serialization limitations, multiprocessing doesn't work reliably
+        # # NCrystal materials contain C pointers and dynamic material registrations that
+        # # can't be transferred between processes. Use threading backend instead.
+        # print("Note: Using threading backend for grouped fitting due to NCrystal serialization limitations.")
+        # print("      Parallelism will be limited by Python's GIL, but results will be correct.")
         if n_jobs > 4:
             print(f"      Consider n_jobs=4 or less for better performance with threading.")
 
@@ -2026,7 +2057,7 @@ class TransmissionModel(lmfit.Model):
 
         start_time = time.time()
         backend = 'threading'
-        print(f"Using threading backend (limited parallelism due to Python GIL)...")
+        # print(f"Using threading backend (limited parallelism due to Python GIL)...")
 
         # Execute with threading
         if progress_bar:
@@ -2316,15 +2347,15 @@ class TransmissionModel(lmfit.Model):
             chi2 = stage_result.redchi if hasattr(stage_result, 'redchi') else np.sum(residual**2) / (len(data_values) - len(params))
             fit_label = f"Stage {stage} fit"
             
-        elif hasattr(self, "fit_result") and self.fit_result is not None:    
-            # Use final fit results    
-            wavelength = self.fit_result.userkws["wl"]    
-            data_values = self.fit_result.data    
-            err = 1. / self.fit_result.weights    
-            best_fit = self.fit_result.best_fit    
-            residual = self.fit_result.residual    
-            params = self.fit_result.params    
-            chi2 = self.fit_result.redchi    
+        elif hasattr(self, "fit_result") and self.fit_result is not None:
+            # Use final fit results
+            wavelength = self.fit_result.userkws["wl"]
+            data_values = self.fit_result.data
+            err = 1. / self.fit_result.weights
+            best_fit = self.fit_result.best_fit
+            residual = self.fit_result.residual
+            params = self.fit_result.params
+            chi2 = self.fit_result.redchi
             fit_label = "Best fit"    
         else:    
             # Use model (no fit yet)    
