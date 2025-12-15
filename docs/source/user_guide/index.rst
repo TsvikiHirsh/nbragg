@@ -9,6 +9,7 @@ This comprehensive guide covers all aspects of using nbragg for neutron Bragg ed
    :caption: Contents:
 
    basic_usage
+   grouped_fitting
    model_parameters
    save_load
    orientation_index
@@ -22,6 +23,9 @@ Quick Links
 
 **New to nbragg?**
    Start with :doc:`basic_usage` to learn the fundamentals.
+
+**Analyzing grouped or spatially-resolved data?**
+   See :doc:`grouped_fitting` for 2D grids, 1D arrays, and multi-sample analysis.
 
 **Saving and loading fits?**
    See :doc:`save_load` to learn how to save results and resume analysis sessions.
@@ -56,6 +60,7 @@ Core Concepts
 Key Features
 ~~~~~~~~~~~~
 
+- **Grouped/Gridded Data**: Analyze spatially-resolved or multi-sample datasets with parallel fitting
 - **Multi-phase Analysis**: Model powder and textured samples with multiple phases
 - **Oriented Materials**: Full support for single crystal and textured polycrystals
 - **MTEX Integration**: Import orientation distributions from MTEX for texture analysis
@@ -66,6 +71,14 @@ What's New
 ----------
 
 Recent additions to nbragg include:
+
+**Grouped/Gridded Data Fitting**
+   - ``Data.from_grouped()`` for loading spatially-resolved or multi-sample data
+   - Parallel fitting with ``n_jobs`` parameter
+   - ``plot_parameter_map()`` with auto-detection of plot type (heatmap/line/bar)
+   - Flexible indexing: tuples ``(0,0)``, strings ``"(0,0)"``, integers, or names
+   - ``GroupedFitResult`` with ``save()``, ``load()``, and ``fit_report()`` methods
+   - See :doc:`grouped_fitting` for complete documentation
 
 **Save and Load Functionality**
    - ``result.save()`` method for easy saving of fit results

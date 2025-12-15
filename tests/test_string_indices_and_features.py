@@ -55,12 +55,12 @@ class TestStringIndices:
             assert isinstance(idx, str), f"Index {idx} should be a string, got {type(idx)}"
 
     def test_2d_indices_format(self, grouped_data_2d):
-        """Test that 2D indices are formatted as "(x, y)"."""
-        # Should have indices like "(0, 0)", "(0, 1)", "(1, 0)", "(1, 1)"
-        assert "(0, 0)" in grouped_data_2d.indices
-        assert "(0, 1)" in grouped_data_2d.indices
-        assert "(1, 0)" in grouped_data_2d.indices
-        assert "(1, 1)" in grouped_data_2d.indices
+        """Test that 2D indices are formatted as "(x,y)" (no spaces)."""
+        # Should have indices like "(0,0)", "(0,1)", "(1,0)", "(1,1)"
+        assert "(0,0)" in grouped_data_2d.indices
+        assert "(0,1)" in grouped_data_2d.indices
+        assert "(1,0)" in grouped_data_2d.indices
+        assert "(1,1)" in grouped_data_2d.indices
 
     def test_access_with_tuple(self, grouped_data_2d):
         """Test accessing groups with tuple indices."""

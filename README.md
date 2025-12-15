@@ -11,6 +11,7 @@ nbragg is a package designed for fitting neutron Bragg edge data using [NCrystal
 ## Features
 
 - **Flexible Cross-Section Calculations**: Interfaces with NCrystal to fetch cross-sections for crystalline materials.
+- **Grouped/Gridded Data Fitting**: Analyze spatially-resolved or multi-sample data with support for 1D arrays, 2D grids, and named groups. Includes parallel fitting with automatic result visualization via parameter maps.
 - **SANS Modeling**: Built-in support for Small Angle Neutron Scattering (SANS) using hard-sphere models for samples with nanoscale features.
 - **Extinction Effects**: Support for primary and secondary extinction modeling for large crystallites and thick samples.
 - **Built-In Tools for Response and Background Functions**: Includes predefined models for instrument response (e.g., Jorgensen, square) and background components (polynomial functions).
