@@ -23,16 +23,50 @@ import os
 
 def _add_save_method_to_result(result):
     """
-    Add a save() method to an lmfit.ModelResult object.
+    Add a save() and fit_report() method to an lmfit.ModelResult object.
 
-    This function monkey-patches the result object to add save functionality.
+    This function monkey-patches the result object to add save functionality
+    and a fit_report() method that returns the HTML representation.
     """
     def save(filename: str):
         """Save this fit result to a JSON file."""
         _save_result_impl(result, filename)
 
-    # Add the save method to the result instance
+    def fit_report_html():
+        """
+        Return the HTML fit report for display in Jupyter notebooks.
+
+        This method provides the same output as the automatic display
+        when the result object is shown in a Jupyter cell.
+
+        Returns:
+        --------
+        str
+            HTML string containing the formatted fit results from lmfit.
+
+        Examples:
+        ---------
+        >>> result = model.fit(data)
+        >>> html_report = result.fit_report()
+        >>> # Display in Jupyter:
+        >>> from IPython.display import HTML, display
+        >>> display(HTML(html_report))
+        """
+        if hasattr(result, '_repr_html_'):
+            return result._repr_html_()
+        else:
+            # Fallback: return empty string if _repr_html_ is not available
+            return ""
+
+    # Store original fit_report if it exists
+    original_fit_report = result.fit_report if hasattr(result, 'fit_report') else None
+
+    # Add the methods to the result instance
     result.save = save
+    result.fit_report = fit_report_html
+    # Preserve access to original text-based fit_report
+    if original_fit_report:
+        result.fit_report_text = original_fit_report
     return result
 
 
@@ -121,10 +155,23 @@ class GroupedFitResult:
         self.indices = []
         self.group_shape = group_shape
 
+    def _normalize_index(self, index):
+        """
+        Normalize index for consistent lookup.
+        Converts tuples to strings without spaces: (10, 20) -> "(10,20)"
+        Accepts both "(10,20)" and "(10, 20)" string formats.
+        """
+        if isinstance(index, tuple):
+            return str(index).replace(" ", "")
+        elif isinstance(index, str):
+            return index.replace(" ", "")
+        else:
+            return str(index)
+
     def _parse_string_index(self, string_idx):
         """
         Parse a string index back to its original form.
-        "(10, 20)" -> (10, 20)
+        "(10,20)" or "(10, 20)" -> (10, 20)
         "5" -> 5
         "center" -> "center"
         """
@@ -151,10 +198,19 @@ class GroupedFitResult:
             self.indices.append(index)
 
     def __getitem__(self, index):
-        """Access a specific group's result."""
-        if index not in self.results:
+        """
+        Access a specific group's result.
+
+        Supports flexible index access:
+        - Tuples: (0, 0) or "(0,0)" or "(0, 0)"
+        - Integers: 5 or "5"
+        - Strings: "groupname"
+        """
+        normalized_index = self._normalize_index(index)
+
+        if normalized_index not in self.results:
             raise KeyError(f"Index {index} not found in results. Available: {self.indices}")
-        return self.results[index]
+        return self.results[normalized_index]
 
     def __len__(self):
         """Return number of group results."""
@@ -172,6 +228,9 @@ class GroupedFitResult:
         -----------
         index : int, tuple, or str
             The group index to plot.
+            - For 2D grids: can use tuple (0, 0) or string "(0,0)" or "(0, 0)"
+            - For 1D arrays: can use int 5 or string "5"
+            - For named groups: use string "groupname"
         **kwargs
             Additional plotting parameters passed to result.plot().
 
@@ -180,9 +239,14 @@ class GroupedFitResult:
         matplotlib.Axes
             The plot axes.
         """
-        return self.results[index].plot(**kwargs)
+        normalized_index = self._normalize_index(index)
 
-    def plot_parameter_map(self, param_name, query=None, kind='pcolormesh', **kwargs):
+        if normalized_index not in self.results:
+            raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
+
+        return self.results[normalized_index].plot(**kwargs)
+
+    def plot_parameter_map(self, param_name, query=None, kind=None, **kwargs):
         """
         Plot spatial map of a fitted parameter value, error, or fit statistic.
 
@@ -197,8 +261,12 @@ class GroupedFitResult:
             Pandas query string to filter results (e.g., "redchi < 2").
             Can reference any parameter name, parameter_err, or statistic.
         kind : str, optional
-            Plot type for 1D data: 'line', 'bar', or 'errorbar' (default: 'line').
-            Ignored for 2D data.
+            Plot type. If None (default), auto-detected based on group_shape:
+            - 2D data: 'pcolormesh'
+            - 1D data: 'line'
+            - Named groups: 'bar'
+            For 1D/named data, can also specify: 'line', 'bar', or 'errorbar'.
+            Ignored for 2D data (always uses pcolormesh).
         **kwargs : dict, optional
             Additional plotting parameters:
             - cmap : str, optional
@@ -238,6 +306,16 @@ class GroupedFitResult:
         import matplotlib.pyplot as plt
         import numpy as np
         import pandas as pd
+
+        # Auto-detect plot kind based on group_shape if not specified
+        if kind is None:
+            if self.group_shape and len(self.group_shape) == 2:
+                kind = 'pcolormesh'
+            elif self.group_shape and len(self.group_shape) == 1:
+                kind = 'line'
+            else:
+                # Named groups or no shape
+                kind = 'bar'
 
         # Build DataFrame with all parameters, errors, and statistics
         data_for_query = []
@@ -441,14 +519,15 @@ class GroupedFitResult:
         """
         Print summary statistics for all group fits.
 
-        Returns a pandas DataFrame with fit statistics for each group.
+        Returns a pandas DataFrame with fit statistics and parameter values/errors for each group.
 
         Returns:
         --------
         pandas.DataFrame
-            Summary table with columns: index, success, chi_square, nfev, etc.
+            Summary table with columns: index, success, redchi, parameters, and parameter errors.
         """
         import pandas as pd
+        import numpy as np
 
         summary_data = []
         for idx in self.indices:
@@ -456,11 +535,19 @@ class GroupedFitResult:
             row = {
                 'index': str(idx),
                 'success': result.success if hasattr(result, 'success') else None,
-                'chisqr': result.chisqr if hasattr(result, 'chisqr') else None,
                 'redchi': result.redchi if hasattr(result, 'redchi') else None,
+                'chisqr': result.chisqr if hasattr(result, 'chisqr') else None,
                 'nfev': result.nfev if hasattr(result, 'nfev') else None,
                 'nvarys': result.nvarys if hasattr(result, 'nvarys') else None,
             }
+
+            # Add all parameter values and errors
+            if hasattr(result, 'params'):
+                for param_name in result.params:
+                    param = result.params[param_name]
+                    row[param_name] = param.value
+                    row[f"{param_name}_err"] = param.stderr if param.stderr is not None else np.nan
+
             summary_data.append(row)
 
         df = pd.DataFrame(summary_data)
@@ -469,6 +556,154 @@ class GroupedFitResult:
         print(df.to_string(index=False))
         print("=" * 80)
         return df
+
+    def stages_summary(self, index):
+        """
+        Get the stages summary table for a specific group.
+
+        Parameters:
+        -----------
+        index : int, tuple, or str
+            The group index to get stages summary for.
+            - For 2D grids: can use tuple (0, 0) or string "(0, 0)"
+            - For 1D arrays: can use int 5 or string "5"
+            - For named groups: use string "groupname"
+
+        Returns:
+        --------
+        pandas.DataFrame or None
+            The stages summary table for the specified group, or None if not available.
+
+        Examples:
+        ---------
+        >>> result.stages_summary(index="empty2")
+        >>> result.stages_summary(index=(0, 0))
+        """
+        # Normalize index to string for consistent lookup
+        if isinstance(index, tuple):
+            normalized_index = str(index)
+        elif isinstance(index, str):
+            normalized_index = index
+        else:
+            normalized_index = str(index)
+
+        if normalized_index not in self.results:
+            raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
+
+        result = self.results[normalized_index]
+
+        if hasattr(result, 'stages_summary'):
+            return result.stages_summary
+        else:
+            print(f"Warning: No stages_summary available for index {index}")
+            return None
+
+    def plot_total_xs(self, index, **kwargs):
+        """
+        Plot the total cross-section for a specific group.
+
+        Parameters:
+        -----------
+        index : int, tuple, or str
+            The group index to plot.
+            - For 2D grids: can use tuple (0, 0) or string "(0, 0)"
+            - For 1D arrays: can use int 5 or string "5"
+            - For named groups: use string "groupname"
+        **kwargs
+            Additional plotting parameters passed to result.plot_total_xs().
+            See ModelResult.plot_total_xs() for available options.
+
+        Returns:
+        --------
+        matplotlib.Axes or tuple of matplotlib.Axes
+            The plot axes (or tuple of axes if plot_residuals=True).
+
+        Examples:
+        ---------
+        >>> result.plot_total_xs(index="empty1")
+        >>> result.plot_total_xs(index=(0, 0), plot_bg=True, plot_dspace=True)
+        >>> result.plot_total_xs(index=5, split_phases=True)
+        """
+        # Normalize index for consistent lookup
+        normalized_index = self._normalize_index(index)
+
+        if normalized_index not in self.results:
+            raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
+
+        result = self.results[normalized_index]
+
+        if hasattr(result, 'plot_total_xs'):
+            return result.plot_total_xs(**kwargs)
+        else:
+            raise AttributeError(f"Result for index {index} does not have a plot_total_xs method")
+
+    def _repr_html_(self):
+        """
+        HTML representation for Jupyter notebooks.
+
+        Returns a formatted table summarizing all grouped fit results,
+        including fit statistics and parameter values with errors.
+        """
+        import pandas as pd
+        import numpy as np
+
+        # Collect summary data
+        summary_data = []
+        for idx in self.indices:
+            result = self.results[idx]
+            row = {
+                'index': str(idx),
+                'success': result.success if hasattr(result, 'success') else None,
+                'redchi': result.redchi if hasattr(result, 'redchi') else None,
+                'chisqr': result.chisqr if hasattr(result, 'chisqr') else None,
+                'nfev': result.nfev if hasattr(result, 'nfev') else None,
+                'nvarys': result.nvarys if hasattr(result, 'nvarys') else None,
+            }
+
+            # Add all parameter values and errors
+            if hasattr(result, 'params'):
+                for param_name in result.params:
+                    param = result.params[param_name]
+                    row[param_name] = param.value
+                    row[f"{param_name}_err"] = param.stderr if param.stderr is not None else np.nan
+
+            summary_data.append(row)
+
+        df = pd.DataFrame(summary_data)
+
+        # Create HTML with styling
+        html = f"""
+        <div style="max-width: 100%; overflow-x: auto;">
+            <h3>Grouped Fit Results Summary</h3>
+            <p><b>Number of groups:</b> {len(self.indices)}</p>
+            <p><b>Group shape:</b> {self.group_shape if self.group_shape else 'Named groups'}</p>
+            {df.to_html(index=False, classes='dataframe', border=0, float_format=lambda x: f'{x:.4g}')}
+        </div>
+        """
+
+        return html
+
+    def fit_report(self):
+        """
+        Return the HTML fit report for display in Jupyter notebooks.
+
+        This method provides the same output as the automatic display
+        when the result object is shown in a Jupyter cell.
+
+        Returns:
+        --------
+        str
+            HTML string containing the formatted fit results summary.
+
+        Examples:
+        ---------
+        >>> result = model.fit(grouped_data)
+        >>> html_report = result.fit_report()
+        >>> # Display in Jupyter:
+        >>> from IPython.display import HTML, display
+        >>> display(HTML(html_report))
+        """
+        return self._repr_html_()
 
     def save(self, filename: str, compact: bool = False, model_filename: str = None):
         """

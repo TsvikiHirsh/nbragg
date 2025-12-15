@@ -49,7 +49,8 @@ class Data:
     def _normalize_index(self, index):
         """
         Normalize index for group lookup.
-        Converts tuples like (10, 20) to strings like "(10, 20)" for consistent access.
+        Converts tuples like (10, 20) to strings like "(10,20)" for consistent access.
+        Accepts both "(10,20)" and "(10, 20)" string formats.
 
         Parameters:
         -----------
@@ -59,14 +60,17 @@ class Data:
         Returns:
         --------
         str
-            String representation of the index
+            String representation of the index (tuples without spaces)
         """
         if isinstance(index, tuple):
-            return str(index)  # (10, 20) -> "(10, 20)"
+            # (10, 20) -> "(10,20)" (no spaces)
+            return str(index).replace(" ", "")
         elif isinstance(index, str):
-            return index  # "center" -> "center" or "(10, 20)" -> "(10, 20)"
+            # Remove spaces from string if it looks like a tuple: "(10, 20)" -> "(10,20)"
+            return index.replace(" ", "")
         else:
-            return str(index)  # 5 -> "5"
+            # 5 -> "5"
+            return str(index)
 
     def _parse_string_index(self, string_idx):
         """
@@ -447,13 +451,14 @@ class Data:
         group_shape, is_2d, is_1d = cls._determine_group_shape(extracted_indices)
 
         # Convert all indices to strings for consistent access
-        # For 2D: (10, 20) -> "(10, 20)"
+        # For 2D: (10, 20) -> "(10,20)" (no spaces)
         # For 1D: 5 -> "5"
         # For named: "center" -> "center"
         string_indices = []
         for idx in extracted_indices:
             if isinstance(idx, tuple):
-                string_indices.append(str(idx))  # "(10, 20)"
+                # Convert tuple to string without spaces: "(10,20)"
+                string_indices.append(str(idx).replace(" ", ""))
             elif isinstance(idx, str):
                 string_indices.append(idx)  # "center"
             else:
