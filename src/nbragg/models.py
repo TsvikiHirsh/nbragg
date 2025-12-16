@@ -19,6 +19,161 @@ import re
 from numpy import log
 import json
 import os
+import pickle
+
+
+def _fit_single_group_worker(args):
+    """
+    Worker function for parallel fitting of a single group.
+
+    This function is defined at module level so it can be pickled for multiprocessing.
+    It reconstructs the model from a serialized dict, fits the data, and returns
+    only pickleable results.
+
+    Parameters
+    ----------
+    args : tuple
+        (idx, model_dict, table_dict, L, tstep, fit_kwargs)
+
+    Returns
+    -------
+    tuple
+        (idx, result_dict) where result_dict contains pickleable fit results,
+        or (idx, error_string) if fitting failed.
+    """
+    idx, model_dict, table_dict, L, tstep, fit_kwargs = args
+
+    try:
+        # Reconstruct model from dict (creates new NCrystal objects in this process)
+        from nbragg.models import TransmissionModel
+        from nbragg.data import Data
+        import pandas as pd
+
+        model = TransmissionModel._from_dict(model_dict)
+
+        # Reconstruct data
+        group_data = Data()
+        group_data.table = pd.DataFrame(table_dict)
+        group_data.L = L
+        group_data.tstep = tstep
+
+        # Fit
+        result = model.fit(group_data, **fit_kwargs)
+
+        # Extract only pickleable attributes
+        result_dict = _extract_pickleable_result(result)
+
+        return idx, result_dict
+
+    except Exception as e:
+        import traceback
+        error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+        return idx, {'error': error_msg}
+
+
+def _extract_pickleable_result(fit_result):
+    """
+    Extract only pickleable attributes from a fit result.
+
+    Returns a dictionary with all the important fit result data
+    that can be safely passed between processes.
+    """
+    result_dict = {}
+
+    # Core fit statistics
+    for attr in ['success', 'chisqr', 'redchi', 'aic', 'bic',
+                 'nvarys', 'ndata', 'nfev', 'message', 'method']:
+        if hasattr(fit_result, attr):
+            result_dict[attr] = getattr(fit_result, attr)
+
+    # Parameters - serialize to JSON string
+    if hasattr(fit_result, 'params'):
+        result_dict['params_json'] = fit_result.params.dumps()
+
+    # Best fit values
+    if hasattr(fit_result, 'best_values'):
+        result_dict['best_values'] = dict(fit_result.best_values)
+
+    # Init values
+    if hasattr(fit_result, 'init_values'):
+        result_dict['init_values'] = dict(fit_result.init_values)
+
+    # Residual and best_fit arrays
+    if hasattr(fit_result, 'residual') and fit_result.residual is not None:
+        result_dict['residual'] = fit_result.residual.tolist()
+    if hasattr(fit_result, 'best_fit') and fit_result.best_fit is not None:
+        result_dict['best_fit'] = fit_result.best_fit.tolist()
+
+    # Covariance matrix
+    if hasattr(fit_result, 'covar') and fit_result.covar is not None:
+        result_dict['covar'] = fit_result.covar.tolist()
+
+    # Variable names and init_vals
+    if hasattr(fit_result, 'var_names'):
+        result_dict['var_names'] = list(fit_result.var_names)
+    if hasattr(fit_result, 'init_vals'):
+        result_dict['init_vals'] = list(fit_result.init_vals)
+
+    # Stage results if present (for rietveld/staged fits)
+    if hasattr(fit_result, 'fit_stages') and fit_result.fit_stages:
+        result_dict['fit_stages'] = [_extract_pickleable_result(stage) for stage in fit_result.fit_stages]
+
+    return result_dict
+
+
+def _reconstruct_result_from_dict(result_dict, model=None):
+    """
+    Reconstruct a minimal ModelResult-like object from a pickleable dict.
+
+    This creates an object with the same interface as lmfit.ModelResult
+    but from serialized data.
+    """
+    import lmfit
+    import numpy as np
+
+    # Create a minimal result object using SimpleNamespace
+    from types import SimpleNamespace
+    result = SimpleNamespace()
+
+    # Restore basic attributes
+    for attr in ['success', 'chisqr', 'redchi', 'aic', 'bic',
+                 'nvarys', 'ndata', 'nfev', 'message', 'method']:
+        if attr in result_dict:
+            setattr(result, attr, result_dict[attr])
+
+    # Restore parameters
+    if 'params_json' in result_dict:
+        result.params = lmfit.Parameters()
+        result.params.loads(result_dict['params_json'])
+
+    # Restore best values and init values
+    if 'best_values' in result_dict:
+        result.best_values = result_dict['best_values']
+    if 'init_values' in result_dict:
+        result.init_values = result_dict['init_values']
+
+    # Restore arrays
+    if 'residual' in result_dict:
+        result.residual = np.array(result_dict['residual'])
+    if 'best_fit' in result_dict:
+        result.best_fit = np.array(result_dict['best_fit'])
+    if 'covar' in result_dict:
+        result.covar = np.array(result_dict['covar'])
+
+    # Restore variable info
+    if 'var_names' in result_dict:
+        result.var_names = result_dict['var_names']
+    if 'init_vals' in result_dict:
+        result.init_vals = result_dict['init_vals']
+
+    # Restore stage results if present
+    if 'fit_stages' in result_dict:
+        result.fit_stages = [_reconstruct_result_from_dict(stage) for stage in result_dict['fit_stages']]
+
+    # Add model reference if provided
+    result.model = model
+
+    return result
 
 
 def _add_save_method_to_result(result):
@@ -1185,6 +1340,15 @@ class TransmissionModel(lmfit.Model):
             Number of parallel jobs for grouped data fitting (default: 10).
             Only applies when fitting grouped data. Set to 1 for sequential fitting.
             Set to -1 to use all available CPU cores.
+        backend : str, optional
+            Parallelization backend for grouped data fitting (default: "loky").
+            Options:
+            - "loky": True multiprocessing with model reconstruction in each worker.
+              Provides full CPU parallelism but has overhead from recreating NCrystal
+              objects in each process.
+            - "threading": Threading-based parallelism (limited by Python's GIL).
+              Lower overhead but limited speedup for CPU-bound tasks.
+            - "sequential": No parallelization. Useful for debugging.
         **kwargs
             Additional keyword arguments passed to `lmfit.Model.fit`.
 
@@ -1223,6 +1387,7 @@ class TransmissionModel(lmfit.Model):
         # Check if data is grouped and route to parallel fitting
         if hasattr(data, 'is_grouped') and data.is_grouped:
             n_jobs = kwargs.pop('n_jobs', 10)
+            backend = kwargs.pop('backend', 'loky')
             return self._fit_grouped(
                 data, params, wlmin, wlmax,
                 method=method,
@@ -1231,6 +1396,7 @@ class TransmissionModel(lmfit.Model):
                 progress_bar=progress_bar,
                 stages=stages,
                 n_jobs=n_jobs,
+                backend=backend,
                 **kwargs
             )
 
@@ -1951,6 +2117,7 @@ class TransmissionModel(lmfit.Model):
                      progress_bar: bool = True,
                      stages: Optional[Union[str, Dict[str, Union[str, List[str]]]]] = None,
                      n_jobs: int = 10,
+                     backend: str = "loky",
                      **kwargs):
         """
         Fit model to grouped data in parallel.
@@ -1975,6 +2142,10 @@ class TransmissionModel(lmfit.Model):
             Fitting stages configuration.
         n_jobs : int
             Number of parallel jobs (default: 10).
+        backend : str
+            Parallelization backend: "loky" (true multiprocessing, default),
+            "threading" (GIL-limited but works with shared objects),
+            or "sequential" (no parallelization, for debugging).
         **kwargs
             Additional arguments passed to fit.
 
@@ -1983,26 +2154,22 @@ class TransmissionModel(lmfit.Model):
         GroupedFitResult
             Container with fit results for each group.
         """
-        from joblib import Parallel, delayed
-        import tempfile
-        import os
-
-        try:
-            from tqdm.auto import tqdm
-        except ImportError:
-            from tqdm import tqdm
-
-        # # NOTE: Due to NCrystal serialization limitations, multiprocessing doesn't work reliably
-        # # NCrystal materials contain C pointers and dynamic material registrations that
-        # # can't be transferred between processes. Use threading backend instead.
-        # print("Note: Using threading backend for grouped fitting due to NCrystal serialization limitations.")
-        # print("      Parallelism will be limited by Python's GIL, but results will be correct.")
-        if n_jobs > 4:
-            print(f"      Consider n_jobs=4 or less for better performance with threading.")
-
-        return self._fit_grouped_threading(data, params, wlmin, wlmax, method,
-                                           xtol, ftol, gtol, verbose, progress_bar,
-                                           stages, n_jobs, **kwargs)
+        if backend == "loky":
+            return self._fit_grouped_loky(data, params, wlmin, wlmax, method,
+                                          xtol, ftol, gtol, verbose, progress_bar,
+                                          stages, n_jobs, **kwargs)
+        elif backend == "threading":
+            if n_jobs > 4:
+                print(f"      Consider n_jobs=4 or less for better performance with threading.")
+            return self._fit_grouped_threading(data, params, wlmin, wlmax, method,
+                                               xtol, ftol, gtol, verbose, progress_bar,
+                                               stages, n_jobs, **kwargs)
+        elif backend == "sequential":
+            return self._fit_grouped_sequential(data, params, wlmin, wlmax, method,
+                                                xtol, ftol, gtol, verbose, progress_bar,
+                                                stages, **kwargs)
+        else:
+            raise ValueError(f"Unknown backend: {backend}. Choose from 'loky', 'threading', or 'sequential'.")
 
     def _fit_grouped_threading(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
                                method: str = "rietveld",
@@ -2089,7 +2256,168 @@ class TransmissionModel(lmfit.Model):
 
         return grouped_result
 
-    def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None, 
+    def _fit_grouped_loky(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
+                          method: str = "rietveld",
+                          xtol: float = None, ftol: float = None, gtol: float = None,
+                          verbose: bool = False,
+                          progress_bar: bool = True,
+                          stages: Optional[Union[str, Dict[str, Union[str, List[str]]]]] = None,
+                          n_jobs: int = 10,
+                          **kwargs):
+        """
+        Fit model to grouped data using true multiprocessing (loky backend).
+
+        This method provides true parallelism by:
+        1. Serializing the model configuration to a pickleable dict
+        2. Spawning worker processes that reconstruct the model from scratch
+        3. Fitting in parallel and returning only pickleable results
+
+        Note: Each worker creates new NCrystal objects, which adds some overhead
+        but enables true parallel execution without GIL limitations.
+        """
+        from joblib import Parallel, delayed
+        import time
+
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:
+            from tqdm import tqdm
+
+        # Serialize model configuration to a dict (no NCrystal objects)
+        model_dict = self._to_dict()
+
+        # Prepare fit arguments (must be pickleable - no lmfit.Parameters object)
+        fit_kwargs = {
+            'params': None,  # Will use model's params
+            'wlmin': wlmin,
+            'wlmax': wlmax,
+            'method': method,
+            'xtol': xtol,
+            'ftol': ftol,
+            'gtol': gtol,
+            'verbose': False,  # Disable per-worker verbose
+            'progress_bar': False,  # Disable per-worker progress bar
+            'stages': stages,
+        }
+        # Add kwargs that are pickleable
+        for k, v in kwargs.items():
+            try:
+                pickle.dumps(v)
+                fit_kwargs[k] = v
+            except (TypeError, pickle.PicklingError):
+                if verbose:
+                    print(f"Warning: kwarg '{k}' cannot be pickled, skipping")
+
+        # Prepare worker arguments: (idx, model_dict, table_dict, L, tstep, fit_kwargs)
+        worker_args = []
+        for idx in data.indices:
+            table_dict = data.groups[idx].to_dict()
+            worker_args.append((idx, model_dict, table_dict, data.L, data.tstep, fit_kwargs))
+
+        start_time = time.time()
+
+        # Execute with loky backend (true multiprocessing)
+        if progress_bar:
+            print(f"Fitting {len(data.indices)} groups using 'loky' backend (n_jobs={n_jobs})...")
+
+        results = Parallel(
+            n_jobs=n_jobs,
+            backend='loky',
+            verbose=5 if verbose else 0
+        )(delayed(_fit_single_group_worker)(args) for args in (tqdm(worker_args, desc="Fitting groups") if progress_bar else worker_args))
+
+        elapsed = time.time() - start_time
+        print(f"Completed in {elapsed:.2f}s using 'loky' backend | {elapsed/len(data.indices):.3f}s per fit")
+
+        # Collect results and reconstruct result objects
+        grouped_result = GroupedFitResult(group_shape=data.group_shape)
+        failed_indices = []
+        error_messages = []
+        for idx, result_dict in results:
+            if result_dict is not None and 'error' not in result_dict:
+                # Reconstruct result object from dict
+                result = _reconstruct_result_from_dict(result_dict, model=self)
+                grouped_result.add_result(idx, result)
+            else:
+                failed_indices.append(idx)
+                if result_dict and 'error' in result_dict:
+                    error_messages.append(f"{idx}: {result_dict['error']}")
+
+        if failed_indices:
+            error_details = ""
+            if error_messages and verbose:
+                error_details = "\n" + "\n".join(error_messages[:3])
+                if len(error_messages) > 3:
+                    error_details += f"\n... and {len(error_messages) - 3} more errors"
+            warnings.warn(f"Fitting failed for {len(failed_indices)}/{len(data.indices)} groups. "
+                         f"Failed indices: {failed_indices[:10]}{'...' if len(failed_indices) > 10 else ''}{error_details}")
+
+        return grouped_result
+
+    def _fit_grouped_sequential(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
+                                 method: str = "rietveld",
+                                 xtol: float = None, ftol: float = None, gtol: float = None,
+                                 verbose: bool = False,
+                                 progress_bar: bool = True,
+                                 stages: Optional[Union[str, Dict[str, Union[str, List[str]]]]] = None,
+                                 **kwargs):
+        """
+        Fit model to grouped data sequentially (no parallelization).
+
+        This is useful for debugging or when parallel execution causes issues.
+        """
+        import time
+
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:
+            from tqdm import tqdm
+
+        # Prepare fit arguments
+        fit_kwargs = {
+            'params': params,
+            'wlmin': wlmin,
+            'wlmax': wlmax,
+            'method': method,
+            'xtol': xtol,
+            'ftol': ftol,
+            'gtol': gtol,
+            'verbose': verbose,
+            'progress_bar': False,
+            'stages': stages,
+            **kwargs
+        }
+
+        start_time = time.time()
+        grouped_result = GroupedFitResult(group_shape=data.group_shape)
+        failed_indices = []
+
+        iterator = tqdm(data.indices, desc=f"Fitting {len(data.indices)} groups") if progress_bar else data.indices
+
+        for idx in iterator:
+            group_data = Data()
+            group_data.table = data.groups[idx]
+            group_data.L = data.L
+            group_data.tstep = data.tstep
+
+            try:
+                result = self.fit(group_data, **fit_kwargs)
+                grouped_result.add_result(idx, result)
+            except Exception as e:
+                failed_indices.append(idx)
+                if verbose:
+                    print(f"Fitting failed for group {idx}: {e}")
+
+        elapsed = time.time() - start_time
+        print(f"Completed in {elapsed:.2f}s using 'sequential' backend | {elapsed/len(data.indices):.3f}s per fit")
+
+        if failed_indices and verbose:
+            warnings.warn(f"Fitting failed for {len(failed_indices)}/{len(data.indices)} groups. "
+                         f"Failed indices: {failed_indices[:10]}{'...' if len(failed_indices) > 10 else ''}")
+
+        return grouped_result
+
+    def _create_stages_summary_table_enhanced(self, stage_results, resolved_param_groups, stage_names=None,
                                             method="rietveld", color=True):
         import pandas as pd
         import numpy as np
@@ -3649,6 +3977,98 @@ class TransmissionModel(lmfit.Model):
         # Write to file
         with open(filename, 'w') as f:
             json.dump(state, f, indent=2)
+
+    def _to_dict(self) -> dict:
+        """
+        Convert model configuration to a pickleable dictionary.
+
+        This is a fast alternative to save() that avoids file I/O.
+        The resulting dict can be passed between processes and used
+        to reconstruct the model with _from_dict().
+
+        Returns
+        -------
+        dict
+            A dictionary containing all model configuration needed for reconstruction.
+            All values are pure Python types (no NCrystal objects).
+        """
+        # Process materials to use original specifications instead of virtual .nbragg files
+        # This ensures the materials can be reconstructed in a subprocess
+        materials_for_serialization = {}
+        for name, mat_spec in self._materials.items():
+            mat_copy = dict(mat_spec)
+            # Use original material spec if available, otherwise keep current
+            if '_original_mat' in mat_copy:
+                mat_copy['mat'] = mat_copy['_original_mat']
+            materials_for_serialization[name] = mat_copy
+
+        # Prepare model state dictionary (same as save, but without file I/O)
+        state = {
+            'version': '1.0',
+            'class': 'TransmissionModel',
+            'materials': materials_for_serialization,
+            'cross_section_name': self.cross_section.name,
+            'cross_section_total_weight': self.cross_section.total_weight,
+            'cross_section_extinction': self.cross_section.extinction,
+            'tof_length': self.tof_length,
+            'params': self.params.dumps(),  # lmfit Parameters to JSON string
+            'stages': self._stages,
+        }
+
+        # Save response configuration if it exists
+        if self.response is not None:
+            state['response'] = {
+                'kind': self.response.kind,
+                'params': self.response.params.dumps()
+            }
+        else:
+            state['response'] = None
+
+        # Save background configuration if it exists
+        if self.background is not None:
+            # Infer background kind from parameters
+            bg_kind = 'polynomial3'  # default
+            bg_params = list(self.background.params.keys())
+            if 'k' in bg_params:
+                bg_kind = 'sample_dependent'
+            elif len([p for p in bg_params if p.startswith('bg')]) >= 5:
+                bg_kind = 'polynomial5'
+            elif len([p for p in bg_params if p.startswith('bg')]) == 3:
+                bg_kind = 'polynomial3'
+            elif len([p for p in bg_params if p.startswith('bg')]) == 1:
+                bg_kind = 'constant'
+            elif len(bg_params) == 0:
+                bg_kind = 'none'
+
+            state['background'] = {
+                'kind': bg_kind,
+                'params': self.background.params.dumps()
+            }
+        else:
+            state['background'] = None
+
+        return state
+
+    @classmethod
+    def _from_dict(cls, state: dict) -> 'TransmissionModel':
+        """
+        Reconstruct a TransmissionModel from a dictionary.
+
+        This is a fast alternative to load() that avoids file I/O.
+        Used for parallel fitting where each worker needs to reconstruct
+        the model from a pickleable configuration.
+
+        Parameters
+        ----------
+        state : dict
+            Dictionary from _to_dict() containing model configuration.
+
+        Returns
+        -------
+        TransmissionModel
+            A new TransmissionModel instance with the same configuration.
+        """
+        return cls._load_from_model(state)
 
     @classmethod
     def load(cls, filename: str):
