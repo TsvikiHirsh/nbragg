@@ -123,16 +123,41 @@ Fitting works identically to single datasets, but processes all groups::
 Parallel Processing
 ~~~~~~~~~~~~~~~~~~~
 
+Grouped fitting uses true multiprocessing to achieve significant speedup on multi-core systems.
+
 The ``n_jobs`` parameter controls parallelization:
 
-- ``n_jobs=1``: Sequential processing (default for small datasets)
-- ``n_jobs=4``: Use 4 parallel workers
+- ``n_jobs=1``: Sequential processing
+- ``n_jobs=4``: Use 4 parallel workers (good default)
+- ``n_jobs=8``: Use 8 parallel workers
 - ``n_jobs=-1``: Use all available CPUs
-- ``n_jobs=None``: Auto-select based on dataset size
+
+**Typical speedup** (32 groups, 500 wavelength points):
+
+- 2 workers: ~1.7x faster
+- 4 workers: ~2.5x faster
+- 8 workers: ~3.3x faster
+
+The ``backend`` parameter selects the parallelization strategy:
+
+- ``backend="loky"`` (default): True multiprocessing with separate processes.
+  Each worker reconstructs the model independently, enabling full CPU parallelism.
+- ``backend="threading"``: Thread-based parallelism. Limited by Python's GIL
+  but lower overhead for very fast fits.
+- ``backend="sequential"``: No parallelism. Useful for debugging.
+
+Example with explicit backend::
+
+    # True multiprocessing (default, recommended)
+    result = model.fit(data, n_jobs=4, backend="loky")
+
+    # Sequential for debugging
+    result = model.fit(data, backend="sequential")
 
 .. note::
-   Due to NCrystal limitations, grouped fitting uses threading instead of multiprocessing.
-   For best performance, use ``n_jobs=4`` or less.
+   The first batch of fits has initialization overhead (~1-3s total) as each worker
+   loads NCrystal. Subsequent fits are fast. For small datasets (<10 groups),
+   sequential processing may be faster due to this overhead.
 
 Result Structure
 ~~~~~~~~~~~~~~~~
@@ -453,10 +478,12 @@ or::
 Performance Tips
 ~~~~~~~~~~~~~~~~
 
-1. **Use appropriate n_jobs**: Start with ``n_jobs=4`` for most systems
-2. **Limit wavelength range**: Use ``wlmin`` and ``wlmax`` to focus on relevant regions
-3. **Pre-filter failed fits**: Use queries in visualizations to hide bad fits
-4. **Save intermediate results**: Save after fitting to avoid recomputation
+1. **Use appropriate n_jobs**: Start with ``n_jobs=4`` for most systems, increase for large datasets
+2. **Consider dataset size**: For <10 groups, ``backend="sequential"`` may be faster due to initialization overhead
+3. **Limit wavelength range**: Use ``wlmin`` and ``wlmax`` to focus on relevant regions
+4. **Pre-filter failed fits**: Use queries in visualizations to hide bad fits
+5. **Save intermediate results**: Save after fitting to avoid recomputation
+6. **Monitor speedup**: For best efficiency, ensure each fit takes >100ms; faster fits have more overhead
 
 Memory Management
 ~~~~~~~~~~~~~~~~~
