@@ -2265,17 +2265,18 @@ class TransmissionModel(lmfit.Model):
                           n_jobs: int = 10,
                           **kwargs):
         """
-        Fit model to grouped data using true multiprocessing (loky backend).
+        Fit model to grouped data using true multiprocessing (ProcessPoolExecutor).
 
         This method provides true parallelism by:
         1. Serializing the model configuration to a pickleable dict
-        2. Spawning worker processes that reconstruct the model from scratch
-        3. Fitting in parallel and returning only pickleable results
+        2. Using ProcessPoolExecutor which reuses worker processes
+        3. Each worker reconstructs the model and fits in parallel
+        4. Returns only pickleable results
 
-        Note: Each worker creates new NCrystal objects, which adds some overhead
-        but enables true parallel execution without GIL limitations.
+        Note: First batch has initialization overhead (~3s per worker for NCrystal),
+        but ProcessPoolExecutor reuses workers so subsequent tasks are fast.
         """
-        from joblib import Parallel, delayed
+        from concurrent.futures import ProcessPoolExecutor
         import time
 
         try:
@@ -2315,19 +2316,25 @@ class TransmissionModel(lmfit.Model):
             worker_args.append((idx, model_dict, table_dict, data.L, data.tstep, fit_kwargs))
 
         start_time = time.time()
+        n_workers = min(n_jobs, len(data.indices))
 
-        # Execute with loky backend (true multiprocessing)
         if progress_bar:
-            print(f"Fitting {len(data.indices)} groups using 'loky' backend (n_jobs={n_jobs})...")
+            print(f"Fitting {len(data.indices)} groups using multiprocessing (n_workers={n_workers})...")
 
-        results = Parallel(
-            n_jobs=n_jobs,
-            backend='loky',
-            verbose=5 if verbose else 0
-        )(delayed(_fit_single_group_worker)(args) for args in (tqdm(worker_args, desc="Fitting groups") if progress_bar else worker_args))
+        # Use ProcessPoolExecutor for true multiprocessing with worker reuse
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            if progress_bar:
+                # Use tqdm for progress tracking
+                results = list(tqdm(
+                    executor.map(_fit_single_group_worker, worker_args),
+                    total=len(worker_args),
+                    desc="Fitting groups"
+                ))
+            else:
+                results = list(executor.map(_fit_single_group_worker, worker_args))
 
         elapsed = time.time() - start_time
-        print(f"Completed in {elapsed:.2f}s using 'loky' backend | {elapsed/len(data.indices):.3f}s per fit")
+        print(f"Completed in {elapsed:.2f}s using multiprocessing | {elapsed/len(data.indices):.3f}s per fit")
 
         # Collect results and reconstruct result objects
         grouped_result = GroupedFitResult(group_shape=data.group_shape)
