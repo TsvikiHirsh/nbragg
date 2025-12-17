@@ -163,3 +163,5 @@ notebooks/fit_result_matplotlib.pdf
 notebooks/fit_result.html
 notebooks/iron_powder.pdf
 notebooks/lmfit_result.html
+RELEASE_GUIDE.md
+RELEASE_SUMMARY.md

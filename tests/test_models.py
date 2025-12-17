@@ -152,11 +152,17 @@ class TestTransmissionModel(unittest.TestCase):
 
     def test_one_by_one_empty_stages(self):
         """Test that one-by-one stages with no valid parameters are handled."""
+        import warnings
         model = TransmissionModel(self.cross_section)
         stages = {"1": ["invalid_param", "one-by-one"]}
-        
-        with self.assertRaises(ValueError) as context:
-            model.fit(self.mock_data, stages=stages)
+
+        # Should warn about invalid parameter and still raise ValueError for no valid stages
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            with self.assertRaises(ValueError) as context:
+                model.fit(self.mock_data, stages=stages)
+            # Check that warning was issued for invalid parameter
+            self.assertTrue(any("Unknown parameter" in str(warning.message) for warning in w))
         self.assertTrue("No valid stages found" in str(context.exception))
 
     def test_multiple_stages_with_one_by_one(self):

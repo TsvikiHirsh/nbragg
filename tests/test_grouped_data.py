@@ -311,11 +311,11 @@ class TestPatternExtraction:
             tstep=10e-6
         )
 
-        # Check extracted coordinates (now string format)
-        assert "(0, 0)" in data.indices
-        assert "(0, 1)" in data.indices
-        assert "(1, 0)" in data.indices
-        assert "(1, 1)" in data.indices
+        # Check extracted coordinates (now string format without spaces)
+        assert "(0,0)" in data.indices
+        assert "(0,1)" in data.indices
+        assert "(1,0)" in data.indices
+        assert "(1,1)" in data.indices
 
     def test_extract_1d_indices(self, temp_dir, create_test_counts_files):
         """Test extraction of 1D indices from filenames."""
