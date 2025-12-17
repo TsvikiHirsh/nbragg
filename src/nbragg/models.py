@@ -114,6 +114,18 @@ def _extract_pickleable_result(fit_result):
     if hasattr(fit_result, 'init_vals'):
         result_dict['init_vals'] = list(fit_result.init_vals)
 
+    # User keywords (needed for plotting)
+    if hasattr(fit_result, 'userkws') and fit_result.userkws:
+        result_dict['userkws'] = dict(fit_result.userkws)
+
+    # Data array (needed for plotting)
+    if hasattr(fit_result, 'data') and fit_result.data is not None:
+        result_dict['data'] = fit_result.data.tolist()
+
+    # Weights array (needed for plotting)
+    if hasattr(fit_result, 'weights') and fit_result.weights is not None:
+        result_dict['weights'] = fit_result.weights.tolist()
+
     # Stage results if present (for rietveld/staged fits)
     if hasattr(fit_result, 'fit_stages') and fit_result.fit_stages:
         result_dict['fit_stages'] = [_extract_pickleable_result(stage) for stage in fit_result.fit_stages]
@@ -165,6 +177,18 @@ def _reconstruct_result_from_dict(result_dict, model=None):
         result.var_names = result_dict['var_names']
     if 'init_vals' in result_dict:
         result.init_vals = result_dict['init_vals']
+
+    # Restore userkws (needed for plotting)
+    if 'userkws' in result_dict:
+        result.userkws = result_dict['userkws']
+
+    # Restore data (needed for plotting)
+    if 'data' in result_dict:
+        result.data = np.array(result_dict['data'])
+
+    # Restore weights (needed for plotting)
+    if 'weights' in result_dict:
+        result.weights = np.array(result_dict['weights'])
 
     # Restore stage results if present
     if 'fit_stages' in result_dict:
@@ -403,6 +427,17 @@ class GroupedFitResult:
 
         # Get the individual fit result
         fit_result = self.results[normalized_index]
+
+        # Check if this is a proper ModelResult or a SimpleNamespace (from loaded file)
+        from types import SimpleNamespace
+        if isinstance(fit_result, SimpleNamespace) or not hasattr(fit_result, 'userkws'):
+            raise AttributeError(
+                f"Cannot plot index {index}: result was loaded from file without model information. "
+                "To plot loaded results, you must reload the model first:\n"
+                "  model = TransmissionModel.load('model.json')\n"
+                "  result = model.load('result.json')\n"
+                "  result.plot(index=...)"
+            )
 
         # Call the model's plot method but temporarily set fit_result to the correct one
         # This is needed because ModelResult.plot() delegates to Model.plot() where
@@ -806,6 +841,17 @@ class GroupedFitResult:
         # Get the individual fit result
         fit_result = self.results[normalized_index]
 
+        # Check if this is a proper ModelResult or a SimpleNamespace (from loaded file)
+        from types import SimpleNamespace
+        if isinstance(fit_result, SimpleNamespace) or not hasattr(fit_result, 'userkws'):
+            raise AttributeError(
+                f"Cannot plot index {index}: result was loaded from file without model information. "
+                "To plot loaded results, you must reload the model first:\n"
+                "  model = TransmissionModel.load('model.json')\n"
+                "  result = model.load('result.json')\n"
+                "  result.plot_total_xs(index=...)"
+            )
+
         if not hasattr(fit_result, 'plot_total_xs'):
             raise AttributeError(f"Result for index {index} does not have a plot_total_xs method")
 
@@ -869,27 +915,123 @@ class GroupedFitResult:
 
         return html
 
-    def fit_report(self):
+    def summary(self):
         """
-        Return the HTML fit report for display in Jupyter notebooks.
+        Display the HTML summary table for all grouped fit results.
 
-        This method provides the same output as the automatic display
-        when the result object is shown in a Jupyter cell.
+        In Jupyter notebooks, automatically displays the HTML table.
+        Outside Jupyter, returns the HTML string.
 
         Returns:
         --------
-        str
-            HTML string containing the formatted fit results summary.
+        str or IPython.display.HTML
+            HTML string (outside Jupyter) or displayed HTML (in Jupyter).
 
         Examples:
         ---------
         >>> result = model.fit(grouped_data)
-        >>> html_report = result.fit_report()
-        >>> # Display in Jupyter:
-        >>> from IPython.display import HTML, display
-        >>> display(HTML(html_report))
+        >>> result.summary()  # Auto-displays in Jupyter
         """
-        return self._repr_html_()
+        html = self._repr_html_()
+
+        # Try to detect if we're in a Jupyter environment
+        try:
+            from IPython.display import HTML, display
+            from IPython import get_ipython
+            if get_ipython() is not None:
+                # We're in IPython/Jupyter - display the HTML
+                display(HTML(html))
+                return None
+        except ImportError:
+            pass
+
+        # Not in Jupyter - return the HTML string
+        return html
+
+    def fit_report(self, index):
+        """
+        Display the HTML fit report for a specific group.
+
+        In Jupyter notebooks, automatically displays the HTML report.
+        Outside Jupyter, returns the HTML string.
+
+        Parameters:
+        -----------
+        index : int, tuple, or str
+            The group index to get the fit report for.
+            - For 2D grids: can use tuple (0, 0) or string "(0, 0)"
+            - For 1D arrays: can use int 5 or string "5"
+            - For named groups: use string "groupname"
+
+        Returns:
+        --------
+        str or IPython.display.HTML or None
+            HTML string (outside Jupyter), displayed HTML (in Jupyter), or None.
+
+        Examples:
+        ---------
+        >>> result = model.fit(grouped_data)
+        >>> result.fit_report(index=(0, 0))  # Auto-displays in Jupyter
+        """
+        normalized_index = self._normalize_index(index)
+        if normalized_index not in self.results:
+            raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
+
+        fit_result = self.results[normalized_index]
+
+        # Check if it's a proper ModelResult or a SimpleNamespace
+        if hasattr(fit_result, '_repr_html_'):
+            html = fit_result._repr_html_()
+        else:
+            # If it's a SimpleNamespace (from loaded file), create a basic HTML report
+            import pandas as pd
+
+            html = '<div style="max-width: 900px;">\n'
+            html += f'<h3>Fit Report for Index: {index}</h3>\n'
+
+            # Parameters table
+            if hasattr(fit_result, 'params'):
+                html += '<h4>Parameters:</h4>\n'
+                param_data = []
+                for pname, param in fit_result.params.items():
+                    if hasattr(param, 'value'):
+                        param_data.append({
+                            'Parameter': pname,
+                            'Value': f"{param.value:.6g}",
+                            'Std Error': f"{param.stderr:.6g}" if param.stderr else 'N/A',
+                            'Vary': param.vary
+                        })
+                df = pd.DataFrame(param_data)
+                html += df.to_html(index=False)
+
+            # Fit statistics
+            html += '<h4>Fit Statistics:</h4>\n'
+            stats_data = {
+                'Reduced χ²': getattr(fit_result, 'redchi', 'N/A'),
+                'χ²': getattr(fit_result, 'chisqr', 'N/A'),
+                'Data points': getattr(fit_result, 'ndata', 'N/A'),
+                'Variables': getattr(fit_result, 'nvarys', 'N/A'),
+                'Function evals': getattr(fit_result, 'nfev', 'N/A'),
+                'Success': getattr(fit_result, 'success', 'N/A'),
+            }
+            stats_df = pd.DataFrame(list(stats_data.items()), columns=['Statistic', 'Value'])
+            html += stats_df.to_html(index=False)
+
+            html += '</div>'
+
+        # Try to detect if we're in a Jupyter environment and auto-display
+        try:
+            from IPython.display import HTML, display
+            from IPython import get_ipython
+            if get_ipython() is not None:
+                # We're in IPython/Jupyter - display the HTML
+                display(HTML(html))
+                return None
+        except ImportError:
+            pass
+
+        # Not in Jupyter - return the HTML string
+        return html
 
     def save(self, filename: str, compact: bool = False, model_filename: str = None):
         """
@@ -1016,6 +1158,23 @@ class GroupedFitResult:
                 idx = idx_str
             indices.append(idx)
 
+        # Try to load model for compact results (for plotting support)
+        model_for_compact = None
+        if any(grouped_state['results'][str(idx)]['compact'] for idx in indices):
+            # At least one compact result - try to load model
+            try:
+                if model is None and model_filename is None:
+                    model_filename = filename.replace('.json', '_model.json')
+                    if model_filename == filename:
+                        model_filename = filename.replace('.json', '') + '_model.json'
+                if model is None:
+                    model_for_compact = TransmissionModel.load(model_filename)
+                else:
+                    model_for_compact = model
+            except (FileNotFoundError, Exception):
+                # Model not available - compact results won't support plotting
+                pass
+
         # Load each result
         for idx in indices:
             idx_str = str(idx)
@@ -1025,7 +1184,7 @@ class GroupedFitResult:
                 # Create a minimal result object for compact storage
                 # This is a simple container, not a full ModelResult
                 class CompactResult:
-                    def __init__(self, data):
+                    def __init__(self, data, model=None):
                         from lmfit import Parameters
                         self.params = Parameters()
                         for param_name, param_data in data['params'].items():
@@ -1037,8 +1196,9 @@ class GroupedFitResult:
                         self.chisqr = data['chisqr']
                         self.success = data['success']
                         self.compact = True
+                        self.model = model  # Store reference to model for plotting
 
-                result = CompactResult(result_data)
+                result = CompactResult(result_data, model=model_for_compact)
             else:
                 # Reconstruct full ModelResult
                 from lmfit import Parameters, minimize
@@ -2044,7 +2204,8 @@ class TransmissionModel(lmfit.Model):
                     **kwargs
                 )
             except Exception as e:
-                warnings.warn(f"Fitting failed in {stage_name}: {e}")
+                if verbose:
+                    warnings.warn(f"Fitting failed in {stage_name}: {e}")
                 continue
 
             # Extract pickleable part
@@ -2239,7 +2400,8 @@ class TransmissionModel(lmfit.Model):
         )(delayed(fit_single_group)(idx) for idx in iterator)
 
         elapsed = time.time() - start_time
-        print(f"Completed in {elapsed:.2f}s using '{backend}' backend | {elapsed/len(data.indices):.3f}s per fit")
+        if verbose:
+            print(f"Completed in {elapsed:.2f}s using '{backend}' backend | {elapsed/len(data.indices):.3f}s per fit")
 
         # Collect results
         grouped_result = GroupedFitResult(group_shape=data.group_shape)
@@ -2318,7 +2480,7 @@ class TransmissionModel(lmfit.Model):
         start_time = time.time()
         n_workers = min(n_jobs, len(data.indices))
 
-        if progress_bar:
+        if progress_bar and verbose:
             print(f"Fitting {len(data.indices)} groups using multiprocessing (n_workers={n_workers})...")
 
         # Use ProcessPoolExecutor for true multiprocessing with worker reuse
@@ -2334,7 +2496,8 @@ class TransmissionModel(lmfit.Model):
                 results = list(executor.map(_fit_single_group_worker, worker_args))
 
         elapsed = time.time() - start_time
-        print(f"Completed in {elapsed:.2f}s using multiprocessing | {elapsed/len(data.indices):.3f}s per fit")
+        if verbose:
+            print(f"Completed in {elapsed:.2f}s using multiprocessing | {elapsed/len(data.indices):.3f}s per fit")
 
         # Collect results and reconstruct result objects
         grouped_result = GroupedFitResult(group_shape=data.group_shape)
@@ -2350,9 +2513,9 @@ class TransmissionModel(lmfit.Model):
                 if result_dict and 'error' in result_dict:
                     error_messages.append(f"{idx}: {result_dict['error']}")
 
-        if failed_indices:
+        if failed_indices and verbose:
             error_details = ""
-            if error_messages and verbose:
+            if error_messages:
                 error_details = "\n" + "\n".join(error_messages[:3])
                 if len(error_messages) > 3:
                     error_details += f"\n... and {len(error_messages) - 3} more errors"
@@ -2416,7 +2579,8 @@ class TransmissionModel(lmfit.Model):
                     print(f"Fitting failed for group {idx}: {e}")
 
         elapsed = time.time() - start_time
-        print(f"Completed in {elapsed:.2f}s using 'sequential' backend | {elapsed/len(data.indices):.3f}s per fit")
+        if verbose:
+            print(f"Completed in {elapsed:.2f}s using 'sequential' backend | {elapsed/len(data.indices):.3f}s per fit")
 
         if failed_indices and verbose:
             warnings.warn(f"Fitting failed for {len(failed_indices)}/{len(data.indices)} groups. "
