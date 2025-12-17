@@ -656,7 +656,8 @@ class GroupedFitResult:
         elif self.group_shape and len(self.group_shape) == 1:
             # 1D plot with various styles - parse string indices back to ints
             indices_array = np.array([self._parse_string_index(idx) for idx in self.indices])
-            values = np.array([param_values[idx] for idx in self.indices])
+            # Replace None with np.nan for plotting
+            values = np.array([param_values[idx] if param_values[idx] is not None else np.nan for idx in self.indices])
 
             # Get errors if available for errorbar plot
             errors = None
@@ -698,7 +699,8 @@ class GroupedFitResult:
             # Named indices - bar or line plot
             fig, ax = plt.subplots(figsize=figsize)
             positions = np.arange(len(self.indices))
-            values = [param_values[idx] for idx in self.indices]
+            # Replace None with np.nan for plotting
+            values = [param_values[idx] if param_values[idx] is not None else np.nan for idx in self.indices]
 
             # Get errors if available for errorbar plot
             errors = None
@@ -797,13 +799,8 @@ class GroupedFitResult:
         >>> result.stages_summary(index="empty2")
         >>> result.stages_summary(index=(0, 0))
         """
-        # Normalize index to string for consistent lookup
-        if isinstance(index, tuple):
-            normalized_index = str(index)
-        elif isinstance(index, str):
-            normalized_index = index
-        else:
-            normalized_index = str(index)
+        # Normalize index for consistent lookup
+        normalized_index = self._normalize_index(index)
 
         if normalized_index not in self.results:
             raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
@@ -871,9 +868,6 @@ class GroupedFitResult:
             # Create empty userkws to allow plotting
             if not hasattr(fit_result, 'userkws'):
                 fit_result.userkws = {}
-
-        if not hasattr(fit_result, 'plot_total_xs'):
-            raise AttributeError(f"Result for index {index} does not have a plot_total_xs method")
 
         # Temporarily set model.fit_result to the correct one for this plot
         # (same issue as in plot() method - ModelResult delegates to shared Model)
@@ -1053,7 +1047,7 @@ class GroupedFitResult:
         # Not in Jupyter - return the HTML string
         return html
 
-    def save(self, filename: str, compact: bool = False, model_filename: str = None):
+    def save(self, filename: str, compact: bool = True, model_filename: str = None):
         """
         Save grouped fit results to a single JSON file.
 
@@ -1062,8 +1056,8 @@ class GroupedFitResult:
         filename : str
             Path to the output JSON file.
         compact : bool, optional
-            If True, save only essential data (params, errors, redchi2) to save memory.
-            If False (default), save full fit results.
+            If True (default), save only essential data (params, errors, redchi2) to save memory.
+            If False, save full fit results.
         model_filename : str, optional
             Path to save the model configuration. Only used if compact=False.
             If None, model is saved to filename.replace('.json', '_model.json').
@@ -1119,15 +1113,30 @@ class GroupedFitResult:
                     'bic': result.bic if hasattr(result, 'bic') else None,
                 }
 
-                # Save plotting data (userkws, data, weights)
+                # Save plotting data (userkws only - data/weights excluded for performance)
+                # userkws needs to be serializable, so convert any numpy arrays to lists
                 if hasattr(result, 'userkws') and result.userkws:
-                    result_data['userkws'] = dict(result.userkws)
-                if hasattr(result, 'data') and result.data is not None:
                     import numpy as np
-                    result_data['data'] = result.data.tolist() if isinstance(result.data, np.ndarray) else result.data
-                if hasattr(result, 'weights') and result.weights is not None:
-                    import numpy as np
-                    result_data['weights'] = result.weights.tolist() if isinstance(result.weights, np.ndarray) else result.weights
+                    serializable_userkws = {}
+                    for key, value in result.userkws.items():
+                        if isinstance(value, np.ndarray):
+                            serializable_userkws[key] = value.tolist()
+                        elif hasattr(value, '__iter__') and not isinstance(value, (str, dict)):
+                            # Try to convert other iterables
+                            try:
+                                serializable_userkws[key] = list(value)
+                            except:
+                                # Skip non-serializable values
+                                pass
+                        else:
+                            serializable_userkws[key] = value
+                    result_data['userkws'] = serializable_userkws
+
+                # Save stages_summary if available (for multi-stage fits)
+                if hasattr(result, 'stages_summary') and result.stages_summary is not None:
+                    import pandas as pd
+                    if isinstance(result.stages_summary, pd.DataFrame):
+                        result_data['stages_summary'] = result.stages_summary.to_json(orient='split')
 
             grouped_state['results'][idx_str] = result_data
 
@@ -1179,6 +1188,7 @@ class GroupedFitResult:
         # Parse indices back to original types
         indices_str = grouped_state['indices']
         indices = []
+        indices_str_map = {}  # Map to keep track of original string representations
         for idx_str in indices_str:
             try:
                 # Try to evaluate as tuple/int
@@ -1187,10 +1197,11 @@ class GroupedFitResult:
                 # Keep as string
                 idx = idx_str
             indices.append(idx)
+            indices_str_map[idx if not isinstance(idx, (tuple, int)) else idx] = idx_str
 
         # Try to load model for compact results (for plotting support)
         model_for_compact = None
-        if any(grouped_state['results'][str(idx)]['compact'] for idx in indices):
+        if any(grouped_state['results'][idx_str]['compact'] for idx_str in indices_str):
             # At least one compact result - try to load model
             try:
                 if model is None and model_filename is None:
@@ -1206,8 +1217,8 @@ class GroupedFitResult:
                 pass
 
         # Load each result
-        for idx in indices:
-            idx_str = str(idx)
+        for i, idx in enumerate(indices):
+            idx_str = indices_str[i]  # Use original string representation
             result_data = grouped_state['results'][idx_str]
 
             if result_data['compact']:
@@ -1263,15 +1274,18 @@ class GroupedFitResult:
                     init_params.loads(result_data['init_params'])
                     result.init_params = init_params
 
-                # Restore plotting data (userkws, data, weights)
+                # Restore userkws (data/weights not saved for performance)
                 if 'userkws' in result_data:
                     result.userkws = result_data['userkws']
-                if 'data' in result_data:
-                    import numpy as np
-                    result.data = np.array(result_data['data'])
-                if 'weights' in result_data:
-                    import numpy as np
-                    result.weights = np.array(result_data['weights'])
+                else:
+                    # Ensure userkws exists even if not in file (for old saves)
+                    result.userkws = {}
+
+                # Restore stages_summary if available (for multi-stage fits)
+                if 'stages_summary' in result_data and result_data['stages_summary'] is not None:
+                    import pandas as pd
+                    from io import StringIO
+                    result.stages_summary = pd.read_json(StringIO(result_data['stages_summary']), orient='split')
 
             grouped_result.add_result(idx, result)
 
