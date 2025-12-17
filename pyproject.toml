@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nbragg"
-version = "0.5.0"
+version = "0.6.0"
 authors = [
   { name = "Tsviki Y. Hirsh", email = "tsviki.hirsh@gmail.com" },
 ]
@@ -12,7 +12,7 @@ description = "Simple yet powerful package for neutron resonance fitting"
 readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
-"Development Status :: 1 - Planning",
+"Development Status :: 3 - Alpha",
 "Intended Audience :: Science/Research",
 "License :: OSI Approved :: MIT License",
 "Operating System :: OS Independent",
