@@ -337,7 +337,8 @@ class Data:
                      empty_signal: str = "", empty_openbeam: str = "",
                      tstep: float = 10.0e-6, L: float = 9,
                      L0: float = 1.0, t0: float = 0., dropna: bool = False,
-                     pattern: str = "auto", indices: list = None, verbosity: int = 1):
+                     pattern: str = "auto", indices: list = None, verbosity: int = 1,
+                     n_jobs: int = -1):
         """
         Creates a Data object from grouped counts data using glob patterns.
 
@@ -374,6 +375,9 @@ class Data:
             Can be list of ints (1D), list of tuples (2D), or list of strings (named).
         verbosity : int, optional
             Verbosity level. If >= 1, shows progress bar. Default is 1.
+        n_jobs : int, optional
+            Number of parallel jobs for loading files. Default is -1 (use all CPUs).
+            Set to 1 for sequential loading.
 
         Returns:
         --------
@@ -475,19 +479,9 @@ class Data:
         self_data.L = L
         self_data.tstep = tstep
 
-        # Prepare iterator with optional progress bar
-        if verbosity >= 1:
-            try:
-                from tqdm.auto import tqdm
-                iterator = tqdm(enumerate(extracted_indices), total=len(extracted_indices),
-                               desc=f"Loading {len(extracted_indices)} groups")
-            except ImportError:
-                iterator = enumerate(extracted_indices)
-        else:
-            iterator = enumerate(extracted_indices)
-
-        # Load each group
-        for i, idx in iterator:
+        # Helper function to load a single group
+        def load_single_group(i, idx):
+            """Load a single group's data files."""
             sig_file = signal_files[i]
             ob_file = openbeam_files[i]
 
@@ -512,8 +506,52 @@ class Data:
                 dropna=dropna
             )
 
-            # Store in groups dict
-            self_data.groups[idx] = group_data.table
+            return idx, group_data.table
+
+        # Load groups in parallel or sequentially
+        if n_jobs == 1:
+            # Sequential loading with progress bar
+            if verbosity >= 1:
+                try:
+                    from tqdm.auto import tqdm
+                    iterator = tqdm(enumerate(extracted_indices), total=len(extracted_indices),
+                                   desc=f"Loading {len(extracted_indices)} groups")
+                except ImportError:
+                    iterator = enumerate(extracted_indices)
+            else:
+                iterator = enumerate(extracted_indices)
+
+            for i, idx in iterator:
+                idx, table = load_single_group(i, idx)
+                self_data.groups[idx] = table
+        else:
+            # Parallel loading
+            from joblib import Parallel, delayed
+
+            # Create progress bar if needed
+            if verbosity >= 1:
+                try:
+                    from tqdm.auto import tqdm
+                    pbar = tqdm(total=len(extracted_indices), desc=f"Loading {len(extracted_indices)} groups")
+                except ImportError:
+                    pbar = None
+            else:
+                pbar = None
+
+            # Load groups in parallel
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(load_single_group)(i, idx)
+                for i, idx in enumerate(extracted_indices)
+            )
+
+            # Store results
+            for idx, table in results:
+                self_data.groups[idx] = table
+                if pbar is not None:
+                    pbar.update(1)
+
+            if pbar is not None:
+                pbar.close()
 
         # Set first group as default table for compatibility
         self_data.table = self_data.groups[extracted_indices[0]]

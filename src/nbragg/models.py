@@ -431,13 +431,23 @@ class GroupedFitResult:
         # Check if this is a proper ModelResult or a SimpleNamespace (from loaded file)
         from types import SimpleNamespace
         if isinstance(fit_result, SimpleNamespace) or not hasattr(fit_result, 'userkws'):
-            raise AttributeError(
-                f"Cannot plot index {index}: result was loaded from file without model information. "
-                "To plot loaded results, you must reload the model first:\n"
-                "  model = TransmissionModel.load('model.json')\n"
-                "  result = model.load('result.json')\n"
-                "  result.plot(index=...)"
-            )
+            # Try to get the model from the result
+            model = getattr(fit_result, 'model', None)
+
+            # If no model available, raise an error
+            if model is None:
+                raise AttributeError(
+                    f"Cannot plot index {index}: result was loaded from file without model information. "
+                    "This typically happens with compact results. Try loading with the full model:\n"
+                    "  model = TransmissionModel.load('model.json')\n"
+                    "  result = GroupedFitResult.load('result.json', model=model)\n"
+                    "  result.plot(index=...)"
+                )
+
+            # We have a model but missing userkws - this is an old saved file
+            # Create empty userkws to allow plotting
+            if not hasattr(fit_result, 'userkws'):
+                fit_result.userkws = {}
 
         # Call the model's plot method but temporarily set fit_result to the correct one
         # This is needed because ModelResult.plot() delegates to Model.plot() where
@@ -844,13 +854,23 @@ class GroupedFitResult:
         # Check if this is a proper ModelResult or a SimpleNamespace (from loaded file)
         from types import SimpleNamespace
         if isinstance(fit_result, SimpleNamespace) or not hasattr(fit_result, 'userkws'):
-            raise AttributeError(
-                f"Cannot plot index {index}: result was loaded from file without model information. "
-                "To plot loaded results, you must reload the model first:\n"
-                "  model = TransmissionModel.load('model.json')\n"
-                "  result = model.load('result.json')\n"
-                "  result.plot_total_xs(index=...)"
-            )
+            # Try to get the model from the result
+            model = getattr(fit_result, 'model', None)
+
+            # If no model available, raise an error
+            if model is None:
+                raise AttributeError(
+                    f"Cannot plot index {index}: result was loaded from file without model information. "
+                    "This typically happens with compact results. Try loading with the full model:\n"
+                    "  model = TransmissionModel.load('model.json')\n"
+                    "  result = GroupedFitResult.load('result.json', model=model)\n"
+                    "  result.plot_total_xs(index=...)"
+                )
+
+            # We have a model but missing userkws - this is an old saved file
+            # Create empty userkws to allow plotting
+            if not hasattr(fit_result, 'userkws'):
+                fit_result.userkws = {}
 
         if not hasattr(fit_result, 'plot_total_xs'):
             raise AttributeError(f"Result for index {index} does not have a plot_total_xs method")
@@ -1099,6 +1119,16 @@ class GroupedFitResult:
                     'bic': result.bic if hasattr(result, 'bic') else None,
                 }
 
+                # Save plotting data (userkws, data, weights)
+                if hasattr(result, 'userkws') and result.userkws:
+                    result_data['userkws'] = dict(result.userkws)
+                if hasattr(result, 'data') and result.data is not None:
+                    import numpy as np
+                    result_data['data'] = result.data.tolist() if isinstance(result.data, np.ndarray) else result.data
+                if hasattr(result, 'weights') and result.weights is not None:
+                    import numpy as np
+                    result_data['weights'] = result.weights.tolist() if isinstance(result.weights, np.ndarray) else result.weights
+
             grouped_state['results'][idx_str] = result_data
 
         # Save to file
@@ -1232,6 +1262,16 @@ class GroupedFitResult:
                     init_params = Parameters()
                     init_params.loads(result_data['init_params'])
                     result.init_params = init_params
+
+                # Restore plotting data (userkws, data, weights)
+                if 'userkws' in result_data:
+                    result.userkws = result_data['userkws']
+                if 'data' in result_data:
+                    import numpy as np
+                    result.data = np.array(result_data['data'])
+                if 'weights' in result_data:
+                    import numpy as np
+                    result.weights = np.array(result_data['weights'])
 
             grouped_result.add_result(idx, result)
 
