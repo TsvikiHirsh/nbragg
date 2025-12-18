@@ -736,5 +736,190 @@ class TestSANSFunctionality(unittest.TestCase):
             self.assertLess(rel_diff, 0.01,
                            f"At wavelength {wl}Å: nbragg ({xs_nbragg_val:.6f}) vs direct ({xs_direct_total:.6f}), diff={rel_diff*100:.1f}%")
 
+class TestCrossSectionParameterAssignment(unittest.TestCase):
+    """Test the ergonomic parameter assignment feature in CrossSection constructor."""
+
+    def test_single_material_with_extinction_params(self):
+        """Test assigning extinction parameters to a single material."""
+        xs = CrossSection(steel='Al_sg225.ncmat', ext_l=100, ext_Gg=1500, ext_L=2000)
+
+        self.assertEqual(len(xs.materials), 1)
+        self.assertIn('steel', xs.materials)
+        self.assertEqual(xs.materials['steel']['ext_l'], 100)
+        self.assertEqual(xs.materials['steel']['ext_Gg'], 1500)
+        self.assertEqual(xs.materials['steel']['ext_L'], 2000)
+
+    def test_single_material_with_sans_param(self):
+        """Test assigning SANS parameter to a single material."""
+        xs = CrossSection(aluminum='Al_sg225.ncmat', sans=50.0)
+
+        self.assertEqual(len(xs.materials), 1)
+        self.assertIn('aluminum', xs.materials)
+        self.assertEqual(xs.materials['aluminum']['sans'], 50.0)
+
+    def test_single_material_with_orientation_params(self):
+        """Test assigning orientation parameters to a single material."""
+        xs = CrossSection(sample='Al_sg225.ncmat', theta=45, phi=90, mos=5)
+
+        self.assertEqual(len(xs.materials), 1)
+        self.assertIn('sample', xs.materials)
+        self.assertEqual(xs.materials['sample']['theta'], 45)
+        self.assertEqual(xs.materials['sample']['phi'], 90)
+        self.assertEqual(xs.materials['sample']['mos'], 5)
+
+    def test_multiple_materials_with_ordered_params(self):
+        """Test parameter assignment to multiple materials based on order."""
+        xs = CrossSection(
+            mat1='Al_sg225.ncmat', ext_Gg=100,
+            mat2='Al_sg225.ncmat', sans=20
+        )
+
+        self.assertEqual(len(xs.materials), 2)
+
+        # ext_Gg should be assigned to mat1
+        self.assertEqual(xs.materials['mat1']['ext_Gg'], 100)
+        self.assertIsNone(xs.materials['mat1']['sans'])
+
+        # sans should be assigned to mat2
+        self.assertIsNone(xs.materials['mat2']['ext_Gg'])
+        self.assertEqual(xs.materials['mat2']['sans'], 20)
+
+    def test_multiple_params_per_material(self):
+        """Test assigning multiple parameters to materials in sequence."""
+        xs = CrossSection(
+            iron='Al_sg225.ncmat', ext_l=50, ext_Gg=200,
+            aluminum='Al_sg225.ncmat', theta=30, phi=60
+        )
+
+        self.assertEqual(len(xs.materials), 2)
+
+        # iron should have ext_l and ext_Gg
+        self.assertEqual(xs.materials['iron']['ext_l'], 50)
+        self.assertEqual(xs.materials['iron']['ext_Gg'], 200)
+        self.assertIsNone(xs.materials['iron']['theta'])
+
+        # aluminum should have theta and phi
+        self.assertEqual(xs.materials['aluminum']['theta'], 30)
+        self.assertEqual(xs.materials['aluminum']['phi'], 60)
+        self.assertIsNone(xs.materials['aluminum']['ext_l'])
+
+    def test_three_materials_with_different_params(self):
+        """Test parameter assignment across three materials."""
+        xs = CrossSection(
+            mat1='Al_sg225.ncmat', ext_l=100,
+            mat2='Al_sg225.ncmat', sans=30,
+            mat3='Al_sg225.ncmat', theta=45
+        )
+
+        self.assertEqual(len(xs.materials), 3)
+
+        # Each material should have its respective parameter
+        self.assertEqual(xs.materials['mat1']['ext_l'], 100)
+        self.assertIsNone(xs.materials['mat1']['sans'])
+
+        self.assertEqual(xs.materials['mat2']['sans'], 30)
+        self.assertIsNone(xs.materials['mat2']['ext_l'])
+
+        self.assertEqual(xs.materials['mat3']['theta'], 45)
+        self.assertIsNone(xs.materials['mat3']['sans'])
+
+    def test_lattice_params_assignment(self):
+        """Test assigning lattice parameters via kwargs."""
+        xs = CrossSection(sample='Al_sg225.ncmat', a=4.05, b=4.05, c=4.05)
+
+        self.assertEqual(xs.materials['sample']['a'], 4.05)
+        self.assertEqual(xs.materials['sample']['b'], 4.05)
+        self.assertEqual(xs.materials['sample']['c'], 4.05)
+
+    def test_temp_and_weight_params(self):
+        """Test assigning temperature and weight parameters."""
+        xs = CrossSection(mat1='Al_sg225.ncmat', temp=400, weight=0.7)
+
+        self.assertEqual(xs.materials['mat1']['temp'], 400)
+        # Weight gets normalized when there's only one material
+        self.assertEqual(xs.materials['mat1']['weight'], 1.0)
+
+    def test_dir_params_assignment(self):
+        """Test assigning direction parameters."""
+        xs = CrossSection(
+            sample='Al_sg225.ncmat',
+            dir1=[0, 0, 1],
+            dir2=[1, 0, 0],
+            dirtol=0.1
+        )
+
+        self.assertEqual(xs.materials['sample']['dir1'], [0, 0, 1])
+        self.assertEqual(xs.materials['sample']['dir2'], [1, 0, 0])
+        self.assertEqual(xs.materials['sample']['dirtol'], 0.1)
+
+    def test_mixed_dict_and_kwarg_materials(self):
+        """Test mixing materials dict with kwarg-based materials and params."""
+        # Create with materials dict
+        xs = CrossSection(
+            materials={'mat1': {'mat': 'Al_sg225.ncmat'}},
+            mat2='Al_sg225.ncmat', ext_l=100
+        )
+
+        self.assertEqual(len(xs.materials), 2)
+        self.assertIn('mat1', xs.materials)
+        self.assertIn('mat2', xs.materials)
+
+        # mat2 should have ext_l from kwargs
+        self.assertEqual(xs.materials['mat2']['ext_l'], 100)
+
+    def test_extinction_method_param(self):
+        """Test assigning extinction method parameter."""
+        xs = CrossSection(
+            sample='Al_sg225.ncmat',
+            ext_l=100
+        )
+
+        self.assertEqual(xs.materials['sample']['ext_l'], 100)
+        # ext_method gets set to default 'BC_pure' during processing
+
+    def test_all_extinction_params(self):
+        """Test assigning all main extinction parameters."""
+        xs = CrossSection(
+            sample='Al_sg225.ncmat',
+            ext_l=100,
+            ext_Gg=1500,
+            ext_L=2000
+        )
+
+        self.assertEqual(xs.materials['sample']['ext_l'], 100)
+        self.assertEqual(xs.materials['sample']['ext_Gg'], 1500)
+        self.assertEqual(xs.materials['sample']['ext_L'], 2000)
+
+    def test_params_with_materials_from_dict(self):
+        """Test that parameter kwargs work with materials from materials_dict."""
+        xs = CrossSection(
+            iron=materials_dict["Fe_sg229_Iron-alpha"],
+            ext_l=50,
+            ext_Gg=100
+        )
+
+        self.assertEqual(xs.materials['iron']['ext_l'], 50)
+        self.assertEqual(xs.materials['iron']['ext_Gg'], 100)
+
+    def test_backward_compatibility_no_params(self):
+        """Test that existing code without params still works."""
+        # Old style - should work exactly as before
+        xs = CrossSection(
+            mat1='Al_sg225.ncmat',
+            mat2='Al_sg225.ncmat'
+        )
+
+        self.assertEqual(len(xs.materials), 2)
+        self.assertIsNone(xs.materials['mat1']['ext_l'])
+        self.assertIsNone(xs.materials['mat2']['sans'])
+
+    def test_mos_param(self):
+        """Test assigning mos (mosaicity) parameter using standard name."""
+        xs = CrossSection(sample='Al_sg225.ncmat', mos=3.5)
+
+        # mos parameter should be stored correctly
+        self.assertEqual(xs.materials['sample']['mos'], 3.5)
+
+
 if __name__ == '__main__':
     unittest.main()
