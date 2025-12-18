@@ -43,38 +43,95 @@ class CrossSection:
             **kwargs: Additional materials in format material_name=material_dict_from_nbragg_materials
                       or material_name="material_name_in_nbragg_materials"
                       or material_name="path/to/material.ncmat".
+                      Can also include parameter kwargs (ext_l, ext_Gg, ext_L, sans, theta, phi, mos)
+                      which will be assigned to materials in order. For example:
+                      CrossSection(mat1="Fe.ncmat", ext_l=100, mat2="Al.ncmat", sans=20)
+                      will assign ext_l=100 to mat1 and sans=20 to mat2.
         """
         self.name = name
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
         self.mat_data = None  # Single NCrystal scatter object
         self.total_weight = total_weight
 
-        # Initialize materials by combining materials and kwargs
+        # Define parameter keywords that can be assigned to materials
+        PARAM_KEYWORDS = {'ext_l', 'ext_Gg', 'ext_L', 'ext_method', 'ext_dist',
+                          'sans', 'theta', 'phi', 'mos', 'mosaicity',
+                          'a', 'b', 'c', 'temp', 'weight',
+                          'dir1', 'dir2', 'dirtol'}
+
+        # Process kwargs in order, tracking materials and their associated parameters
+        # Build a list of (material_name, material_spec, params_dict) tuples
+        materials_with_params = []
+        current_material = None
+        current_params = {}
+
+        for key, value in kwargs.items():
+            if key in PARAM_KEYWORDS:
+                # This is a parameter - add to current material's params
+                current_params[key] = value
+            else:
+                # This is a new material
+                # If we had a previous material, save it with its params
+                if current_material is not None:
+                    materials_with_params.append((current_material[0], current_material[1], current_params))
+                    current_params = {}  # Reset for next material
+
+                # Start tracking this new material
+                current_material = (key, value)
+
+        # Don't forget the last material
+        if current_material is not None:
+            materials_with_params.append((current_material[0], current_material[1], current_params))
+
+        # Initialize materials by combining materials argument and kwargs materials
         combined_materials = {}
-        
+
         # Add materials from 'materials' if it is an instance of CrossSection or a dictionary
         if isinstance(materials, CrossSection):
             combined_materials.update(materials.materials)
         elif isinstance(materials, dict):
             combined_materials.update(materials)
-        
-        # Add materials from kwargs
-        for key, value in kwargs.items():
-            if isinstance(value, str):
+
+        # Process materials from kwargs with their associated parameters
+        for mat_name, mat_value, params in materials_with_params:
+            # Process the material value
+            if isinstance(mat_value, str):
                 # Try exact match first
-                if value in materials_dict:
-                    combined_materials[key] = materials_dict[value]
+                if mat_value in materials_dict:
+                    material_spec = materials_dict[mat_value]
                 # Try with .ncmat extension if not present
-                elif not value.endswith('.ncmat') and f"{value}.ncmat" in materials_dict:
-                    combined_materials[key] = materials_dict[f"{value}.ncmat"]
+                elif not mat_value.endswith('.ncmat') and f"{mat_value}.ncmat" in materials_dict:
+                    material_spec = materials_dict[f"{mat_value}.ncmat"]
                 # Try without .ncmat extension if present
-                elif value.endswith('.ncmat') and value[:-6] in materials_dict:
-                    combined_materials[key] = materials_dict[value[:-6]]
+                elif mat_value.endswith('.ncmat') and mat_value[:-6] in materials_dict:
+                    material_spec = materials_dict[mat_value[:-6]]
                 else:
                     # Keep as is (will be treated as file path)
-                    combined_materials[key] = value
+                    material_spec = mat_value
             else:
-                combined_materials[key] = value
+                material_spec = mat_value
+
+            # If material_spec is a dict, make a copy so we can modify it
+            if isinstance(material_spec, dict):
+                material_spec = material_spec.copy()
+            else:
+                # Convert string to dict format
+                material_spec = {'mat': material_spec}
+
+            # Merge in the parameters that followed this material in kwargs
+            material_spec.update(params)
+
+            combined_materials[mat_name] = material_spec
+
+        # If there were only parameters in kwargs (no materials), apply them to all materials
+        # from the 'materials' argument
+        if not materials_with_params and any(k in PARAM_KEYWORDS for k in kwargs.keys()):
+            # Apply all parameter kwargs to all materials
+            for mat_name in combined_materials:
+                if isinstance(combined_materials[mat_name], dict):
+                    for key, value in kwargs.items():
+                        if key in PARAM_KEYWORDS:
+                            combined_materials[mat_name][key] = value
 
         # Process the combined materials dictionary
         self.materials = self._process_materials(combined_materials)
