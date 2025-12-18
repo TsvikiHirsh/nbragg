@@ -54,7 +54,7 @@ class CrossSection:
         self.total_weight = total_weight
 
         # Define parameter keywords that can be assigned to materials
-        PARAM_KEYWORDS = {'ext_l', 'ext_Gg', 'ext_L', 'ext_method', 'ext_dist',
+        PARAM_KEYWORDS = {'ext_l', 'ext_Gg', 'ext_L', 'ext_method', 'ext_dist', 'ext_tilt',
                           'sans', 'theta', 'phi', 'mos', 'mosaicity',
                           'a', 'b', 'c', 'temp', 'weight',
                           'dir1', 'dir2', 'dirtol'}
@@ -121,6 +121,12 @@ class CrossSection:
             # Merge in the parameters that followed this material in kwargs
             material_spec.update(params)
 
+            # Map ext_tilt to ext_dist for backward compatibility
+            if 'ext_tilt' in material_spec:
+                if material_spec.get('ext_dist') is None:
+                    material_spec['ext_dist'] = material_spec['ext_tilt']
+                material_spec.pop('ext_tilt', None)
+
             combined_materials[mat_name] = material_spec
 
         # If there were only parameters in kwargs (no materials), apply them to all materials
@@ -132,6 +138,12 @@ class CrossSection:
                     for key, value in kwargs.items():
                         if key in PARAM_KEYWORDS:
                             combined_materials[mat_name][key] = value
+
+                    # Map ext_tilt to ext_dist for backward compatibility
+                    if 'ext_tilt' in combined_materials[mat_name]:
+                        if combined_materials[mat_name].get('ext_dist') is None:
+                            combined_materials[mat_name]['ext_dist'] = combined_materials[mat_name]['ext_tilt']
+                        combined_materials[mat_name].pop('ext_tilt', None)
 
         # Process the combined materials dictionary
         self.materials = self._process_materials(combined_materials)
@@ -393,11 +405,45 @@ class CrossSection:
             if kwargs:
                 self._update_ncmat_parameters(material, **kwargs)
 
-    def update(self):
+    def update(self, **kwargs):
         """
         Update the CrossSection object after modifying self.materials.
-        Reprocesses material parameters, updates virtual materials, and reloads data.
+        Optionally accepts kwargs to update material parameters before reprocessing.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Material parameters to update. Can specify material-specific parameters
+            (e.g., beryllium={'ext_tilt': 'rect'}) or global parameters that apply
+            to all materials (e.g., ext_l=10).
+
+        Examples
+        --------
+        >>> xs.update(ext_tilt='rect')  # Apply to all materials
+        >>> xs.update(beryllium={'ext_tilt': 'rect'})  # Apply to specific material
         """
+        # Map ext_tilt to ext_dist in kwargs
+        if 'ext_tilt' in kwargs:
+            if kwargs.get('ext_dist') is None:
+                kwargs['ext_dist'] = kwargs['ext_tilt']
+            kwargs.pop('ext_tilt', None)
+
+        # Apply kwargs to materials
+        for key, value in kwargs.items():
+            if key in self.materials:
+                # Material-specific update
+                if isinstance(value, dict):
+                    # Map ext_tilt to ext_dist in nested dict
+                    if 'ext_tilt' in value:
+                        if value.get('ext_dist') is None:
+                            value['ext_dist'] = value['ext_tilt']
+                        value.pop('ext_tilt', None)
+                    self.materials[key].update(value)
+            else:
+                # Global parameter update - apply to all materials
+                for material in self.materials:
+                    self.materials[material][key] = value
+
         # Update virtual materials with current parameters
         for material in self.materials:
             # Validate that material is a dictionary
