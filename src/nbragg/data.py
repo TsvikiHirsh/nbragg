@@ -538,8 +538,9 @@ class Data:
             else:
                 pbar = None
 
-            # Load groups in parallel
-            results = Parallel(n_jobs=n_jobs)(
+            # Load groups in parallel using threading backend
+            # (threading is appropriate for I/O-bound file loading and avoids serialization issues)
+            results = Parallel(n_jobs=n_jobs, prefer='threads')(
                 delayed(load_single_group)(i, idx)
                 for i, idx in enumerate(extracted_indices)
             )
