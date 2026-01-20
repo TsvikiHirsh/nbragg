@@ -92,6 +92,8 @@ class Data:
         self.tgrid = None
         self.signal = None
         self.openbeam = None
+        self.empty_signal = None  # Empty region signal counts for background correction
+        self.empty_openbeam = None  # Empty region openbeam counts for background correction
         self.L = None
         self.tstep = None
 
@@ -102,6 +104,8 @@ class Data:
         self.group_shape = None  # Tuple (nx, ny) for 2D, (n,) for 1D, None for named
         self.groups_signal = None  # Dict mapping index -> signal counts DataFrame
         self.groups_openbeam = None  # Dict mapping index -> openbeam counts DataFrame
+        self.groups_empty_signal = None  # Dict mapping index -> empty signal counts
+        self.groups_empty_openbeam = None  # Dict mapping index -> empty openbeam counts
 
         # If signal and openbeam provided, load data
         if signal is not None and openbeam is not None:
@@ -135,6 +139,8 @@ class Data:
             self.tgrid = result.tgrid
             self.signal = result.signal
             self.openbeam = result.openbeam
+            self.empty_signal = result.empty_signal
+            self.empty_openbeam = result.empty_openbeam
             self.L = result.L
             self.tstep = result.tstep
             self.is_grouped = result.is_grouped
@@ -143,6 +149,8 @@ class Data:
             self.group_shape = result.group_shape
             self.groups_signal = result.groups_signal
             self.groups_openbeam = result.groups_openbeam
+            self.groups_empty_signal = result.groups_empty_signal
+            self.groups_empty_openbeam = result.groups_empty_openbeam
 
     def _normalize_index(self, index):
         """
@@ -372,16 +380,20 @@ class Data:
         has_empty_openbeam = (isinstance(empty_openbeam, pd.DataFrame) and not empty_openbeam.empty) or \
                             (isinstance(empty_openbeam, str) and empty_openbeam)
 
-        if has_empty_signal and has_empty_openbeam:
-            empty_signal = cls._read_counts(empty_signal)
-            empty_openbeam = cls._read_counts(empty_openbeam)
+        # Store empty DataFrames for later use (if provided)
+        empty_signal_df = None
+        empty_openbeam_df = None
 
-            transmission *= empty_openbeam["counts"] / empty_signal["counts"]
+        if has_empty_signal and has_empty_openbeam:
+            empty_signal_df = cls._read_counts(empty_signal)
+            empty_openbeam_df = cls._read_counts(empty_openbeam)
+
+            transmission *= empty_openbeam_df["counts"] / empty_signal_df["counts"]
             err = transmission * np.sqrt(
                 (signal["err"] / signal["counts"])**2 +
                 (openbeam["err"] / openbeam["counts"])**2 +
-                (empty_signal["err"] / empty_signal["counts"])**2 +
-                (empty_openbeam["err"] / empty_openbeam["counts"])**2
+                (empty_signal_df["err"] / empty_signal_df["counts"])**2 +
+                (empty_openbeam_df["err"] / empty_openbeam_df["counts"])**2
             )
 
         # Construct a dataframe for wavelength, transmission, and error
@@ -404,6 +416,8 @@ class Data:
         self_data.tgrid = signal["tof"]
         self_data.signal = signal
         self_data.openbeam = openbeam
+        self_data.empty_signal = empty_signal_df
+        self_data.empty_openbeam = empty_openbeam_df
         self_data.L = L
         self_data.tstep = tstep
 
@@ -609,6 +623,8 @@ class Data:
         self_data.groups = {}
         self_data.groups_signal = {}
         self_data.groups_openbeam = {}
+        self_data.groups_empty_signal = {}
+        self_data.groups_empty_openbeam = {}
         self_data.L = L
         self_data.tstep = tstep
 
@@ -639,8 +655,9 @@ class Data:
                 dropna=dropna
             )
 
-            # Return table and counts for storage
-            return idx, group_data.table, group_data.signal, group_data.openbeam
+            # Return table, counts, and empty counts for storage
+            return (idx, group_data.table, group_data.signal, group_data.openbeam,
+                    group_data.empty_signal, group_data.empty_openbeam)
 
         # Load groups in parallel or sequentially
         if n_jobs == 1:
@@ -656,10 +673,14 @@ class Data:
                 iterator = enumerate(extracted_indices)
 
             for i, idx in iterator:
-                idx, table, signal_df, openbeam_df = load_single_group(i, idx)
+                idx, table, signal_df, openbeam_df, empty_sig_df, empty_ob_df = load_single_group(i, idx)
                 self_data.groups[idx] = table
                 self_data.groups_signal[idx] = signal_df
                 self_data.groups_openbeam[idx] = openbeam_df
+                if empty_sig_df is not None:
+                    self_data.groups_empty_signal[idx] = empty_sig_df
+                if empty_ob_df is not None:
+                    self_data.groups_empty_openbeam[idx] = empty_ob_df
         else:
             # Parallel loading
             from joblib import Parallel, delayed
@@ -682,10 +703,14 @@ class Data:
             )
 
             # Store results
-            for idx, table, signal_df, openbeam_df in results:
+            for idx, table, signal_df, openbeam_df, empty_sig_df, empty_ob_df in results:
                 self_data.groups[idx] = table
                 self_data.groups_signal[idx] = signal_df
                 self_data.groups_openbeam[idx] = openbeam_df
+                if empty_sig_df is not None:
+                    self_data.groups_empty_signal[idx] = empty_sig_df
+                if empty_ob_df is not None:
+                    self_data.groups_empty_openbeam[idx] = empty_ob_df
                 if pbar is not None:
                     pbar.update(1)
 
@@ -1097,29 +1122,53 @@ class Data:
                 raise ValueError(f"Number of openbeam files ({len(openbeam_files)}) must match "
                                f"number of groups ({len(self.indices)})")
 
-        # Handle empty files if provided
+        # Handle empty files if provided (can provide one or both)
         empty_signal_files = []
         empty_openbeam_files = []
-        use_single_empty = False
+        use_single_empty_signal = False
+        use_single_empty_openbeam = False
 
-        if empty_signal and empty_openbeam:
+        if empty_signal:
             empty_signal_files = sorted(glob_module.glob(empty_signal))
-            empty_openbeam_files = sorted(glob_module.glob(empty_openbeam))
-
-            if len(empty_signal_files) == 1 and len(empty_openbeam_files) == 1:
-                use_single_empty = True
-            elif len(empty_signal_files) != len(self.indices) or len(empty_openbeam_files) != len(self.indices):
+            if not empty_signal_files:
+                raise ValueError(f"No empty signal files found matching: {empty_signal}")
+            if len(empty_signal_files) == 1:
+                use_single_empty_signal = True
+            elif len(empty_signal_files) != len(self.indices):
                 raise ValueError(
-                    f"Empty file count mismatch. Provide either 1 empty file (reused for all) "
-                    f"or one per group ({len(self.indices)} groups)."
+                    f"Empty signal file count ({len(empty_signal_files)}) must be 1 (reused for all) "
+                    f"or match number of groups ({len(self.indices)})."
+                )
+
+        if empty_openbeam:
+            empty_openbeam_files = sorted(glob_module.glob(empty_openbeam))
+            if not empty_openbeam_files:
+                raise ValueError(f"No empty openbeam files found matching: {empty_openbeam}")
+            if len(empty_openbeam_files) == 1:
+                use_single_empty_openbeam = True
+            elif len(empty_openbeam_files) != len(self.indices):
+                raise ValueError(
+                    f"Empty openbeam file count ({len(empty_openbeam_files)}) must be 1 (reused for all) "
+                    f"or match number of groups ({len(self.indices)})."
                 )
 
         # Helper function to load and add counts for a single group
         def process_single_group(i, idx):
             """Load new data and combine with existing counts."""
+            from nbragg import utils
+            import NCrystal as NC
+
             # Get current counts
             current_signal = self.groups_signal[idx].copy()
             current_openbeam = self.groups_openbeam[idx].copy()
+
+            # Get current empty counts (if they exist)
+            current_empty_signal = None
+            current_empty_openbeam = None
+            if self.groups_empty_signal and idx in self.groups_empty_signal:
+                current_empty_signal = self.groups_empty_signal[idx].copy()
+            if self.groups_empty_openbeam and idx in self.groups_empty_openbeam:
+                current_empty_openbeam = self.groups_empty_openbeam[idx].copy()
 
             # Load new signal if provided
             if signal_files:
@@ -1127,9 +1176,7 @@ class Data:
                 # Apply L0 and t0 corrections
                 dtof = (1.0 - L0) * new_signal["tof"] + t0
                 corrected_tof = new_signal["tof"] + dtof
-                from nbragg import utils
                 new_signal["energy"] = utils.time2energy(corrected_tof * self.tstep, self.L)
-                import NCrystal as NC
                 new_signal["wavelength"] = new_signal["energy"].apply(NC.ekin2wl)
 
                 # Add counts
@@ -1143,12 +1190,44 @@ class Data:
                 current_openbeam["counts"] = current_openbeam["counts"] + new_openbeam["counts"]
                 current_openbeam["err"] = np.sqrt(current_openbeam["err"]**2 + new_openbeam["err"]**2)
 
-            # Recalculate transmission
+            # Load new empty files if provided
+            if empty_signal_files:
+                es_file = empty_signal_files[0] if use_single_empty_signal else empty_signal_files[i]
+                new_empty_signal = self._read_counts(es_file)
+                if current_empty_signal is not None:
+                    current_empty_signal["counts"] = current_empty_signal["counts"] + new_empty_signal["counts"]
+                    current_empty_signal["err"] = np.sqrt(current_empty_signal["err"]**2 + new_empty_signal["err"]**2)
+                else:
+                    current_empty_signal = new_empty_signal
+
+            if empty_openbeam_files:
+                eo_file = empty_openbeam_files[0] if use_single_empty_openbeam else empty_openbeam_files[i]
+                new_empty_openbeam = self._read_counts(eo_file)
+                if current_empty_openbeam is not None:
+                    current_empty_openbeam["counts"] = current_empty_openbeam["counts"] + new_empty_openbeam["counts"]
+                    current_empty_openbeam["err"] = np.sqrt(current_empty_openbeam["err"]**2 + new_empty_openbeam["err"]**2)
+                else:
+                    current_empty_openbeam = new_empty_openbeam
+
+            # Recalculate transmission with empty correction if available
             transmission = current_signal["counts"] / current_openbeam["counts"]
-            err = transmission * np.sqrt(
-                (current_signal["err"] / current_signal["counts"])**2 +
-                (current_openbeam["err"] / current_openbeam["counts"])**2
-            )
+
+            # Apply empty correction if both empty signal and openbeam are available
+            has_empty = (current_empty_signal is not None and current_empty_openbeam is not None)
+
+            if has_empty:
+                transmission *= current_empty_openbeam["counts"] / current_empty_signal["counts"]
+                err = transmission * np.sqrt(
+                    (current_signal["err"] / current_signal["counts"])**2 +
+                    (current_openbeam["err"] / current_openbeam["counts"])**2 +
+                    (current_empty_signal["err"] / current_empty_signal["counts"])**2 +
+                    (current_empty_openbeam["err"] / current_empty_openbeam["counts"])**2
+                )
+            else:
+                err = transmission * np.sqrt(
+                    (current_signal["err"] / current_signal["counts"])**2 +
+                    (current_openbeam["err"] / current_openbeam["counts"])**2
+                )
 
             trans_table = pd.DataFrame({
                 "wavelength": current_signal["wavelength"],
@@ -1159,7 +1238,7 @@ class Data:
             if dropna:
                 trans_table = trans_table.dropna()
 
-            return idx, trans_table, current_signal, current_openbeam
+            return idx, trans_table, current_signal, current_openbeam, current_empty_signal, current_empty_openbeam
 
         # Process groups
         if n_jobs == 1:
@@ -1175,10 +1254,18 @@ class Data:
                 iterator = enumerate(self.indices)
 
             for i, idx in iterator:
-                idx, table, signal_df, openbeam_df = process_single_group(i, idx)
+                idx, table, signal_df, openbeam_df, empty_sig_df, empty_ob_df = process_single_group(i, idx)
                 self.groups[idx] = table
                 self.groups_signal[idx] = signal_df
                 self.groups_openbeam[idx] = openbeam_df
+                if empty_sig_df is not None:
+                    if self.groups_empty_signal is None:
+                        self.groups_empty_signal = {}
+                    self.groups_empty_signal[idx] = empty_sig_df
+                if empty_ob_df is not None:
+                    if self.groups_empty_openbeam is None:
+                        self.groups_empty_openbeam = {}
+                    self.groups_empty_openbeam[idx] = empty_ob_df
         else:
             # Parallel processing
             from joblib import Parallel, delayed
@@ -1197,10 +1284,18 @@ class Data:
                 for i, idx in enumerate(self.indices)
             )
 
-            for idx, table, signal_df, openbeam_df in results:
+            for idx, table, signal_df, openbeam_df, empty_sig_df, empty_ob_df in results:
                 self.groups[idx] = table
                 self.groups_signal[idx] = signal_df
                 self.groups_openbeam[idx] = openbeam_df
+                if empty_sig_df is not None:
+                    if self.groups_empty_signal is None:
+                        self.groups_empty_signal = {}
+                    self.groups_empty_signal[idx] = empty_sig_df
+                if empty_ob_df is not None:
+                    if self.groups_empty_openbeam is None:
+                        self.groups_empty_openbeam = {}
+                    self.groups_empty_openbeam[idx] = empty_ob_df
                 if pbar is not None:
                     pbar.update(1)
 
@@ -1213,6 +1308,7 @@ class Data:
         return self
 
     def add_counts(self, signal=None, openbeam=None,
+                   empty_signal=None, empty_openbeam=None,
                    L0: float = 1.0, t0: float = 0., dropna: bool = False):
         """
         Add counts from single files, broadcasting to all groups if grouped.
@@ -1226,6 +1322,10 @@ class Data:
             Single signal file/DataFrame to add. Broadcast to all groups if grouped.
         openbeam : str, DataFrame, or None
             Single openbeam file/DataFrame to add. Broadcast to all groups if grouped.
+        empty_signal : str, DataFrame, or None
+            Single empty signal file for background correction.
+        empty_openbeam : str, DataFrame, or None
+            Single empty openbeam file for background correction.
         L0 : float, optional
             Flight path scale factor. Default is 1.0.
         t0 : float, optional
@@ -1252,25 +1352,34 @@ class Data:
         # For non-grouped data: adds to the single group
         >>> data.add_counts(signal="run2.csv", openbeam="ob2.csv")
         """
+        from nbragg import utils
+        import NCrystal as NC
+
         if signal is None and openbeam is None:
             raise ValueError("At least one of signal or openbeam must be provided.")
 
         # Load the single files
         new_signal = None
         new_openbeam = None
+        new_empty_signal = None
+        new_empty_openbeam = None
 
         if signal is not None:
             new_signal = self._read_counts(signal)
             # Apply L0 and t0 corrections
             dtof = (1.0 - L0) * new_signal["tof"] + t0
             corrected_tof = new_signal["tof"] + dtof
-            from nbragg import utils
             new_signal["energy"] = utils.time2energy(corrected_tof * self.tstep, self.L)
-            import NCrystal as NC
             new_signal["wavelength"] = new_signal["energy"].apply(NC.ekin2wl)
 
         if openbeam is not None:
             new_openbeam = self._read_counts(openbeam)
+
+        if empty_signal is not None:
+            new_empty_signal = self._read_counts(empty_signal)
+
+        if empty_openbeam is not None:
+            new_empty_openbeam = self._read_counts(empty_openbeam)
 
         if self.is_grouped:
             # Broadcast to all groups
@@ -1280,6 +1389,14 @@ class Data:
             for idx in self.indices:
                 current_signal = self.groups_signal[idx].copy()
                 current_openbeam = self.groups_openbeam[idx].copy()
+
+                # Get current empty counts if they exist
+                current_empty_signal = None
+                current_empty_openbeam = None
+                if self.groups_empty_signal and idx in self.groups_empty_signal:
+                    current_empty_signal = self.groups_empty_signal[idx].copy()
+                if self.groups_empty_openbeam and idx in self.groups_empty_openbeam:
+                    current_empty_openbeam = self.groups_empty_openbeam[idx].copy()
 
                 # Add signal counts if provided
                 if new_signal is not None:
@@ -1291,12 +1408,38 @@ class Data:
                     current_openbeam["counts"] = current_openbeam["counts"] + new_openbeam["counts"]
                     current_openbeam["err"] = np.sqrt(current_openbeam["err"]**2 + new_openbeam["err"]**2)
 
-                # Recalculate transmission
+                # Add empty counts if provided
+                if new_empty_signal is not None:
+                    if current_empty_signal is not None:
+                        current_empty_signal["counts"] = current_empty_signal["counts"] + new_empty_signal["counts"]
+                        current_empty_signal["err"] = np.sqrt(current_empty_signal["err"]**2 + new_empty_signal["err"]**2)
+                    else:
+                        current_empty_signal = new_empty_signal.copy()
+
+                if new_empty_openbeam is not None:
+                    if current_empty_openbeam is not None:
+                        current_empty_openbeam["counts"] = current_empty_openbeam["counts"] + new_empty_openbeam["counts"]
+                        current_empty_openbeam["err"] = np.sqrt(current_empty_openbeam["err"]**2 + new_empty_openbeam["err"]**2)
+                    else:
+                        current_empty_openbeam = new_empty_openbeam.copy()
+
+                # Recalculate transmission with empty correction if available
                 transmission = current_signal["counts"] / current_openbeam["counts"]
-                err = transmission * np.sqrt(
-                    (current_signal["err"] / current_signal["counts"])**2 +
-                    (current_openbeam["err"] / current_openbeam["counts"])**2
-                )
+                has_empty = (current_empty_signal is not None and current_empty_openbeam is not None)
+
+                if has_empty:
+                    transmission *= current_empty_openbeam["counts"] / current_empty_signal["counts"]
+                    err = transmission * np.sqrt(
+                        (current_signal["err"] / current_signal["counts"])**2 +
+                        (current_openbeam["err"] / current_openbeam["counts"])**2 +
+                        (current_empty_signal["err"] / current_empty_signal["counts"])**2 +
+                        (current_empty_openbeam["err"] / current_empty_openbeam["counts"])**2
+                    )
+                else:
+                    err = transmission * np.sqrt(
+                        (current_signal["err"] / current_signal["counts"])**2 +
+                        (current_openbeam["err"] / current_openbeam["counts"])**2
+                    )
 
                 trans_table = pd.DataFrame({
                     "wavelength": current_signal["wavelength"],
@@ -1310,6 +1453,14 @@ class Data:
                 self.groups[idx] = trans_table
                 self.groups_signal[idx] = current_signal
                 self.groups_openbeam[idx] = current_openbeam
+                if current_empty_signal is not None:
+                    if self.groups_empty_signal is None:
+                        self.groups_empty_signal = {}
+                    self.groups_empty_signal[idx] = current_empty_signal
+                if current_empty_openbeam is not None:
+                    if self.groups_empty_openbeam is None:
+                        self.groups_empty_openbeam = {}
+                    self.groups_empty_openbeam[idx] = current_empty_openbeam
 
             # Update default table
             self.table = self.groups[self.indices[0]]
@@ -1330,12 +1481,38 @@ class Data:
                 self.openbeam["counts"] = self.openbeam["counts"] + new_openbeam["counts"]
                 self.openbeam["err"] = np.sqrt(self.openbeam["err"]**2 + new_openbeam["err"]**2)
 
-            # Recalculate transmission
+            # Add empty counts if provided
+            if new_empty_signal is not None:
+                if self.empty_signal is not None:
+                    self.empty_signal["counts"] = self.empty_signal["counts"] + new_empty_signal["counts"]
+                    self.empty_signal["err"] = np.sqrt(self.empty_signal["err"]**2 + new_empty_signal["err"]**2)
+                else:
+                    self.empty_signal = new_empty_signal.copy()
+
+            if new_empty_openbeam is not None:
+                if self.empty_openbeam is not None:
+                    self.empty_openbeam["counts"] = self.empty_openbeam["counts"] + new_empty_openbeam["counts"]
+                    self.empty_openbeam["err"] = np.sqrt(self.empty_openbeam["err"]**2 + new_empty_openbeam["err"]**2)
+                else:
+                    self.empty_openbeam = new_empty_openbeam.copy()
+
+            # Recalculate transmission with empty correction if available
             transmission = self.signal["counts"] / self.openbeam["counts"]
-            err = transmission * np.sqrt(
-                (self.signal["err"] / self.signal["counts"])**2 +
-                (self.openbeam["err"] / self.openbeam["counts"])**2
-            )
+            has_empty = (self.empty_signal is not None and self.empty_openbeam is not None)
+
+            if has_empty:
+                transmission *= self.empty_openbeam["counts"] / self.empty_signal["counts"]
+                err = transmission * np.sqrt(
+                    (self.signal["err"] / self.signal["counts"])**2 +
+                    (self.openbeam["err"] / self.openbeam["counts"])**2 +
+                    (self.empty_signal["err"] / self.empty_signal["counts"])**2 +
+                    (self.empty_openbeam["err"] / self.empty_openbeam["counts"])**2
+                )
+            else:
+                err = transmission * np.sqrt(
+                    (self.signal["err"] / self.signal["counts"])**2 +
+                    (self.openbeam["err"] / self.openbeam["counts"])**2
+                )
 
             self.table = pd.DataFrame({
                 "wavelength": self.signal["wavelength"],
