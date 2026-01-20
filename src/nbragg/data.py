@@ -24,15 +24,70 @@ class Data:
         Time step (seconds) for converting time-of-flight to energy.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, signal=None, openbeam=None,
+                 empty_signal="", empty_openbeam="",
+                 tstep: float = 10.0e-6, L: float = 9,
+                 L0: float = 1.0, t0: float = 0., dropna: bool = False,
+                 pattern: str = "auto", indices: list = None,
+                 verbosity: int = 1, n_jobs: int = -1,
+                 **kwargs):
         """
-        Initializes the Data object with optional keyword arguments.
+        Initialize Data object from signal and openbeam data.
+
+        Automatically detects input type:
+        - Single file: "path/to/file.csv" -> single-group Data
+        - Directory: "path/to/folder" -> grouped Data from all .csv files
+        - Glob pattern: "path/to/*.csv" -> grouped Data
 
         Parameters:
         -----------
-        **kwargs : dict, optional
-            Additional keyword arguments to set any instance-specific properties.
+        signal : str, DataFrame, or None
+            Signal data source. Can be:
+            - File path (str): single CSV file
+            - Directory path (str): folder containing CSV files
+            - Glob pattern (str): pattern with wildcards (*, ?, [])
+            - DataFrame: direct data input
+            If None, creates an empty Data object.
+        openbeam : str, DataFrame, or None
+            Open beam data source. Same formats as signal.
+        empty_signal : str or DataFrame, optional
+            Empty signal data for background correction.
+        empty_openbeam : str or DataFrame, optional
+            Empty openbeam data for background correction.
+        tstep : float, optional
+            Time step (seconds) for ToF conversion. Default is 10.0e-6.
+        L : float, optional
+            Flight path length (meters). Default is 9.
+        L0 : float, optional
+            Flight path scale factor. Default is 1.0.
+        t0 : float, optional
+            Time offset correction. Default is 0.
+        dropna : bool, optional
+            If True, remove NaN rows. Default is False.
+        pattern : str, optional
+            Coordinate extraction pattern for grouped data. Default is "auto".
+        indices : list, optional
+            Explicit indices for grouped data.
+        verbosity : int, optional
+            Verbosity level. Default is 1.
+        n_jobs : int, optional
+            Number of parallel jobs. Default is -1.
+
+        Examples:
+        ---------
+        # Single file input
+        >>> data = Data(signal="signal.csv", openbeam="openbeam.csv", L=10)
+
+        # Glob pattern input (creates grouped data)
+        >>> data = Data(signal="run1/grid_*.csv", openbeam="run1/ob_*.csv")
+
+        # Directory input (creates grouped data)
+        >>> data = Data(signal="signal_folder/", openbeam="ob_folder/")
+
+        # Empty Data object (for advanced usage)
+        >>> data = Data()
         """
+        # Initialize attributes
         self.table = None
         self.tgrid = None
         self.signal = None
@@ -45,6 +100,49 @@ class Data:
         self.groups = None  # Dict mapping index -> table
         self.indices = None  # List of string indices
         self.group_shape = None  # Tuple (nx, ny) for 2D, (n,) for 1D, None for named
+        self.groups_signal = None  # Dict mapping index -> signal counts DataFrame
+        self.groups_openbeam = None  # Dict mapping index -> openbeam counts DataFrame
+
+        # If signal and openbeam provided, load data
+        if signal is not None and openbeam is not None:
+            # Detect input type for signal (openbeam should match)
+            if isinstance(signal, str):
+                input_type = self._detect_input_type(signal)
+            elif isinstance(signal, pd.DataFrame):
+                input_type = "file"  # Treat DataFrame as single file
+            else:
+                raise TypeError(f"signal must be str or DataFrame, got {type(signal)}")
+
+            if input_type in ("directory", "glob"):
+                # Use from_grouped logic
+                result = self.from_grouped(
+                    signal=signal, openbeam=openbeam,
+                    empty_signal=empty_signal, empty_openbeam=empty_openbeam,
+                    tstep=tstep, L=L, L0=L0, t0=t0, dropna=dropna,
+                    pattern=pattern, indices=indices,
+                    verbosity=verbosity, n_jobs=n_jobs
+                )
+            else:
+                # Use from_counts logic
+                result = self.from_counts(
+                    signal=signal, openbeam=openbeam,
+                    empty_signal=empty_signal, empty_openbeam=empty_openbeam,
+                    tstep=tstep, L=L, L0=L0, t0=t0, dropna=dropna
+                )
+
+            # Copy all attributes from result
+            self.table = result.table
+            self.tgrid = result.tgrid
+            self.signal = result.signal
+            self.openbeam = result.openbeam
+            self.L = result.L
+            self.tstep = result.tstep
+            self.is_grouped = result.is_grouped
+            self.groups = result.groups
+            self.indices = result.indices
+            self.group_shape = result.group_shape
+            self.groups_signal = result.groups_signal
+            self.groups_openbeam = result.groups_openbeam
 
     def _normalize_index(self, index):
         """
@@ -97,6 +195,39 @@ class Data:
         except (ValueError, SyntaxError):
             # If parsing fails, it's a named string
             return string_idx
+
+    @staticmethod
+    def _detect_input_type(path):
+        """
+        Detect whether input is a single file, directory, or glob pattern.
+
+        Parameters:
+        -----------
+        path : str
+            The input path to analyze
+
+        Returns:
+        --------
+        str
+            "file", "directory", or "glob"
+        """
+        import os
+
+        # Check if it's an existing file
+        if os.path.isfile(path):
+            return "file"
+
+        # Check if it's an existing directory
+        if os.path.isdir(path):
+            return "directory"
+
+        # Check if it contains glob metacharacters
+        if any(c in path for c in ['*', '?', '[', ']']):
+            return "glob"
+
+        # If not a file, dir, or glob, assume it's a file path
+        # (let downstream code raise appropriate error)
+        return "file"
 
     @classmethod
     def _read_counts(cls, input_data, names=None):
@@ -476,6 +607,8 @@ class Data:
         self_data.indices = extracted_indices
         self_data.group_shape = group_shape
         self_data.groups = {}
+        self_data.groups_signal = {}
+        self_data.groups_openbeam = {}
         self_data.L = L
         self_data.tstep = tstep
 
@@ -506,7 +639,8 @@ class Data:
                 dropna=dropna
             )
 
-            return idx, group_data.table
+            # Return table and counts for storage
+            return idx, group_data.table, group_data.signal, group_data.openbeam
 
         # Load groups in parallel or sequentially
         if n_jobs == 1:
@@ -522,8 +656,10 @@ class Data:
                 iterator = enumerate(extracted_indices)
 
             for i, idx in iterator:
-                idx, table = load_single_group(i, idx)
+                idx, table, signal_df, openbeam_df = load_single_group(i, idx)
                 self_data.groups[idx] = table
+                self_data.groups_signal[idx] = signal_df
+                self_data.groups_openbeam[idx] = openbeam_df
         else:
             # Parallel loading
             from joblib import Parallel, delayed
@@ -546,8 +682,10 @@ class Data:
             )
 
             # Store results
-            for idx, table in results:
+            for idx, table, signal_df, openbeam_df in results:
                 self_data.groups[idx] = table
+                self_data.groups_signal[idx] = signal_df
+                self_data.groups_openbeam[idx] = openbeam_df
                 if pbar is not None:
                     pbar.update(1)
 
@@ -716,25 +854,62 @@ class Data:
             result.indices = self.indices.copy()
             result.group_shape = self.group_shape
             result.groups = {}
+            result.groups_signal = {}
+            result.groups_openbeam = {}
             result.L = self.L
             result.tstep = self.tstep
 
+            # Check if both objects have stored counts for proper combination
+            has_counts = (self.groups_signal is not None and self.groups_openbeam is not None and
+                         other.groups_signal is not None and other.groups_openbeam is not None)
+
             # Add each group pair
             for idx in self.indices:
-                # Get tables for this index from both objects
-                table1 = self.groups[idx]
-                table2 = other.groups[idx]
+                if has_counts:
+                    # Proper statistical combination: combine counts and recalculate transmission
+                    sig1 = self.groups_signal[idx]
+                    sig2 = other.groups_signal[idx]
+                    ob1 = self.groups_openbeam[idx]
+                    ob2 = other.groups_openbeam[idx]
 
-                # Simple addition: combine transmission values
-                # (Ideally we'd combine counts, but grouped data may not have signal/openbeam stored)
-                combined_table = table1.copy()
-                combined_table['trans'] = (table1['trans'] + table2['trans']) / 2  # Average
-                # Error propagation for averaged values
-                if 'err' in table1.columns and 'err' in table2.columns:
-                    combined_table['err'] = np.sqrt(table1['err']**2 + table2['err']**2) / 2
+                    # Combine signal counts
+                    combined_signal = sig1.copy()
+                    combined_signal["counts"] = sig1["counts"] + sig2["counts"]
+                    combined_signal["err"] = np.sqrt(sig1["err"]**2 + sig2["err"]**2)
 
-                result.groups[idx] = combined_table
+                    # Combine openbeam counts
+                    combined_openbeam = ob1.copy()
+                    combined_openbeam["counts"] = ob1["counts"] + ob2["counts"]
+                    combined_openbeam["err"] = np.sqrt(ob1["err"]**2 + ob2["err"]**2)
 
+                    # Calculate transmission from combined counts
+                    transmission = combined_signal["counts"] / combined_openbeam["counts"]
+                    err = transmission * np.sqrt(
+                        (combined_signal["err"] / combined_signal["counts"])**2 +
+                        (combined_openbeam["err"] / combined_openbeam["counts"])**2
+                    )
+
+                    combined_table = pd.DataFrame({
+                        "wavelength": combined_signal["wavelength"],
+                        "trans": transmission,
+                        "err": err
+                    })
+
+                    result.groups[idx] = combined_table
+                    result.groups_signal[idx] = combined_signal
+                    result.groups_openbeam[idx] = combined_openbeam
+                else:
+                    # Fallback: average transmission (backward compatibility)
+                    table1 = self.groups[idx]
+                    table2 = other.groups[idx]
+                    combined_table = table1.copy()
+                    combined_table['trans'] = (table1['trans'] + table2['trans']) / 2
+                    if 'err' in table1.columns and 'err' in table2.columns:
+                        combined_table['err'] = np.sqrt(table1['err']**2 + table2['err']**2) / 2
+                    result.groups[idx] = combined_table
+
+            # Set default table
+            result.table = result.groups[result.indices[0]]
             return result
 
         # Handle non-grouped data addition
@@ -817,6 +992,360 @@ class Data:
         self.openbeam = result.openbeam
         self.L = result.L
         self.tstep = result.tstep
+        # Copy grouped data attributes if present
+        if result.is_grouped:
+            self.is_grouped = result.is_grouped
+            self.groups = result.groups
+            self.indices = result.indices
+            self.group_shape = result.group_shape
+            self.groups_signal = result.groups_signal
+            self.groups_openbeam = result.groups_openbeam
+        return self
+
+    def add_groups(self, signal=None, openbeam=None,
+                   empty_signal="", empty_openbeam="",
+                   L0: float = 1.0, t0: float = 0., dropna: bool = False,
+                   verbosity: int = 1, n_jobs: int = -1):
+        """
+        Add new signal and/or openbeam counts to existing grouped data.
+
+        The new data files must match the number of existing groups.
+        Counts are combined (summed) and transmission is recalculated with proper
+        uncertainty propagation.
+
+        Parameters:
+        -----------
+        signal : str or None
+            Glob pattern or directory for new signal files.
+            If None, only openbeam is added (existing signal is reused).
+        openbeam : str or None
+            Glob pattern or directory for new openbeam files.
+            If None, only signal is added (existing openbeam is reused).
+        empty_signal : str, optional
+            Glob pattern for empty signal files for background correction.
+        empty_openbeam : str, optional
+            Glob pattern for empty openbeam files for background correction.
+        L0 : float, optional
+            Flight path scale factor. Default is 1.0.
+        t0 : float, optional
+            Time offset correction. Default is 0.
+        dropna : bool, optional
+            If True, remove NaN rows. Default is False.
+        verbosity : int, optional
+            Verbosity level. Default is 1.
+        n_jobs : int, optional
+            Number of parallel jobs. Default is -1.
+
+        Returns:
+        --------
+        self : Data
+            Returns self for method chaining.
+
+        Raises:
+        -------
+        ValueError
+            If data is not grouped, if groups_signal/groups_openbeam are not available,
+            or if number of files doesn't match number of groups.
+
+        Examples:
+        ---------
+        # Add only new signal counts (keeps existing openbeam)
+        >>> data.add_groups(signal="run2/grid_*.csv")
+
+        # Add only new openbeam counts (keeps existing signal)
+        >>> data.add_groups(openbeam="run2/ob_*.csv")
+
+        # Add both new signal and openbeam
+        >>> data.add_groups(signal="run2/grid_*.csv", openbeam="run2/ob_*.csv")
+        """
+        import glob as glob_module
+        import os
+
+        if not self.is_grouped:
+            raise ValueError("add_groups() only works on grouped data. Use add_counts() for non-grouped data.")
+
+        if self.groups_signal is None or self.groups_openbeam is None:
+            raise ValueError("Cannot add groups: this Data object doesn't have stored counts. "
+                           "Create it using from_grouped() or the unified __init__.")
+
+        if signal is None and openbeam is None:
+            raise ValueError("At least one of signal or openbeam must be provided.")
+
+        # Find matching files for signal
+        signal_files = []
+        if signal is not None:
+            if os.path.isdir(signal):
+                signal_files = sorted(glob_module.glob(os.path.join(signal, "*.csv")))
+            else:
+                signal_files = sorted(glob_module.glob(signal))
+            if not signal_files:
+                raise ValueError(f"No files found matching pattern: {signal}")
+            if len(signal_files) != len(self.indices):
+                raise ValueError(f"Number of signal files ({len(signal_files)}) must match "
+                               f"number of groups ({len(self.indices)})")
+
+        # Find matching files for openbeam
+        openbeam_files = []
+        if openbeam is not None:
+            if os.path.isdir(openbeam):
+                openbeam_files = sorted(glob_module.glob(os.path.join(openbeam, "*.csv")))
+            else:
+                openbeam_files = sorted(glob_module.glob(openbeam))
+            if not openbeam_files:
+                raise ValueError(f"No files found matching pattern: {openbeam}")
+            if len(openbeam_files) != len(self.indices):
+                raise ValueError(f"Number of openbeam files ({len(openbeam_files)}) must match "
+                               f"number of groups ({len(self.indices)})")
+
+        # Handle empty files if provided
+        empty_signal_files = []
+        empty_openbeam_files = []
+        use_single_empty = False
+
+        if empty_signal and empty_openbeam:
+            empty_signal_files = sorted(glob_module.glob(empty_signal))
+            empty_openbeam_files = sorted(glob_module.glob(empty_openbeam))
+
+            if len(empty_signal_files) == 1 and len(empty_openbeam_files) == 1:
+                use_single_empty = True
+            elif len(empty_signal_files) != len(self.indices) or len(empty_openbeam_files) != len(self.indices):
+                raise ValueError(
+                    f"Empty file count mismatch. Provide either 1 empty file (reused for all) "
+                    f"or one per group ({len(self.indices)} groups)."
+                )
+
+        # Helper function to load and add counts for a single group
+        def process_single_group(i, idx):
+            """Load new data and combine with existing counts."""
+            # Get current counts
+            current_signal = self.groups_signal[idx].copy()
+            current_openbeam = self.groups_openbeam[idx].copy()
+
+            # Load new signal if provided
+            if signal_files:
+                new_signal = self._read_counts(signal_files[i])
+                # Apply L0 and t0 corrections
+                dtof = (1.0 - L0) * new_signal["tof"] + t0
+                corrected_tof = new_signal["tof"] + dtof
+                from nbragg import utils
+                new_signal["energy"] = utils.time2energy(corrected_tof * self.tstep, self.L)
+                import NCrystal as NC
+                new_signal["wavelength"] = new_signal["energy"].apply(NC.ekin2wl)
+
+                # Add counts
+                current_signal["counts"] = current_signal["counts"] + new_signal["counts"]
+                current_signal["err"] = np.sqrt(current_signal["err"]**2 + new_signal["err"]**2)
+
+            # Load new openbeam if provided
+            if openbeam_files:
+                new_openbeam = self._read_counts(openbeam_files[i])
+                # Add counts
+                current_openbeam["counts"] = current_openbeam["counts"] + new_openbeam["counts"]
+                current_openbeam["err"] = np.sqrt(current_openbeam["err"]**2 + new_openbeam["err"]**2)
+
+            # Recalculate transmission
+            transmission = current_signal["counts"] / current_openbeam["counts"]
+            err = transmission * np.sqrt(
+                (current_signal["err"] / current_signal["counts"])**2 +
+                (current_openbeam["err"] / current_openbeam["counts"])**2
+            )
+
+            trans_table = pd.DataFrame({
+                "wavelength": current_signal["wavelength"],
+                "trans": transmission,
+                "err": err
+            })
+
+            if dropna:
+                trans_table = trans_table.dropna()
+
+            return idx, trans_table, current_signal, current_openbeam
+
+        # Process groups
+        if n_jobs == 1:
+            # Sequential processing
+            if verbosity >= 1:
+                try:
+                    from tqdm.auto import tqdm
+                    iterator = tqdm(enumerate(self.indices), total=len(self.indices),
+                                   desc=f"Adding to {len(self.indices)} groups")
+                except ImportError:
+                    iterator = enumerate(self.indices)
+            else:
+                iterator = enumerate(self.indices)
+
+            for i, idx in iterator:
+                idx, table, signal_df, openbeam_df = process_single_group(i, idx)
+                self.groups[idx] = table
+                self.groups_signal[idx] = signal_df
+                self.groups_openbeam[idx] = openbeam_df
+        else:
+            # Parallel processing
+            from joblib import Parallel, delayed
+
+            if verbosity >= 1:
+                try:
+                    from tqdm.auto import tqdm
+                    pbar = tqdm(total=len(self.indices), desc=f"Adding to {len(self.indices)} groups")
+                except ImportError:
+                    pbar = None
+            else:
+                pbar = None
+
+            results = Parallel(n_jobs=n_jobs, prefer='threads')(
+                delayed(process_single_group)(i, idx)
+                for i, idx in enumerate(self.indices)
+            )
+
+            for idx, table, signal_df, openbeam_df in results:
+                self.groups[idx] = table
+                self.groups_signal[idx] = signal_df
+                self.groups_openbeam[idx] = openbeam_df
+                if pbar is not None:
+                    pbar.update(1)
+
+            if pbar is not None:
+                pbar.close()
+
+        # Update default table
+        self.table = self.groups[self.indices[0]]
+
+        return self
+
+    def add_counts(self, signal=None, openbeam=None,
+                   L0: float = 1.0, t0: float = 0., dropna: bool = False):
+        """
+        Add counts from single files, broadcasting to all groups if grouped.
+
+        For grouped data: adds the same counts to ALL groups (broadcasting).
+        For non-grouped data: adds counts to the single group.
+
+        Parameters:
+        -----------
+        signal : str, DataFrame, or None
+            Single signal file/DataFrame to add. Broadcast to all groups if grouped.
+        openbeam : str, DataFrame, or None
+            Single openbeam file/DataFrame to add. Broadcast to all groups if grouped.
+        L0 : float, optional
+            Flight path scale factor. Default is 1.0.
+        t0 : float, optional
+            Time offset correction. Default is 0.
+        dropna : bool, optional
+            If True, remove NaN rows. Default is False.
+
+        Returns:
+        --------
+        self : Data
+            Returns self for method chaining.
+
+        Raises:
+        -------
+        ValueError
+            If neither signal nor openbeam is provided, or if counts are not available.
+
+        Examples:
+        ---------
+        # For grouped data: broadcast single file to all groups
+        >>> data.add_counts(signal="extra_run.csv")
+        >>> data.add_counts(signal="run.csv", openbeam="ob.csv")
+
+        # For non-grouped data: adds to the single group
+        >>> data.add_counts(signal="run2.csv", openbeam="ob2.csv")
+        """
+        if signal is None and openbeam is None:
+            raise ValueError("At least one of signal or openbeam must be provided.")
+
+        # Load the single files
+        new_signal = None
+        new_openbeam = None
+
+        if signal is not None:
+            new_signal = self._read_counts(signal)
+            # Apply L0 and t0 corrections
+            dtof = (1.0 - L0) * new_signal["tof"] + t0
+            corrected_tof = new_signal["tof"] + dtof
+            from nbragg import utils
+            new_signal["energy"] = utils.time2energy(corrected_tof * self.tstep, self.L)
+            import NCrystal as NC
+            new_signal["wavelength"] = new_signal["energy"].apply(NC.ekin2wl)
+
+        if openbeam is not None:
+            new_openbeam = self._read_counts(openbeam)
+
+        if self.is_grouped:
+            # Broadcast to all groups
+            if self.groups_signal is None or self.groups_openbeam is None:
+                raise ValueError("Cannot add counts: this Data object doesn't have stored counts.")
+
+            for idx in self.indices:
+                current_signal = self.groups_signal[idx].copy()
+                current_openbeam = self.groups_openbeam[idx].copy()
+
+                # Add signal counts if provided
+                if new_signal is not None:
+                    current_signal["counts"] = current_signal["counts"] + new_signal["counts"]
+                    current_signal["err"] = np.sqrt(current_signal["err"]**2 + new_signal["err"]**2)
+
+                # Add openbeam counts if provided
+                if new_openbeam is not None:
+                    current_openbeam["counts"] = current_openbeam["counts"] + new_openbeam["counts"]
+                    current_openbeam["err"] = np.sqrt(current_openbeam["err"]**2 + new_openbeam["err"]**2)
+
+                # Recalculate transmission
+                transmission = current_signal["counts"] / current_openbeam["counts"]
+                err = transmission * np.sqrt(
+                    (current_signal["err"] / current_signal["counts"])**2 +
+                    (current_openbeam["err"] / current_openbeam["counts"])**2
+                )
+
+                trans_table = pd.DataFrame({
+                    "wavelength": current_signal["wavelength"],
+                    "trans": transmission,
+                    "err": err
+                })
+
+                if dropna:
+                    trans_table = trans_table.dropna()
+
+                self.groups[idx] = trans_table
+                self.groups_signal[idx] = current_signal
+                self.groups_openbeam[idx] = current_openbeam
+
+            # Update default table
+            self.table = self.groups[self.indices[0]]
+
+        else:
+            # Non-grouped data: add to single group
+            if self.signal is None or self.openbeam is None:
+                raise ValueError("Cannot add counts: this Data object doesn't have stored counts. "
+                               "Create it using from_counts().")
+
+            # Add signal counts if provided
+            if new_signal is not None:
+                self.signal["counts"] = self.signal["counts"] + new_signal["counts"]
+                self.signal["err"] = np.sqrt(self.signal["err"]**2 + new_signal["err"]**2)
+
+            # Add openbeam counts if provided
+            if new_openbeam is not None:
+                self.openbeam["counts"] = self.openbeam["counts"] + new_openbeam["counts"]
+                self.openbeam["err"] = np.sqrt(self.openbeam["err"]**2 + new_openbeam["err"]**2)
+
+            # Recalculate transmission
+            transmission = self.signal["counts"] / self.openbeam["counts"]
+            err = transmission * np.sqrt(
+                (self.signal["err"] / self.signal["counts"])**2 +
+                (self.openbeam["err"] / self.openbeam["counts"])**2
+            )
+
+            self.table = pd.DataFrame({
+                "wavelength": self.signal["wavelength"],
+                "trans": transmission,
+                "err": err
+            })
+
+            if dropna:
+                self.table = self.table.dropna()
+
         return self
 
     def dropna(self, inplace=False):
