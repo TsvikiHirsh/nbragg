@@ -125,6 +125,16 @@ def _extract_pickleable_result(fit_result):
     if hasattr(fit_result, 'fit_stages') and fit_result.fit_stages:
         result_dict['fit_stages'] = [_extract_pickleable_result(stage) for stage in fit_result.fit_stages]
 
+    # Stages summary if present (for rietveld/staged fits)
+    if hasattr(fit_result, 'stages_summary') and fit_result.stages_summary is not None:
+        import pandas as pd
+        stages_summary = fit_result.stages_summary
+        # If it's a Styler, extract the underlying DataFrame
+        if isinstance(stages_summary, pd.io.formats.style.Styler):
+            stages_summary = stages_summary.data
+        if isinstance(stages_summary, pd.DataFrame):
+            result_dict['stages_summary_json'] = stages_summary.to_json(orient='split')
+
     return result_dict
 
 
@@ -188,6 +198,12 @@ def _reconstruct_result_from_dict(result_dict, model=None):
     # Restore stage results if present
     if 'fit_stages' in result_dict:
         result.fit_stages = [_reconstruct_result_from_dict(stage) for stage in result_dict['fit_stages']]
+
+    # Restore stages summary if present
+    if 'stages_summary_json' in result_dict:
+        import pandas as pd
+        from io import StringIO
+        result.stages_summary = pd.read_json(StringIO(result_dict['stages_summary_json']), orient='split')
 
     # Add model reference if provided
     result.model = model
@@ -806,6 +822,108 @@ class GroupedFitResult:
         else:
             print(f"Warning: No stages_summary available for index {index}")
             return None
+
+    def plot_stage_progression(self, index, param_name, ax=None, **kwargs):
+        """
+        Plot the progression of a parameter across fitting stages for a specific group.
+
+        Parameters:
+        -----------
+        index : int, tuple, or str
+            The group index to plot.
+        param_name : str
+            The name of the parameter to plot (e.g., 'norm', 'thickness', 'a').
+        ax : matplotlib.axes.Axes, optional
+            The axes to plot on. If None, a new figure is created.
+        **kwargs
+            Additional keyword arguments for plotting.
+
+        Returns:
+        --------
+        matplotlib.axes.Axes
+            The axes containing the plot.
+        """
+        normalized_index = self._normalize_index(index)
+
+        if normalized_index not in self.results:
+            raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
+
+        fit_result = self.results[normalized_index]
+
+        if not hasattr(fit_result, 'fit_stages') or not fit_result.fit_stages:
+            raise ValueError(f"No stage results available for index {index}. "
+                           "Run a multi-stage fit (method='rietveld' or 'staged') first.")
+
+        values = []
+        stderrs = []
+        stage_numbers = list(range(1, len(fit_result.fit_stages) + 1))
+
+        for stage_result in fit_result.fit_stages:
+            if hasattr(stage_result, 'params') and param_name in stage_result.params:
+                values.append(stage_result.params[param_name].value)
+                stderrs.append(stage_result.params[param_name].stderr or 0)
+            else:
+                values.append(np.nan)
+                stderrs.append(np.nan)
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(6, 4))
+
+        color = kwargs.pop("color", "seagreen")
+        ax.errorbar(stage_numbers, values, yerr=stderrs, fmt="o-", color=color, **kwargs)
+        ax.set_xlabel("Stage Number")
+        ax.set_ylabel(f"{param_name}")
+        ax.set_title(f"Progression of {param_name} Across Stages (index={index})")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        plt.tight_layout()
+        return ax
+
+    def plot_chi2_progression(self, index, ax=None, **kwargs):
+        """
+        Plot the progression of reduced chi-squared across fitting stages for a specific group.
+
+        Parameters:
+        -----------
+        index : int, tuple, or str
+            The group index to plot.
+        ax : matplotlib.axes.Axes, optional
+            The axes to plot on. If None, a new figure is created.
+        **kwargs
+            Additional keyword arguments for plotting.
+
+        Returns:
+        --------
+        matplotlib.axes.Axes
+            The axes containing the plot.
+        """
+        normalized_index = self._normalize_index(index)
+
+        if normalized_index not in self.results:
+            raise ValueError(f"Index {index} not found. Available indices: {self.indices}")
+
+        fit_result = self.results[normalized_index]
+
+        if not hasattr(fit_result, 'fit_stages') or not fit_result.fit_stages:
+            raise ValueError(f"No stage results available for index {index}. "
+                           "Run a multi-stage fit (method='rietveld' or 'staged') first.")
+
+        chi2_values = []
+        stage_numbers = list(range(1, len(fit_result.fit_stages) + 1))
+
+        for stage_result in fit_result.fit_stages:
+            chi2_values.append(stage_result.redchi if hasattr(stage_result, 'redchi') else np.nan)
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(6, 4))
+
+        color = kwargs.pop("color", "seagreen")
+        ax.plot(stage_numbers, chi2_values, "o-", color=color, **kwargs)
+        ax.set_xlabel("Stage Number")
+        ax.set_ylabel("Reduced chi2")
+        ax.set_title(f"Reduced chi2 Progression Across Stages (index={index})")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        plt.tight_layout()
+        return ax
 
     def plot_total_xs(self, index, **kwargs):
         """

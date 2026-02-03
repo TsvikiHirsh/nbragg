@@ -164,6 +164,22 @@ class FittingMixin:
         if xtol is not None: fit_kws.setdefault("xtol", xtol)
         if ftol is not None: fit_kws.setdefault("ftol", ftol)
         if gtol is not None: fit_kws.setdefault("gtol", gtol)
+
+        # Check if lattice parameters are active - if so, increase finite-difference step.
+        # NCrystal requires lattice parameter changes >= ~1e-4 A to produce
+        # different cross-sections, but lmfit's default Jacobian step is ~1.5e-8
+        lattice_pattern = re.compile(r'^[abc]\d*$')
+        fit_params = params or self.params
+        active_lattice = any(
+            lattice_pattern.match(name) and fit_params[name].vary
+            for name in fit_params
+        )
+        if active_lattice:
+            if method in ("leastsq",):
+                fit_kws.setdefault("epsfcn", 1e-4)
+            elif method in ("least_squares", "least-squares"):
+                fit_kws.setdefault("diff_step", 1e-4)
+
         kwargs["fit_kws"] = fit_kws
 
         # Try tqdm for progress
@@ -240,7 +256,7 @@ class FittingMixin:
             "tof": [p for p in ["L0", "t0"] if p in self.params],
             "response": [p for p in self.params if self.response and p in self.response.params],
             "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
-            "lattice": [p for p in self.params if p in ["a", "b", "c"] or p.startswith("a_") or p.startswith("b_") or p.startswith("c_")],
+            "lattice": [p for p in self.params if re.compile(r'^[abc]\d*$').match(p)],
             "extinction": [p for p in self.params if p.startswith("ext_")],
             "sans": [p for p in self.params if p == "sans" or re.compile(r"sans\d+").match(p) or p.startswith("sans_")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
@@ -319,7 +335,7 @@ class FittingMixin:
             "tof": [p for p in ["L0", "t0"] if p in self.params],
             "response": [p for p in self.params if self.response and p in self.response.params],
             "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
-            "lattice": [p for p in self.params if p in ["a", "b", "c"] or p.startswith("a_") or p.startswith("b_") or p.startswith("c_")],
+            "lattice": [p for p in self.params if re.compile(r'^[abc]\d*$').match(p)],
             "extinction": [p for p in self.params if p.startswith("ext_")],
             "sans": [p for p in self.params if p == "sans" or re.compile(r"sans\d+").match(p) or p.startswith("sans_")],
             "orientation": [p for p in self.params if p.startswith("θ") or p.startswith("ϕ") or p.startswith("η")],
@@ -598,6 +614,20 @@ class FittingMixin:
                 warnings.warn(f"No parameters were unfrozen in {stage_name}. Skipping this stage.")
                 continue
 
+            # Check if lattice parameters are active - if so, increase epsfcn
+            # NCrystal requires lattice parameter changes >= ~1e-4 A to produce
+            # different cross-sections, but lmfit's default Jacobian step is ~1.5e-8
+            lattice_pattern = re.compile(r'^[abc]\d*$')
+            active_lattice = any(
+                lattice_pattern.match(name) and params[name].vary
+                for name in params if name in params
+            )
+            stage_kwargs = dict(kwargs)
+            if active_lattice:
+                fit_kws = stage_kwargs.pop("fit_kws", {})
+                fit_kws.setdefault("epsfcn", 1e-4)
+                stage_kwargs["fit_kws"] = fit_kws
+
             # Perform fitting
             try:
                 fit_result = super().fit(
@@ -606,7 +636,7 @@ class FittingMixin:
                     wl=wavelengths,
                     weights=weights,
                     method="leastsq",
-                    **kwargs
+                    **stage_kwargs
                 )
             except Exception as e:
                 if verbose:
@@ -655,6 +685,7 @@ class FittingMixin:
 
         self.fit_result = fit_result
         self.fit_stages = stage_results
+        fit_result.fit_stages = stage_results  # Also store on result for grouped data access
         self.stages_summary = self._create_stages_summary_table_enhanced(
             stage_results, resolved_stages, stage_names, method=method
         )
