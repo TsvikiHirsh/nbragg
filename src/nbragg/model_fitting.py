@@ -167,18 +167,24 @@ class FittingMixin:
 
         # Check if lattice parameters are active - if so, increase finite-difference step.
         # NCrystal requires lattice parameter changes >= ~1e-4 A to produce
-        # different cross-sections, but lmfit's default Jacobian step is ~1.5e-8
+        # different cross-sections, but lmfit's default Jacobian step is ~1.5e-8.
+        # We compute epsfcn dynamically so the Jacobian step for the lattice param
+        # is ~2e-4 A (just above NCrystal's resolution) without being too large
+        # for other parameters (e.g. ext_L ~ 100000).
         lattice_pattern = re.compile(r'^[abc]\d*$')
         fit_params = params or self.params
-        active_lattice = any(
-            lattice_pattern.match(name) and fit_params[name].vary
-            for name in fit_params
-        )
-        if active_lattice:
+        lattice_values = [abs(fit_params[name].value) for name in fit_params
+                          if lattice_pattern.match(name) and fit_params[name].vary]
+        if lattice_values:
+            typical_a = max(lattice_values)
+            # Target a Jacobian step of 2e-4 A for the lattice parameter.
+            # MINPACK lmdif uses step = sqrt(epsfcn) * |x_j|, so:
+            #   epsfcn = (target_step / typical_a)^2
+            epsfcn = (2e-4 / typical_a) ** 2
             if method in ("leastsq",):
-                fit_kws.setdefault("epsfcn", 1e-4)
+                fit_kws.setdefault("epsfcn", epsfcn)
             elif method in ("least_squares", "least-squares"):
-                fit_kws.setdefault("diff_step", 1e-4)
+                fit_kws.setdefault("diff_step", epsfcn ** 0.5)
 
         kwargs["fit_kws"] = fit_kws
 
@@ -614,18 +620,20 @@ class FittingMixin:
                 warnings.warn(f"No parameters were unfrozen in {stage_name}. Skipping this stage.")
                 continue
 
-            # Check if lattice parameters are active - if so, increase epsfcn
+            # Check if lattice parameters are active - if so, increase epsfcn.
             # NCrystal requires lattice parameter changes >= ~1e-4 A to produce
-            # different cross-sections, but lmfit's default Jacobian step is ~1.5e-8
+            # different cross-sections, but lmfit's default Jacobian step is ~1.5e-8.
+            # Compute epsfcn dynamically so the step is ~2e-4 A for lattice params
+            # without being too large for other parameters.
             lattice_pattern = re.compile(r'^[abc]\d*$')
-            active_lattice = any(
-                lattice_pattern.match(name) and params[name].vary
-                for name in params if name in params
-            )
+            lattice_values = [abs(params[name].value) for name in params
+                              if lattice_pattern.match(name) and params[name].vary]
             stage_kwargs = dict(kwargs)
-            if active_lattice:
+            if lattice_values:
+                typical_a = max(lattice_values)
+                epsfcn = (2e-4 / typical_a) ** 2
                 fit_kws = stage_kwargs.pop("fit_kws", {})
-                fit_kws.setdefault("epsfcn", 1e-4)
+                fit_kws.setdefault("epsfcn", epsfcn)
                 stage_kwargs["fit_kws"] = fit_kws
 
             # Perform fitting

@@ -346,6 +346,143 @@ class TestSANSModelParameters(unittest.TestCase):
         # sans2 should NOT exist because gamma doesn't have SANS defined
         # The materials dict has 2 materials, but only 1 has sans defined
 
+class TestLatticeFitting(unittest.TestCase):
+    """Test that lattice parameter fitting works correctly."""
+
+    def setUp(self):
+        """Set up Fe model with vary_lattice=True."""
+        self.cross_section = CrossSection(iron=materials["Fe_sg229_Iron-alpha"])
+        self.model = TransmissionModel(self.cross_section, vary_lattice=True)
+
+    def test_lattice_params_created(self):
+        """Test that lattice params a, b, c are created with correct constraints."""
+        params = self.model.params
+        self.assertIn('a', params)
+        self.assertIn('b', params)
+        self.assertIn('c', params)
+        # For cubic Fe, b and c should be constrained to a
+        self.assertTrue(params['a'].vary)
+        self.assertFalse(params['b'].vary)  # constrained by expr
+        self.assertFalse(params['c'].vary)
+        self.assertEqual(params['b'].expr, 'a')
+        self.assertEqual(params['c'].expr, 'a')
+
+    def test_lattice_group_map_matches_params(self):
+        """Test that the 'lattice' group resolves to correct parameters."""
+        resolved = self.model._get_stage_parameters('lattice')
+        self.assertIn('a', resolved)
+        self.assertIn('b', resolved)
+        self.assertIn('c', resolved)
+
+    def test_lattice_single_fit(self):
+        """Test that lattice parameter changes during single-data rietveld fit."""
+        wl = np.linspace(1.5, 6.0, 500)
+        true_a = 2.88  # shifted from default ~2.8676
+
+        # Generate synthetic data with shifted lattice
+        T_true = self.model.transmission(wl, thickness=0.5, a=true_a, b=true_a, c=true_a)
+        np.random.seed(42)
+        T_noisy = T_true + np.random.normal(0, 0.003, len(wl))
+
+        mock_data = pd.DataFrame({
+            'wavelength': wl,
+            'trans': T_noisy,
+            'err': np.ones_like(wl) * 0.003
+        })
+
+        # Reset model params
+        self.model.params['a'].value = 2.8676
+        self.model.params['thickness'].value = 1.0
+
+        result = self.model.fit(mock_data, method="rietveld",
+                                wlmin=1.5, wlmax=6.0,
+                                progress_bar=False)
+
+        # Lattice parameter must change from default
+        self.assertGreater(abs(result.params['a'].value - 2.8676), 1e-4,
+                           "Lattice parameter 'a' should change from default value")
+        # Should be close to the true value
+        self.assertAlmostEqual(result.params['a'].value, true_a, delta=0.05,
+                               msg="Fitted 'a' should be close to true value")
+        # stderr should be computed
+        self.assertIsNotNone(result.params['a'].stderr,
+                             "Lattice parameter 'a' should have stderr computed")
+        # b and c should follow a
+        self.assertAlmostEqual(result.params['b'].value, result.params['a'].value, places=6)
+        self.assertAlmostEqual(result.params['c'].value, result.params['a'].value, places=6)
+
+    def test_lattice_serialization_roundtrip(self):
+        """Test that lattice params survive _to_dict/_from_dict serialization."""
+        model_dict = self.model._to_dict()
+        model2 = TransmissionModel._from_dict(model_dict)
+
+        # Verify params are preserved
+        self.assertTrue(model2.params['a'].vary)
+        self.assertFalse(model2.params['b'].vary)
+        self.assertEqual(model2.params['b'].expr, 'a')
+        self.assertEqual(model2.params['c'].expr, 'a')
+        self.assertAlmostEqual(model2.params['a'].value, self.model.params['a'].value)
+
+    def test_lattice_epsfcn_computed_dynamically(self):
+        """Test that epsfcn is computed based on lattice parameter value."""
+        wl = np.linspace(1.5, 6.0, 100)
+        T = self.model.transmission(wl, thickness=0.5, a=2.87, b=2.87, c=2.87)
+        mock_data = pd.DataFrame({
+            'wavelength': wl,
+            'trans': T,
+            'err': np.ones_like(wl) * 0.01
+        })
+
+        # Capture fit_kws by fitting directly (not via rietveld)
+        # Use leastsq method to check epsfcn
+        import lmfit
+        original_fit = lmfit.Model.fit
+
+        captured_kws = {}
+        def spy_fit(self_model, *args, **kwargs):
+            captured_kws.update(kwargs.get('fit_kws', {}))
+            return original_fit(self_model, *args, **kwargs)
+
+        lmfit.Model.fit = spy_fit
+        try:
+            self.model.fit(mock_data, method="leastsq",
+                           wlmin=1.5, wlmax=6.0, progress_bar=False)
+        except:
+            pass  # Fit may fail, we just want to check epsfcn was set
+        finally:
+            lmfit.Model.fit = original_fit
+
+        # epsfcn should be set and much smaller than 1e-4
+        self.assertIn('epsfcn', captured_kws)
+        a_val = self.model.params['a'].value
+        expected = (2e-4 / a_val) ** 2
+        self.assertAlmostEqual(captured_kws['epsfcn'], expected, places=12,
+                               msg="epsfcn should be computed from lattice param value")
+
+    def test_lattice_fit_stages_summary(self):
+        """Test that stages_summary is available after rietveld fit with lattice."""
+        wl = np.linspace(1.5, 6.0, 200)
+        T = self.model.transmission(wl, thickness=0.5, a=2.88, b=2.88, c=2.88)
+        np.random.seed(42)
+        T_noisy = T + np.random.normal(0, 0.003, len(wl))
+
+        mock_data = pd.DataFrame({
+            'wavelength': wl,
+            'trans': T_noisy,
+            'err': np.ones_like(wl) * 0.003
+        })
+
+        result = self.model.fit(mock_data, method="rietveld",
+                                wlmin=1.5, wlmax=6.0, progress_bar=False)
+
+        # fit_stages should be available
+        self.assertTrue(hasattr(result, 'fit_stages'))
+        self.assertGreater(len(result.fit_stages), 0)
+        # stages_summary should be available
+        self.assertTrue(hasattr(result, 'stages_summary'))
+        self.assertIsNotNone(result.stages_summary)
+
+
 class MockFitResult:
     """Mock lmfit.ModelResult for testing."""
     def __init__(self):
