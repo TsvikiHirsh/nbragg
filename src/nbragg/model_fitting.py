@@ -848,6 +848,7 @@ class FittingMixin:
 
         # Collect results
         grouped_result = GroupedFitResult(group_shape=data.group_shape)
+        grouped_result.model = self
         failed_indices = []
         for idx, result in results:
             if result is not None:
@@ -944,6 +945,7 @@ class FittingMixin:
 
         # Collect results and reconstruct result objects
         grouped_result = GroupedFitResult(group_shape=data.group_shape)
+        grouped_result.model = self
         failed_indices = []
         error_messages = []
         for idx, result_dict in results:
@@ -1003,6 +1005,7 @@ class FittingMixin:
 
         start_time = time.time()
         grouped_result = GroupedFitResult(group_shape=data.group_shape)
+        grouped_result.model = self
         failed_indices = []
 
         iterator = tqdm(data.indices, desc=f"Fitting {len(data.indices)} groups") if progress_bar else data.indices

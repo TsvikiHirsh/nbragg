@@ -347,6 +347,7 @@ class GroupedFitResult:
         self.results = {}
         self.indices = []
         self.group_shape = group_shape
+        self.model = None
 
     def _normalize_index(self, index):
         """
@@ -390,6 +391,231 @@ class GroupedFitResult:
         self.results[normalized_index] = result
         if normalized_index not in self.indices:
             self.indices.append(normalized_index)
+
+    def _get_summary_dataframe(self):
+        """
+        Build a DataFrame with fit statistics and parameter values/errors for all groups.
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame with columns: index, success, redchi, chisqr, nfev, nvarys,
+            {param}, {param}_err for each parameter.
+        """
+        import pandas as pd
+
+        summary_data = []
+        for idx in self.indices:
+            result = self.results[idx]
+            row = {
+                'index': str(idx),
+                'success': result.success if hasattr(result, 'success') else None,
+                'redchi': result.redchi if hasattr(result, 'redchi') else None,
+                'chisqr': result.chisqr if hasattr(result, 'chisqr') else None,
+                'nfev': result.nfev if hasattr(result, 'nfev') else None,
+                'nvarys': result.nvarys if hasattr(result, 'nvarys') else None,
+            }
+
+            # Add all parameter values and errors
+            if hasattr(result, 'params'):
+                for param_name in result.params:
+                    param = result.params[param_name]
+                    row[param_name] = param.value
+                    row[f"{param_name}_err"] = param.stderr if param.stderr is not None else np.nan
+
+            summary_data.append(row)
+
+        return pd.DataFrame(summary_data)
+
+    def fit(self, data, query=None, indices=None, params=None,
+            n_jobs=10, backend='loky', **fit_kwargs):
+        """
+        Refit a subset of groups, returning a new GroupedFitResult with all groups.
+
+        Groups matching the query/indices are refitted; non-matching groups are
+        copied from the original result. By default, each refitted group uses its
+        previous best-fit parameters as starting values.
+
+        Parameters
+        ----------
+        data : Data
+            The grouped data to fit (same data used in the original fit).
+        query : str, optional
+            Pandas query string applied to the summary DataFrame to select
+            groups for refitting (e.g., ``"redchi > 2 and thickness_err < 0.3"``).
+        indices : list, optional
+            Explicit list of group indices to refit. Takes precedence over query.
+        params : lmfit.Parameters, optional
+            Override starting parameters for all refitted groups.
+            If None, each group uses its own previous best-fit parameters.
+        n_jobs : int, optional
+            Number of parallel workers (default 10). Only used with loky backend.
+        backend : str, optional
+            Parallelization backend: ``'loky'`` (default) or ``'sequential'``.
+        **fit_kwargs
+            Additional keyword arguments passed to ``model.fit()``
+            (e.g., ``wlmin``, ``wlmax``, ``method``, ``stages``).
+
+        Returns
+        -------
+        GroupedFitResult
+            New result containing all groups: non-selected groups copied from
+            original, selected groups replaced with refit results.
+
+        Raises
+        ------
+        ValueError
+            If no model reference is stored, or neither query nor indices is provided.
+
+        Examples
+        --------
+        >>> result = model.fit(data, n_jobs=8, wlmin=2, wlmax=8)
+        >>> result2 = result.fit(data, n_jobs=8, wlmin=2, wlmax=8,
+        ...                      query="redchi > 2 and thickness_err < 0.3")
+        """
+        import warnings
+        import copy
+
+        if self.model is None:
+            raise ValueError(
+                "No model reference stored on this GroupedFitResult. "
+                "Cannot refit without a model. This can happen if the result "
+                "was loaded from a file without a model reference."
+            )
+
+        if query is None and indices is None:
+            raise ValueError("Must provide at least one of 'query' or 'indices'.")
+
+        # Determine which indices to refit
+        if indices is not None:
+            refit_indices = [self._normalize_index(i) for i in indices]
+            # Validate they exist
+            for idx in refit_indices:
+                if idx not in self.results:
+                    raise KeyError(f"Index {idx} not found in results. Available: {self.indices}")
+        else:
+            # Use query to select indices
+            df = self._get_summary_dataframe()
+            try:
+                filtered = df.query(query)
+            except Exception as e:
+                raise ValueError(f"Query failed: {e}")
+            refit_indices = list(filtered['index'].values)
+
+        if len(refit_indices) == 0:
+            warnings.warn("Query matched zero groups. Returning copy of original result.")
+            new_result = GroupedFitResult(group_shape=self.group_shape)
+            new_result.model = self.model
+            for idx in self.indices:
+                new_result.add_result(idx, self.results[idx])
+            return new_result
+
+        # Dispatch to backend
+        if backend == 'loky':
+            refit_results = self._refit_loky(data, refit_indices, params, n_jobs, **fit_kwargs)
+        elif backend == 'sequential':
+            refit_results = self._refit_sequential(data, refit_indices, params, **fit_kwargs)
+        else:
+            raise ValueError(f"Unknown backend '{backend}'. Use 'loky' or 'sequential'.")
+
+        # Merge: create new GroupedFitResult with all groups
+        merged = GroupedFitResult(group_shape=self.group_shape)
+        merged.model = self.model
+        for idx in self.indices:
+            if idx in refit_results:
+                merged.add_result(idx, refit_results[idx])
+            else:
+                merged.add_result(idx, self.results[idx])
+
+        return merged
+
+    def _refit_loky(self, data, refit_indices, params_override, n_jobs, **fit_kwargs):
+        """
+        Refit selected groups using loky multiprocessing.
+
+        Returns a dict mapping normalized index -> result for refitted groups only.
+        """
+        from concurrent.futures import ProcessPoolExecutor
+        import copy
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:
+            from tqdm import tqdm
+
+        model_dict_base = self.model._to_dict()
+
+        worker_args = []
+        for idx in refit_indices:
+            # Build per-group model dict with previous best-fit params as starting values
+            model_dict = copy.copy(model_dict_base)
+            if params_override is not None:
+                model_dict['params'] = params_override.dumps()
+            else:
+                # Use this group's previous fitted params as starting values
+                prev_result = self.results[idx]
+                model_dict['params'] = prev_result.params.dumps()
+
+            # Get group data (idx is already a normalized string matching data.groups keys)
+            table_dict = data.groups[idx].to_dict()
+            worker_args.append((idx, model_dict, table_dict, data.L, data.tstep, fit_kwargs))
+
+        n_workers = min(n_jobs, len(worker_args))
+
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            results_list = list(tqdm(
+                executor.map(_fit_single_group_worker, worker_args),
+                total=len(worker_args),
+                desc="Refitting groups"
+            ))
+
+        refit_results = {}
+        for idx, result_dict in results_list:
+            if result_dict is not None and 'error' not in result_dict:
+                refit_results[idx] = _reconstruct_result_from_dict(result_dict, model=self.model)
+            else:
+                import warnings
+                error_msg = result_dict.get('error', 'Unknown error') if result_dict else 'None result'
+                warnings.warn(f"Refit failed for group {idx}: {error_msg}. Keeping original result.")
+                refit_results[idx] = self.results[idx]
+
+        return refit_results
+
+    def _refit_sequential(self, data, refit_indices, params_override, **fit_kwargs):
+        """
+        Refit selected groups sequentially.
+
+        Returns a dict mapping normalized index -> result for refitted groups only.
+        """
+        from nbragg.data import Data
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:
+            from tqdm import tqdm
+
+        refit_results = {}
+
+        for idx in tqdm(refit_indices, desc="Refitting groups"):
+            # Build starting params for this group
+            if params_override is not None:
+                group_params = params_override.copy()
+            else:
+                group_params = self.results[idx].params.copy()
+
+            # Get group data (idx is already a normalized string matching data.groups keys)
+            group_data = Data()
+            group_data.table = data.groups[idx]
+            group_data.L = data.L
+            group_data.tstep = data.tstep
+
+            try:
+                result = self.model.fit(group_data, params=group_params, **fit_kwargs)
+                refit_results[idx] = result
+            except Exception as e:
+                import warnings
+                warnings.warn(f"Refit failed for group {idx}: {e}. Keeping original result.")
+                refit_results[idx] = self.results[idx]
+
+        return refit_results
 
     def __getitem__(self, index):
         """
@@ -1002,31 +1228,7 @@ class GroupedFitResult:
         Returns a formatted table summarizing all grouped fit results,
         including fit statistics and parameter values with errors.
         """
-        import pandas as pd
-
-        # Collect summary data
-        summary_data = []
-        for idx in self.indices:
-            result = self.results[idx]
-            row = {
-                'index': str(idx),
-                'success': result.success if hasattr(result, 'success') else None,
-                'redchi': result.redchi if hasattr(result, 'redchi') else None,
-                'chisqr': result.chisqr if hasattr(result, 'chisqr') else None,
-                'nfev': result.nfev if hasattr(result, 'nfev') else None,
-                'nvarys': result.nvarys if hasattr(result, 'nvarys') else None,
-            }
-
-            # Add all parameter values and errors
-            if hasattr(result, 'params'):
-                for param_name in result.params:
-                    param = result.params[param_name]
-                    row[param_name] = param.value
-                    row[f"{param_name}_err"] = param.stderr if param.stderr is not None else np.nan
-
-            summary_data.append(row)
-
-        df = pd.DataFrame(summary_data)
+        df = self._get_summary_dataframe()
 
         # Create HTML with styling
         html = f"""
