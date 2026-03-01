@@ -950,11 +950,16 @@ class CrossSection:
         for i, name in enumerate(material_names, 1):
             spec = self.materials[name]
             
-            # Check for material-specific parameters
+            # Check for material-specific parameters.
+            # Params can be addressed either by numeric index (η1, θ1, ϕ1)
+            # or by phase name (η_phasename, θ_phasename, ϕ_phasename).
             temp_key = f"temp"  # all phase temperatures are updated to the same value
             mos_key = f"η{i}"
+            mos_key_named = f"η_{name}"
             theta_key = f"θ{i}"
+            theta_key_named = f"θ_{name}"
             phi_key = f"ϕ{i}"
+            phi_key_named = f"ϕ_{name}"
             lata_key = f"a{i}"
             latb_key = f"b{i}"
             latc_key = f"c{i}"
@@ -964,25 +969,28 @@ class CrossSection:
             ext_dist_key = f"ext_dist{i}"
             ext_method_key = f"ext_method{i}"
             sans_key = f"sans{i}"
-            
+
             # Update temperature
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
                 spec['temp'] = kwargs[temp_key]
                 updated = True
-            
-            # Update mosaic spread
-            if mos_key in kwargs and kwargs[mos_key] != spec['mos']:
-                spec['mos'] = kwargs[mos_key]
+
+            # Update mosaic spread (accept both η1 and η_phasename)
+            new_mos = kwargs.get(mos_key, kwargs.get(mos_key_named))
+            if new_mos is not None and new_mos != spec['mos']:
+                spec['mos'] = new_mos
                 updated = True
-            
-            # Update theta
-            if theta_key in kwargs and kwargs[theta_key] != spec['theta']:
-                spec['theta'] = kwargs[theta_key]
+
+            # Update theta (accept both θ1 and θ_phasename)
+            new_theta = kwargs.get(theta_key, kwargs.get(theta_key_named))
+            if new_theta is not None and new_theta != spec['theta']:
+                spec['theta'] = new_theta
                 updated = True
-            
-            # Update phi
-            if phi_key in kwargs and kwargs[phi_key] != spec['phi']:
-                spec['phi'] = kwargs[phi_key]
+
+            # Update phi (accept both ϕ1 and ϕ_phasename)
+            new_phi = kwargs.get(phi_key, kwargs.get(phi_key_named))
+            if new_phi is not None and new_phi != spec['phi']:
+                spec['phi'] = new_phi
                 updated = True
             
             # Update phase weight

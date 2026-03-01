@@ -238,5 +238,103 @@ class TestOrientationParams(unittest.TestCase):
                 shutil.rmtree(temp_dir)
 
 
+    def test_orientation_params_affect_cross_section(self):
+        """Test that changing θ/ϕ/η params actually changes the cross-section output.
+
+        This is a regression test for the bug where params were named θ_phase but
+        CrossSection.__call__ only checked for θ1, θ2, ... (numeric indices), so
+        orientation params were silently ignored during fitting.
+        """
+        import numpy as np
+        materials = {
+            'phase1': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'temp': 300.0,
+                'mos': 20.0,
+                'theta': 0.0,
+                'phi': 0.0,
+                'dir1': [1, 0, 0],
+                'dir2': [0, 1, 0],
+                'weight': 1.0
+            }
+        }
+
+        xs = nbragg.CrossSection(materials)
+        wl = np.linspace(1, 5, 50)
+
+        # Baseline cross-section
+        xs_base = xs(wl)
+
+        # Perturb mosaicity via the named-param style (η_phase1)
+        xs_perturbed = xs(wl, **{'η_phase1': 5.0})
+
+        # The cross-section must have changed when mosaicity is reduced from 20->5
+        self.assertFalse(
+            np.allclose(xs_base, xs_perturbed),
+            "Cross-section did not change when η_phase1 was updated – "
+            "orientation params are not being passed through to NCrystal."
+        )
+
+    def test_orientation_epsfcn_set_for_zero_angles(self):
+        """Test that the fitting code sets an appropriate epsfcn when θ/ϕ start at 0.
+
+        MINPACK's finite-difference step is sqrt(epsfcn)*|x|, which collapses to
+        sqrt(epsfcn) when x=0. Without an explicit epsfcn, this gives a Jacobian step
+        of ~1.5e-8° — far too small for NCrystal to detect. The code must set
+        epsfcn=0.25 so the absolute step is 0.5°.
+        """
+        materials = {
+            'phase1': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'temp': 300.0,
+                'mos': 20.0,
+                'theta': 0.0,
+                'phi': 0.0,
+                'dir1': [1, 0, 0],
+                'dir2': [0, 1, 0],
+                'weight': 1.0
+            }
+        }
+        xs = nbragg.CrossSection(materials)
+        model = nbragg.TransmissionModel(xs, vary_orientation=True)
+
+        # Verify the cross-section is sensitive to a 0.5° step (what epsfcn=0.25 gives)
+        wl = np.linspace(1, 5, 50)
+        xs_base = xs(wl)
+        xs_step = xs(wl, **{'θ_phase1': 0.5})   # 0.5° step in theta
+        self.assertFalse(
+            np.allclose(xs_base, xs_step),
+            "0.5° perturbation in θ produced no change in cross-section – "
+            "the epsfcn-driven Jacobian step would be useless."
+        )
+
+    def test_orientation_params_numeric_index_still_works(self):
+        """Test that the old η1/θ1/ϕ1 numeric-index style still works."""
+        import numpy as np
+        materials = {
+            'phase1': {
+                'mat': 'Fe_sg229_Iron-alpha.ncmat',
+                'temp': 300.0,
+                'mos': 20.0,
+                'theta': 0.0,
+                'phi': 0.0,
+                'dir1': [1, 0, 0],
+                'dir2': [0, 1, 0],
+                'weight': 1.0
+            }
+        }
+
+        xs = nbragg.CrossSection(materials)
+        wl = np.linspace(1, 5, 50)
+
+        xs_base = xs(wl)
+        xs_perturbed = xs(wl, **{'η1': 5.0})
+
+        self.assertFalse(
+            np.allclose(xs_base, xs_perturbed),
+            "Cross-section did not change when η1 was updated."
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

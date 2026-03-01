@@ -175,16 +175,40 @@ class FittingMixin:
         fit_params = params or self.params
         lattice_values = [abs(fit_params[name].value) for name in fit_params
                           if lattice_pattern.match(name) and fit_params[name].vary]
+        best_epsfcn = 0.0
         if lattice_values:
             typical_a = max(lattice_values)
             # Target a Jacobian step of 2e-4 A for the lattice parameter.
             # MINPACK lmdif uses step = sqrt(epsfcn) * |x_j|, so:
             #   epsfcn = (target_step / typical_a)^2
-            epsfcn = (2e-4 / typical_a) ** 2
+            best_epsfcn = max(best_epsfcn, (2e-4 / typical_a) ** 2)
+
+        # Check if orientation parameters are active - if so, increase finite-difference step.
+        # NCrystal requires orientation changes of ~0.5° to produce different cross-sections,
+        # but lmfit's default Jacobian step is ~1.5e-8° (effectively zero when starting at 0).
+        # MINPACK step: h = sqrt(epsfcn) * |x_j|, or just sqrt(epsfcn) when x_j = 0.
+        # - When θ/ϕ start at 0: epsfcn = 0.25 → absolute step = sqrt(0.25) = 0.5°
+        # - When θ/ϕ are nonzero: target 0.5° relative step from the largest active angle
+        theta_phi_active = [n for n in fit_params
+                            if (n.startswith('θ') or n.startswith('ϕ')) and fit_params[n].vary]
+        eta_active = [n for n in fit_params if n.startswith('η') and fit_params[n].vary]
+        if theta_phi_active or eta_active:
+            has_small_angle = any(abs(fit_params[n].value) < 1.0 for n in theta_phi_active)
+            if theta_phi_active and has_small_angle:
+                orient_epsfcn = 0.25  # absolute 0.5° step when θ/ϕ ≈ 0
+            else:
+                all_orient = theta_phi_active + eta_active
+                orient_vals = [abs(fit_params[n].value) for n in all_orient
+                               if abs(fit_params[n].value) > 0]
+                typical_orient = max(orient_vals) if orient_vals else 1.0
+                orient_epsfcn = (0.5 / typical_orient) ** 2
+            best_epsfcn = max(best_epsfcn, orient_epsfcn)
+
+        if best_epsfcn > 0:
             if method in ("leastsq",):
-                fit_kws.setdefault("epsfcn", epsfcn)
+                fit_kws.setdefault("epsfcn", best_epsfcn)
             elif method in ("least_squares", "least-squares"):
-                fit_kws.setdefault("diff_step", epsfcn ** 0.5)
+                fit_kws.setdefault("diff_step", best_epsfcn ** 0.5)
 
         kwargs["fit_kws"] = fit_kws
 
@@ -620,20 +644,38 @@ class FittingMixin:
                 warnings.warn(f"No parameters were unfrozen in {stage_name}. Skipping this stage.")
                 continue
 
-            # Check if lattice parameters are active - if so, increase epsfcn.
-            # NCrystal requires lattice parameter changes >= ~1e-4 A to produce
-            # different cross-sections, but lmfit's default Jacobian step is ~1.5e-8.
-            # Compute epsfcn dynamically so the step is ~2e-4 A for lattice params
-            # without being too large for other parameters.
+            # Check if lattice or orientation parameters are active - if so, increase epsfcn.
+            # NCrystal requires lattice changes >= ~1e-4 Å and orientation changes of ~0.5°
+            # to produce different cross-sections. The default Jacobian step (~1.5e-8) is
+            # far too small for both. We compute the required epsfcn and take the larger.
             lattice_pattern = re.compile(r'^[abc]\d*$')
             lattice_values = [abs(params[name].value) for name in params
                               if lattice_pattern.match(name) and params[name].vary]
             stage_kwargs = dict(kwargs)
+            best_epsfcn = 0.0
+
             if lattice_values:
                 typical_a = max(lattice_values)
-                epsfcn = (2e-4 / typical_a) ** 2
+                best_epsfcn = max(best_epsfcn, (2e-4 / typical_a) ** 2)
+
+            theta_phi_active = [n for n in params
+                                if (n.startswith('θ') or n.startswith('ϕ')) and params[n].vary]
+            eta_active = [n for n in params if n.startswith('η') and params[n].vary]
+            if theta_phi_active or eta_active:
+                has_small_angle = any(abs(params[n].value) < 1.0 for n in theta_phi_active)
+                if theta_phi_active and has_small_angle:
+                    orient_epsfcn = 0.25  # absolute 0.5° step when θ/ϕ ≈ 0
+                else:
+                    all_orient = theta_phi_active + eta_active
+                    orient_vals = [abs(params[n].value) for n in all_orient
+                                   if abs(params[n].value) > 0]
+                    typical_orient = max(orient_vals) if orient_vals else 1.0
+                    orient_epsfcn = (0.5 / typical_orient) ** 2
+                best_epsfcn = max(best_epsfcn, orient_epsfcn)
+
+            if best_epsfcn > 0:
                 fit_kws = stage_kwargs.pop("fit_kws", {})
-                fit_kws.setdefault("epsfcn", epsfcn)
+                fit_kws.setdefault("epsfcn", best_epsfcn)
                 stage_kwargs["fit_kws"] = fit_kws
 
             # Perform fitting
