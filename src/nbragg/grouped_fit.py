@@ -738,6 +738,8 @@ class GroupedFitResult:
               x-axis limits (min, max).
             - ylim : tuple, optional
               y-axis limits (min, max).
+            - colorbar : bool, optional
+              Whether to draw a colorbar for 2D maps (default: True).
             - figsize : tuple, optional
               Figure size (width, height) in inches. Ignored when ax is provided.
 
@@ -843,6 +845,7 @@ class GroupedFitResult:
         vmax = kwargs.pop("vmax", None)
         xlim = kwargs.pop("xlim", None)
         ylim = kwargs.pop("ylim", None)
+        colorbar = kwargs.pop("colorbar", True)
         figsize = kwargs.pop("figsize", None)
 
         # Create visualization based on group_shape
@@ -903,7 +906,8 @@ class GroupedFitResult:
                 ax.set_xlim(xlim)
             if ylim is not None:
                 ax.set_ylim(ylim)
-            plt.colorbar(im, ax=ax, label=param_name)
+            if colorbar:
+                plt.colorbar(im, ax=ax, label=param_name)
             return ax
 
         elif self.group_shape and len(self.group_shape) == 1:
