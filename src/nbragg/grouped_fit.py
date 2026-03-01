@@ -740,6 +740,10 @@ class GroupedFitResult:
               y-axis limits (min, max).
             - colorbar : bool, optional
               Whether to draw a colorbar for 2D maps (default: True).
+            - clabel : str, optional
+              Colorbar label. Defaults to param_name.
+            - xlabel, ylabel : str, optional
+              Axis labels. Override the auto-generated defaults.
             - figsize : tuple, optional
               Figure size (width, height) in inches. Ignored when ax is provided.
 
@@ -846,6 +850,9 @@ class GroupedFitResult:
         xlim = kwargs.pop("xlim", None)
         ylim = kwargs.pop("ylim", None)
         colorbar = kwargs.pop("colorbar", True)
+        clabel = kwargs.pop("clabel", None)
+        xlabel = kwargs.pop("xlabel", None)
+        ylabel = kwargs.pop("ylabel", None)
         figsize = kwargs.pop("figsize", None)
 
         # Create visualization based on group_shape
@@ -896,8 +903,8 @@ class GroupedFitResult:
                 ax = ax_in
             im = ax.pcolormesh(x_edges, y_edges, param_array, cmap=cmap, vmin=vmin, vmax=vmax,
                               shading='flat', **kwargs)
-            ax.set_xlabel("X coordinate")
-            ax.set_ylabel("Y coordinate")
+            ax.set_xlabel("X coordinate" if xlabel is None else xlabel)
+            ax.set_ylabel("Y coordinate" if ylabel is None else ylabel)
             ax.set_aspect('equal')
             if title is None:
                 title = f"{param_name} Map"
@@ -907,7 +914,7 @@ class GroupedFitResult:
             if ylim is not None:
                 ax.set_ylim(ylim)
             if colorbar:
-                plt.colorbar(im, ax=ax, label=param_name)
+                plt.colorbar(im, ax=ax, label=param_name if clabel is None else clabel)
             return ax
 
         elif self.group_shape and len(self.group_shape) == 1:
@@ -947,8 +954,8 @@ class GroupedFitResult:
             else:
                 raise ValueError(f"Unknown kind '{kind}'. Must be 'line', 'bar', or 'errorbar'.")
 
-            ax.set_xlabel("Index")
-            ax.set_ylabel(param_name)
+            ax.set_xlabel("Index" if xlabel is None else xlabel)
+            ax.set_ylabel(param_name if ylabel is None else ylabel)
             if title is None:
                 title = f"{param_name} vs Index"
             ax.set_title(title)
@@ -995,7 +1002,9 @@ class GroupedFitResult:
 
             ax.set_xticks(positions)
             ax.set_xticklabels(self.indices, rotation=45, ha='right')
-            ax.set_ylabel(param_name)
+            if xlabel is not None:
+                ax.set_xlabel(xlabel)
+            ax.set_ylabel(param_name if ylabel is None else ylabel)
             if title is None:
                 title = f"{param_name} by Group"
             ax.set_title(title)
