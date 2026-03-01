@@ -726,14 +726,20 @@ class GroupedFitResult:
             Ignored for 2D data (always uses pcolormesh).
         **kwargs : dict, optional
             Additional plotting parameters:
+            - ax : matplotlib.Axes, optional
+              Existing axes to plot into. If None, a new figure is created.
             - cmap : str, optional
               Colormap for 2D maps (default: 'viridis').
             - title : str, optional
               Plot title (default: auto-generated).
             - vmin, vmax : float, optional
               Color scale limits.
+            - xlim : tuple, optional
+              x-axis limits (min, max).
+            - ylim : tuple, optional
+              y-axis limits (min, max).
             - figsize : tuple, optional
-              Figure size (width, height) in inches.
+              Figure size (width, height) in inches. Ignored when ax is provided.
 
         Returns:
         --------
@@ -830,10 +836,13 @@ class GroupedFitResult:
                 print("Plotting all data without filtering.")
 
         # Extract kwargs
+        ax_in = kwargs.pop("ax", None)
         cmap = kwargs.pop("cmap", "viridis")
         title = kwargs.pop("title", None)
         vmin = kwargs.pop("vmin", None)
         vmax = kwargs.pop("vmax", None)
+        xlim = kwargs.pop("xlim", None)
+        ylim = kwargs.pop("ylim", None)
         figsize = kwargs.pop("figsize", None)
 
         # Create visualization based on group_shape
@@ -878,7 +887,10 @@ class GroupedFitResult:
                     if x in x_map and y in y_map:
                         param_array[y_map[y], x_map[x]] = param_values[idx_str]
 
-            fig, ax = plt.subplots(figsize=figsize)
+            if ax_in is None:
+                fig, ax = plt.subplots(figsize=figsize)
+            else:
+                ax = ax_in
             im = ax.pcolormesh(x_edges, y_edges, param_array, cmap=cmap, vmin=vmin, vmax=vmax,
                               shading='flat', **kwargs)
             ax.set_xlabel("X coordinate")
@@ -887,6 +899,10 @@ class GroupedFitResult:
             if title is None:
                 title = f"{param_name} Map"
             ax.set_title(title)
+            if xlim is not None:
+                ax.set_xlim(xlim)
+            if ylim is not None:
+                ax.set_ylim(ylim)
             plt.colorbar(im, ax=ax, label=param_name)
             return ax
 
@@ -910,7 +926,10 @@ class GroupedFitResult:
                         errors.append(0)
                 errors = np.array(errors)
 
-            fig, ax = plt.subplots(figsize=figsize)
+            if ax_in is None:
+                fig, ax = plt.subplots(figsize=figsize)
+            else:
+                ax = ax_in
 
             if kind == 'line':
                 ax.plot(indices_array, values, 'o-', **kwargs)
@@ -930,11 +949,18 @@ class GroupedFitResult:
                 title = f"{param_name} vs Index"
             ax.set_title(title)
             ax.grid(True, alpha=0.3)
+            if xlim is not None:
+                ax.set_xlim(xlim)
+            if ylim is not None:
+                ax.set_ylim(ylim)
             return ax
 
         else:
             # Named indices - bar or line plot
-            fig, ax = plt.subplots(figsize=figsize)
+            if ax_in is None:
+                fig, ax = plt.subplots(figsize=figsize)
+            else:
+                ax = ax_in
             positions = np.arange(len(self.indices))
             # Replace None with np.nan for plotting
             values = [param_values[idx] if param_values[idx] is not None else np.nan for idx in self.indices]
@@ -969,7 +995,12 @@ class GroupedFitResult:
             if title is None:
                 title = f"{param_name} by Group"
             ax.set_title(title)
-            plt.tight_layout()
+            if xlim is not None:
+                ax.set_xlim(xlim)
+            if ylim is not None:
+                ax.set_ylim(ylim)
+            if ax_in is None:
+                plt.tight_layout()
             return ax
 
     def summary(self):
