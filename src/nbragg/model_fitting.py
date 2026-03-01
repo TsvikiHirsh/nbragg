@@ -41,6 +41,21 @@ class FittingMixin:
     - Support for multiple parallelization backends (loky, threading, sequential)
     """
 
+    @staticmethod
+    def _clean_fit_data(df):
+        """
+        Drop rows that would produce NaN/Inf weights or residuals.
+
+        Removes rows where trans or err is NaN/Inf, or where err <= 0
+        (which gives Inf or negative weights and causes the optimizer to fail).
+        """
+        mask = (
+            df["trans"].notna() & np.isfinite(df["trans"]) &
+            df["err"].notna()   & np.isfinite(df["err"]) &
+            (df["err"] > 0)
+        )
+        return df[mask]
+
     def fit(self, data, params=None, wlmin: float = 1., wlmax: float = 6.,
             method: str = "rietveld",
             xtol: float = None, ftol: float = None, gtol: float = None,
@@ -227,7 +242,7 @@ class FittingMixin:
 
         # Prepare input data
         if isinstance(data, pandas.DataFrame):
-            data = data.query(f"{wlmin} < wavelength < {wlmax}")
+            data = self._clean_fit_data(data.query(f"{wlmin} < wavelength < {wlmax}"))
             weights = kwargs.get("weights", 1. / data["err"].values)
             fit_result = super().fit(
                 data["trans"].values,
@@ -239,7 +254,7 @@ class FittingMixin:
             )
 
         elif isinstance(data, Data):
-            data = data.table.query(f"{wlmin} < wavelength < {wlmax}")
+            data = self._clean_fit_data(data.table.query(f"{wlmin} < wavelength < {wlmax}"))
             weights = kwargs.get("weights", 1. / data["err"].values)
             fit_result = super().fit(
                 data["trans"].values,
@@ -576,12 +591,12 @@ class FittingMixin:
 
             # Filter data for this stage
             if isinstance(data, pandas.DataFrame):
-                stage_data = data.query(f"{stage_wlmin} < wavelength < {stage_wlmax}")
+                stage_data = self._clean_fit_data(data.query(f"{stage_wlmin} < wavelength < {stage_wlmax}"))
                 wavelengths = stage_data["wavelength"].values
                 trans = stage_data["trans"].values
                 weights = kwargs.get("weights", 1. / stage_data["err"].values)
             elif isinstance(data, Data):
-                stage_data = data.table.query(f"{stage_wlmin} < wavelength < {stage_wlmax}")
+                stage_data = self._clean_fit_data(data.table.query(f"{stage_wlmin} < wavelength < {stage_wlmax}"))
                 wavelengths = stage_data["wavelength"].values
                 trans = stage_data["trans"].values
                 weights = kwargs.get("weights", 1. / stage_data["err"].values)
