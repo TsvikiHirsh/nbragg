@@ -483,7 +483,7 @@ class Data:
                      tstep: float = 10.0e-6, L: float = 9,
                      L0: float = 1.0, t0: float = 0., dropna: bool = False,
                      pattern: str = "auto", indices: list = None, verbosity: int = 1,
-                     n_jobs: int = -1):
+                     n_jobs: int = -1, query: str = None):
         """
         Creates a Data object from grouped counts data using glob patterns.
 
@@ -523,6 +523,14 @@ class Data:
         n_jobs : int, optional
             Number of parallel jobs for loading files. Default is -1 (use all CPUs).
             Set to 1 for sequential loading.
+        query : str, optional
+            Pandas query string to select which groups to load, evaluated against the
+            coordinates extracted from filenames. Variables available depend on the
+            index type:
+            - 2D grids: ``x``, ``y``  (e.g. ``"80<x<230 and 0<y<350"``)
+            - 1D arrays: ``i``         (e.g. ``"10<i<50"``)
+            - Named groups: ``name``   (e.g. ``"name.str.contains('roi')"``).
+            When ``indices`` is provided by the user the same column names apply.
 
         Returns:
         --------
@@ -598,6 +606,45 @@ class Data:
 
         # Determine group dimensionality and shape BEFORE converting to strings
         group_shape, is_2d, is_1d = cls._determine_group_shape(extracted_indices)
+
+        # Apply query filter: build a metadata DataFrame from extracted coordinates
+        # and keep only the files whose index satisfies the query expression.
+        if query is not None:
+            import pandas as pd
+            if is_2d:
+                meta_df = pd.DataFrame(
+                    [{'x': idx[0], 'y': idx[1]} for idx in extracted_indices]
+                )
+            elif is_1d:
+                meta_df = pd.DataFrame(
+                    [{'i': int(idx)} for idx in extracted_indices]
+                )
+            else:
+                meta_df = pd.DataFrame(
+                    [{'name': idx} for idx in extracted_indices]
+                )
+            try:
+                keep = meta_df.query(query).index.tolist()
+            except Exception as e:
+                raise ValueError(
+                    f"Query '{query}' failed on metadata columns "
+                    f"{list(meta_df.columns)}: {e}"
+                )
+            if not keep:
+                raise ValueError(
+                    f"Query '{query}' matched no groups. "
+                    f"Available range: {meta_df.describe().to_dict()}"
+                )
+            signal_files     = [signal_files[i] for i in keep]
+            openbeam_files   = [openbeam_files[i] for i in keep]
+            if not use_single_empty:
+                if empty_signal_files:
+                    empty_signal_files   = [empty_signal_files[i] for i in keep]
+                if empty_openbeam_files:
+                    empty_openbeam_files = [empty_openbeam_files[i] for i in keep]
+            extracted_indices = [extracted_indices[i] for i in keep]
+            # Recompute shape after filtering
+            group_shape, is_2d, is_1d = cls._determine_group_shape(extracted_indices)
 
         # Convert all indices to strings for consistent access
         # For 2D: (10, 20) -> "(10,20)" (no spaces)
@@ -685,7 +732,8 @@ class Data:
             # Parallel loading
             from joblib import Parallel, delayed
 
-            # Create progress bar if needed
+            # Create progress bar if needed.  tqdm.update() is thread-safe so we call
+            # it from inside each worker thread so the bar progresses during loading.
             if verbosity >= 1:
                 try:
                     from tqdm.auto import tqdm
@@ -695,12 +743,21 @@ class Data:
             else:
                 pbar = None
 
+            def load_with_progress(i, idx):
+                result = load_single_group(i, idx)
+                if pbar is not None:
+                    pbar.update(1)
+                return result
+
             # Load groups in parallel using threading backend
             # (threading is appropriate for I/O-bound file loading and avoids serialization issues)
             results = Parallel(n_jobs=n_jobs, prefer='threads')(
-                delayed(load_single_group)(i, idx)
+                delayed(load_with_progress)(i, idx)
                 for i, idx in enumerate(extracted_indices)
             )
+
+            if pbar is not None:
+                pbar.close()
 
             # Store results
             for idx, table, signal_df, openbeam_df, empty_sig_df, empty_ob_df in results:
@@ -711,11 +768,6 @@ class Data:
                     self_data.groups_empty_signal[idx] = empty_sig_df
                 if empty_ob_df is not None:
                     self_data.groups_empty_openbeam[idx] = empty_ob_df
-                if pbar is not None:
-                    pbar.update(1)
-
-            if pbar is not None:
-                pbar.close()
 
         # Set first group as default table for compatibility
         self_data.table = self_data.groups[extracted_indices[0]]
