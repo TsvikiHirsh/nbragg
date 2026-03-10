@@ -43,10 +43,18 @@ class CrossSection:
             **kwargs: Additional materials in format material_name=material_dict_from_nbragg_materials
                       or material_name="material_name_in_nbragg_materials"
                       or material_name="path/to/material.ncmat".
-                      Can also include parameter kwargs (ext_l, ext_Gg, ext_L, sans, theta, phi, mos)
-                      which will be assigned to materials in order. For example:
+                      Can also include parameter kwargs (ext_l, ext_Gg, ext_L, sans, theta, phi, mos,
+                      comp) which will be assigned to materials in order. For example:
                       CrossSection(mat1="Fe.ncmat", ext_l=100, mat2="Al.ncmat", sans=20)
                       will assign ext_l=100 to mat1 and sans=20 to mat2.
+
+                      The ``comp`` parameter controls which scattering components are active for a
+                      phase. It accepts any NCrystal component string (comma-separated list of
+                      component names: ``elas``, ``coh_elas``, ``bragg``, ``incoh_elas``, ``inelas``,
+                      ``sans``) as well as the following shortcuts:
+
+                      - ``"nobragg"`` — disable coherent elastic (Bragg) scattering; equivalent to
+                        ``"incoh_elas,inelas"``.
         """
         self.name = name
         self.lambda_grid = np.arange(1.0, 10.0, 0.01)  # Default wavelength grid in Ångstroms
@@ -57,7 +65,8 @@ class CrossSection:
         PARAM_KEYWORDS = {'ext_l', 'ext_Gg', 'ext_L', 'ext_method', 'ext_dist', 'ext_tilt',
                           'sans', 'theta', 'phi', 'mos', 'mosaicity',
                           'a', 'b', 'c', 'temp', 'weight',
-                          'dir1', 'dir2', 'dirtol'}
+                          'dir1', 'dir2', 'dirtol',
+                          'comp'}
 
         # Process kwargs in order, tracking materials and their associated parameters
         # Build a list of (material_name, material_spec, params_dict) tuples
@@ -190,6 +199,7 @@ class CrossSection:
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
+                    'comp': spec.get('comp', None),
                     'weight': spec.get('weight', 1.0),
                     '_original_mat': spec.get('_original_mat', spec.get('mat'))
                 }
@@ -241,6 +251,7 @@ class CrossSection:
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
+                    'comp': spec.get('comp', None),
                     'weight': weight,
                     '_original_mat': spec.get('_original_mat', material)
                 }
@@ -275,6 +286,7 @@ class CrossSection:
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
+                    'comp': spec.get('comp', None),
                     'weight': weight,
                     '_original_mat': spec.get('_original_mat', material)
                 }
@@ -876,7 +888,16 @@ class CrossSection:
                 params.append(f"dirtol={dirtol}deg")
                 params.append(f"dir1={dir1_str}")
                 params.append(f"dir2={dir2_str}")
-                
+
+            # NCrystal component pseudo-parameter
+            _COMP_SHORTCUTS = {
+                'nobragg': 'incoh_elas,inelas',
+            }
+            comp = spec.get('comp')
+            if comp is not None:
+                comp = _COMP_SHORTCUTS.get(comp, comp)
+                params.append(f"comp={comp}")
+
             # Combine parameters with the phase if any exist
             if params:
                 phase += f";{';'.join(sorted(params))}"  # Sort parameters for consistency
@@ -943,6 +964,10 @@ class CrossSection:
                     a1, a2, ... for lattice parameter of materials 1, 2 ...
                     ext_l1, ext_Gg1, ext_L1, ext_dist1, ext_method1 ... for extinction params
                     sans1, sans2, ... for SANS hard-sphere radius (Å) of materials 1, 2, ...
+                    comp1, comp2, ... for NCrystal component selection of materials 1, 2, ...
+                        (or plain ``comp`` for single-phase). Accepts NCrystal component strings
+                        (e.g. ``"incoh_elas,inelas"``) or the shortcut ``"nobragg"`` to disable
+                        coherent elastic (Bragg) scattering.
         """
         updated = False
         # Check for parameter updates
@@ -969,6 +994,7 @@ class CrossSection:
             ext_dist_key = f"ext_dist{i}"
             ext_method_key = f"ext_method{i}"
             sans_key = f"sans{i}"
+            comp_key = f"comp{i}"
 
             # Update temperature
             if temp_key in kwargs and kwargs[temp_key] != spec['temp']:
@@ -1055,6 +1081,12 @@ class CrossSection:
                 updated = True
             elif "sans" in kwargs:  # for single phase materials
                 self._update_ncmat_parameters(name, sans=kwargs["sans"])
+                updated = True
+
+            # Update NCrystal component pseudo-parameter
+            new_comp = kwargs.get(comp_key, kwargs.get('comp') if len(material_names) == 1 else None)
+            if new_comp is not None and new_comp != spec.get('comp'):
+                spec['comp'] = new_comp
                 updated = True
 
         if updated:
