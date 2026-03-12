@@ -149,7 +149,10 @@ class ParametersMixin:
 
     def _make_extinction_params(self, vary=False):
         """
-        Create extinction-parameter ('ext_l', 'ext_Gg', 'ext_L') params for the model.
+        Create extinction-parameter (``ext_l``, ``ext_g``, ``ext_L``) params for the model.
+
+        Units: ``ext_l`` and ``ext_L`` in µm (crystallite / grain path length, up to 10 mm);
+        ``ext_g`` in arcmin (mosaicity, 0–100 arcmin).
 
         Requires the CrysExtn NCrystal plugin to be installed.
 
@@ -170,21 +173,22 @@ class ParametersMixin:
                 info = self.cross_section.extinction[material]
 
 
-                l, Gg, L = info["l"], info["Gg"], info["L"]
+                l, g, L = info["l"], info["g"], info["L"]
 
                 param_l_name = f"ext_l{i+1}" if len(self._materials)>1 else "ext_l"
-                param_Gg_name = f"ext_Gg{i+1}" if len(self._materials)>1 else "ext_Gg"
+                param_g_name = f"ext_g{i+1}" if len(self._materials)>1 else "ext_g"
                 param_L_name = f"ext_L{i+1}" if len(self._materials)>1 else "ext_L"
-
 
                 if param_l_name in self.params:
                     self.params[param_l_name].vary = vary
-                    self.params[param_Gg_name].vary = vary
+                    self.params[param_g_name].vary = vary
                     self.params[param_L_name].vary = vary
                 else:
-                    params.add(param_l_name, value=l, min=0., max=10000,vary=vary)
-                    params.add(param_Gg_name, value=Gg, min=0., max=10000,vary=vary)
-                    params.add(param_L_name, value=L, min=0., max=1000000,vary=vary)
+                    # ext_l and ext_L in µm (up to 10 mm = 10000 µm)
+                    # ext_g in arcmin (0–100 arcmin)
+                    params.add(param_l_name, value=l, min=0., max=10000., vary=vary)
+                    params.add(param_g_name, value=g, min=0., max=100., vary=vary)
+                    params.add(param_L_name, value=L, min=0., max=10000., vary=vary)
             except KeyError:
                 warnings.warn(f"@CRYSEXTN section is not defined for the {material} phase")
 

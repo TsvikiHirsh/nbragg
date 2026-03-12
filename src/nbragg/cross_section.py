@@ -43,7 +43,7 @@ class CrossSection:
             **kwargs: Additional materials in format material_name=material_dict_from_nbragg_materials
                       or material_name="material_name_in_nbragg_materials"
                       or material_name="path/to/material.ncmat".
-                      Can also include parameter kwargs (ext_l, ext_Gg, ext_L, sans, theta, phi, mos,
+                      Can also include parameter kwargs (ext_l, ext_g, ext_L, sans, theta, phi, mos,
                       comp) which will be assigned to materials in order. For example:
                       CrossSection(mat1="Fe.ncmat", ext_l=100, mat2="Al.ncmat", sans=20)
                       will assign ext_l=100 to mat1 and sans=20 to mat2.
@@ -62,7 +62,7 @@ class CrossSection:
         self.total_weight = total_weight
 
         # Define parameter keywords that can be assigned to materials
-        PARAM_KEYWORDS = {'ext_l', 'ext_Gg', 'ext_L', 'ext_method', 'ext_dist', 'ext_tilt',
+        PARAM_KEYWORDS = {'ext_l', 'ext_g', 'ext_L', 'ext_method', 'ext_dist', 'ext_tilt',
                           'sans', 'theta', 'phi', 'mos', 'mosaicity',
                           'a', 'b', 'c', 'temp', 'weight',
                           'dir1', 'dir2', 'dirtol',
@@ -195,7 +195,7 @@ class CrossSection:
                     'c': spec.get('c', None),
                     'ext_method': spec.get('ext_method', None),
                     'ext_l': spec.get('ext_l', None),
-                    'ext_Gg': spec.get('ext_Gg', None),
+                    'ext_g': spec.get('ext_g', None),
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
@@ -247,7 +247,7 @@ class CrossSection:
                     'c': spec.get('c', None),
                     'ext_method': spec.get('ext_method', None),
                     'ext_l': spec.get('ext_l', None),
-                    'ext_Gg': spec.get('ext_Gg', None),
+                    'ext_g': spec.get('ext_g', None),
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
@@ -282,7 +282,7 @@ class CrossSection:
                     'c': spec.get('c', None),
                     'ext_method': spec.get('ext_method', None),
                     'ext_l': spec.get('ext_l', None),
-                    'ext_Gg': spec.get('ext_Gg', None),
+                    'ext_g': spec.get('ext_g', None),
                     'ext_L': spec.get('ext_L', None),
                     'ext_dist': spec.get('ext_dist', None),
                     'sans': spec.get('sans', None),
@@ -375,7 +375,7 @@ class CrossSection:
                 ext_content_start += 1
             
             ext_lines_content = lines[ext_content_start:ext_end] if ext_content_start < ext_end else []
-            has_ext_params = any(self.materials[material].get(key) is not None for key in ['ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist'])
+            has_ext_params = any(self.materials[material].get(key) is not None for key in ['ext_method', 'ext_l', 'ext_g', 'ext_L', 'ext_dist'])
             
             if ext_lines_content:
                 # Existing @CUSTOM_CRYSEXTN section in NCMAT
@@ -413,7 +413,7 @@ class CrossSection:
             self.materials[material]["mat"] = unique_filename
 
             # Apply any user-modified parameters from self.materials
-            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'sans'] if self.materials[material].get(key) is not None}
+            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_g', 'ext_L', 'ext_dist', 'sans'] if self.materials[material].get(key) is not None}
             if kwargs:
                 self._update_ncmat_parameters(material, **kwargs)
 
@@ -464,7 +464,7 @@ class CrossSection:
                     f"Material '{material}' is not a dictionary. "
                     f"Did you mean to set xs.materials['{list(self.materials.keys())[0]}']['{material}'] instead of xs.materials['{material}']?"
                 )
-            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'sans'] if self.materials[material].get(key) is not None}
+            kwargs = {key: self.materials[material][key] for key in ['a', 'b', 'c', 'ext_method', 'ext_l', 'ext_g', 'ext_L', 'ext_dist', 'sans'] if self.materials[material].get(key) is not None}
             if kwargs:
                 self._update_ncmat_parameters(material, **kwargs)
         
@@ -481,14 +481,14 @@ class CrossSection:
 
         Args:
             material (str): Name of the material to update
-            **kwargs: Additional parameters to update (e.g., a, b, c, ext_l, ext_Gg, ext_L, ext_dist)
+            **kwargs: Additional parameters to update (e.g., a, b, c, ext_l, ext_g, ext_L, ext_dist)
         """
         # Ensure we have a template for this specific material
         if material not in self.datatemplate:
             return
 
         # Update material parameters if provided in kwargs
-        for key in ['ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'ext_method', 'a', 'b', 'c']:
+        for key in ['ext_l', 'ext_g', 'ext_L', 'ext_dist', 'ext_method', 'a', 'b', 'c']:
             if key in kwargs and kwargs[key] is not None:
                 self.materials[material][key] = float(kwargs[key]) if key not in ['ext_method', 'ext_dist'] else kwargs[key]
 
@@ -538,7 +538,7 @@ class CrossSection:
             updated_cells = self._cell_info(material, **kwargs)
 
             # Handle extinction information
-            updated_ext = self._extinction_info(material, **kwargs) if any(kwargs.get(key) for key in ['ext_l', 'ext_Gg', 'ext_L', 'ext_dist', 'ext_method']) or material in self.extinction else ""
+            updated_ext = self._extinction_info(material, **kwargs) if any(kwargs.get(key) for key in ['ext_l', 'ext_g', 'ext_L', 'ext_dist', 'ext_method']) or material in self.extinction else ""
 
             # Create the updated material text using the material-specific template
             updated_textdata = self.datatemplate[material].replace(
@@ -594,21 +594,36 @@ class CrossSection:
         @CUSTOM_CRYSEXTN formats (from CrysExtn plugin source code):
         - Sabine_uncorr  l  G  L  rect/tri
         - Sabine_corr    l  g  L
-        - BC_mix         l  g  L  Gauss/Lorentz/Fresnel
+        - BC_mix         l  g  L  Gauss/Lorentz/Fresnel  (default)
         - BC_pure        l  g  L  Gauss/Lorentz/Fresnel
         - BC_mod         l  g  L  Gauss/Lorentz/Fresnel
         - CR             l  g  L
         - RED_orig       l  R  T
         - RED            l  R  T  c
 
-        Where:
-        - l: crystallite size/path length (Å)
-        - g/G/R: mosaicity parameter (1/rad) or equivalent
-        - L/T: grain size/path length (Å)
+        NCrystal NCMAT units (internal):
+        - l: crystallite path length (Å)
+        - g/G/R: mosaicity parameter (1/rad)
+        - L/T: grain path length (Å)
         - c: correlation parameter for RED (0 to 1)
-        - rect/tri: tilt distribution (for Sabine_uncorr only)
-        - Gauss/Lorentz/Fresnel: orientation method (for BC models only)
+
+        User-facing units (stored in self.materials and self.extinction):
+        - ext_l: crystallite path length (µm)  — converted to Å (*1e4) when writing NCMAT
+        - ext_g: mosaicity parameter (arcmin)  — converted to 1/rad (8090/ext_g) when writing NCMAT
+        - ext_L: grain path length (µm)        — converted to Å (*1e4) when writing NCMAT
+
+        Conversion factors:
+        - l_Å = ext_l_µm * 1e4
+        - g_1/rad = 8090 / ext_g_arcmin
+        - L_Å = ext_L_µm * 1e4
         """
+        # Conversion helpers
+        def _to_ncmat_l(l_um):   return l_um * 1e4        # µm → Å
+        def _to_ncmat_g(g_arcmin): return 8090.0 / g_arcmin  # arcmin → 1/rad
+        def _to_ncmat_L(L_um):   return L_um * 1e4        # µm → Å
+        def _from_ncmat_l(l_A):   return l_A / 1e4        # Å → µm
+        def _from_ncmat_g(g_inv): return 8090.0 / g_inv   # 1/rad → arcmin
+        def _from_ncmat_L(L_A):   return L_A / 1e4        # Å → µm
         mat_path = self.materials[material]["mat"]
         mat_data = nc.load(mat_path)
 
@@ -623,14 +638,14 @@ class CrossSection:
         if material not in self.extinction:
             self.extinction[material] = {}
 
-        # Define default extinction parameters
+        # Define default extinction parameters (all in user-facing units)
         defaults = {
-            'ext_method': 'BC_pure',
-            'ext_l': 2500.0,      # crystallite size/path length (Å)
-            'ext_Gg': 150.0,       # mosaicity parameter (1/rad)
-            'ext_L': 100000.0,    # grain size/path length (Å)
-            'ext_dist': 'Gauss',  # distribution: rect/tri for Sabine_uncorr, Gauss/Lorentz/Fresnel for BC
-            'ext_c': 0.5          # correlation for RED
+            'ext_method': 'BC_mix',   # default: Becker-Coppens primary+secondary
+            'ext_l': 0.25,            # crystallite path length (µm) [= 2500 Å]
+            'ext_g': 53.9,            # mosaicity parameter (arcmin) [≈ 8090/150 = 150 1/rad]
+            'ext_L': 10.0,            # grain path length (µm) [= 100000 Å]
+            'ext_dist': 'Gauss',      # distribution for BC models
+            'ext_c': 0.5              # correlation for RED
         }
 
         # Supported extinction methods and distributions
@@ -650,11 +665,15 @@ class CrossSection:
                 method = parts[0]
                 if method not in supported_methods:
                     method = defaults['ext_method']
-                
-                l = float(parts[1]) if float(parts[1]) > 0 else defaults['ext_l']
-                g = float(parts[2]) if float(parts[2]) > 0 else defaults['ext_Gg']
-                L = float(parts[3]) if float(parts[3]) > 0 else defaults['ext_L']
-                
+
+                # Parse NCrystal NCMAT values (Å, 1/rad, Å) then convert to user units (µm, arcmin, µm)
+                l_A = float(parts[1]) if float(parts[1]) > 0 else _to_ncmat_l(defaults['ext_l'])
+                g_inv = float(parts[2]) if float(parts[2]) > 0 else _to_ncmat_g(defaults['ext_g'])
+                L_A = float(parts[3]) if float(parts[3]) > 0 else _to_ncmat_L(defaults['ext_L'])
+                l = _from_ncmat_l(l_A)
+                g = _from_ncmat_g(g_inv)
+                L = _from_ncmat_L(L_A)
+
                 dist = None
                 c = None
                 if method in methods_with_dist:
@@ -668,12 +687,12 @@ class CrossSection:
                         dist = 'rect' if method == 'Sabine_uncorr' else 'Gauss'
                 elif method == 'RED' and len(parts) >= 5:
                     c = float(parts[4]) if 0 <= float(parts[4]) <= 1 else defaults['ext_c']
-                
+
                 self.extinction[material].update({
                     'method': method,
-                    'l': l,
-                    'Gg': g,  # Use consistent key name 'Gg' instead of 'g'
-                    'L': L,
+                    'l': l,   # µm
+                    'g': g,   # arcmin
+                    'L': L,   # µm
                     'dist': dist if method in methods_with_dist else None,
                     'c': c if method == 'RED' else None
                 })
@@ -691,7 +710,7 @@ class CrossSection:
         # Apply user-provided kwargs, prioritizing over NCMAT values
         for key, target_key in [
             ('ext_l', 'l'),
-            ('ext_Gg', 'Gg'), 
+            ('ext_g', 'g'), 
             ('ext_L', 'L'),
             ('ext_dist', 'dist'),
             ('ext_c', 'c')
@@ -717,7 +736,7 @@ class CrossSection:
                         value = value if 0 <= value <= 1 else defaults['ext_c']
                     except (ValueError, TypeError):
                         value = defaults['ext_c']
-                elif key in ['ext_l', 'ext_Gg', 'ext_L']:
+                elif key in ['ext_l', 'ext_g', 'ext_L']:
                     try:
                         value = float(value)
                         value = value if value > 0 else defaults[key]
@@ -726,8 +745,8 @@ class CrossSection:
                 
                 self.extinction[material][target_key] = value
                 # Store in materials with the key name used in self.materials
-                if key == 'ext_Gg':
-                    self.materials[material]['ext_Gg'] = value
+                if key == 'ext_g':
+                    self.materials[material]['ext_g'] = value
                 elif key == 'ext_dist':
                     self.materials[material]['ext_dist'] = value
                 else:
@@ -749,7 +768,7 @@ class CrossSection:
             self.extinction[material].update({
                 'method': method,
                 'l': float(self.materials[material]['ext_l']),
-                'Gg': float(self.materials[material].get('ext_Gg', defaults['ext_Gg'])),  # Use consistent key 'Gg' and fix double get
+                'g': float(self.materials[material].get('ext_g', defaults['ext_g'])),  # Use consistent key 'g' and fix double get
                 'L': float(self.materials[material]['ext_L']),
                 'dist': self.materials[material].get('ext_dist') if method in methods_with_dist else None,
                 'c': self.materials[material].get('ext_c') if method == 'RED' else None
@@ -761,11 +780,15 @@ class CrossSection:
 
         if self.extinction[material].get('method'):
             method = self.extinction[material]['method']
+            # Convert user units (µm, arcmin, µm) → NCrystal NCMAT units (Å, 1/rad, Å)
+            l_ncmat = _to_ncmat_l(self.extinction[material]['l'])
+            g_ncmat = _to_ncmat_g(self.extinction[material]['g'])
+            L_ncmat = _to_ncmat_L(self.extinction[material]['L'])
             line = (
                 f"  {method}  "
-                f"{self.extinction[material]['l']:.4f}  "
-                f"{self.extinction[material]['Gg']:.4f}  "
-                f"{self.extinction[material]['L']:.4f}"
+                f"{l_ncmat:.4f}  "
+                f"{g_ncmat:.4f}  "
+                f"{L_ncmat:.4f}"
             )
             if method in methods_with_dist and self.extinction[material].get('dist'):
                 line += f"  {self.extinction[material]['dist']}"
@@ -962,7 +985,8 @@ class CrossSection:
                     ϕ1, ϕ2, ... for phi values of materials 1, 2, ...
                     temp1, temp2, ... for temperatures of materials 1, 2, ...
                     a1, a2, ... for lattice parameter of materials 1, 2 ...
-                    ext_l1, ext_Gg1, ext_L1, ext_dist1, ext_method1 ... for extinction params
+                    ext_l1, ext_g1, ext_L1, ext_dist1, ext_method1 ... for extinction params
+                        (ext_l/ext_L in µm; ext_g in arcmin)
                     sans1, sans2, ... for SANS hard-sphere radius (Å) of materials 1, 2, ...
                     comp1, comp2, ... for NCrystal component selection of materials 1, 2, ...
                         (or plain ``comp`` for single-phase). Accepts NCrystal component strings
@@ -989,7 +1013,7 @@ class CrossSection:
             latb_key = f"b{i}"
             latc_key = f"c{i}"
             ext_l_key = f"ext_l{i}"
-            ext_Gg_key = f"ext_Gg{i}"
+            ext_g_key = f"ext_g{i}"
             ext_L_key = f"ext_L{i}"
             ext_dist_key = f"ext_dist{i}"
             ext_method_key = f"ext_method{i}"
@@ -1040,18 +1064,18 @@ class CrossSection:
                 updated = True
             
             # Update extinction parameters
-            if ext_l_key in kwargs or ext_Gg_key in kwargs or ext_L_key in kwargs or ext_dist_key in kwargs or ext_method_key in kwargs:
+            if ext_l_key in kwargs or ext_g_key in kwargs or ext_L_key in kwargs or ext_dist_key in kwargs or ext_method_key in kwargs:
                 ext_params = {}
                 if ext_l_key in kwargs:
                     ext_params['ext_l'] = kwargs[ext_l_key]
-                elif ext_l_key not in kwargs and ext_Gg_key in kwargs:
-                    ext_params['ext_l'] = spec.get('ext_l', 2500.0)  # Default from _extinction_info
-                if ext_Gg_key in kwargs:
-                    ext_params['ext_Gg'] = kwargs[ext_Gg_key]
+                elif ext_l_key not in kwargs and ext_g_key in kwargs:
+                    ext_params['ext_l'] = spec.get('ext_l', 0.25)  # Default: 0.25 µm
+                if ext_g_key in kwargs:
+                    ext_params['ext_g'] = kwargs[ext_g_key]
                 if ext_L_key in kwargs:
                     ext_params['ext_L'] = kwargs[ext_L_key]
-                elif ext_L_key not in kwargs and (ext_l_key in kwargs or ext_Gg_key in kwargs):
-                    ext_params['ext_L'] = spec.get('ext_L', 100000.0)  # Default from _extinction_info
+                elif ext_L_key not in kwargs and (ext_l_key in kwargs or ext_g_key in kwargs):
+                    ext_params['ext_L'] = spec.get('ext_L', 10.0)  # Default: 10 µm
                 if ext_dist_key in kwargs:
                     ext_params['ext_dist'] = kwargs[ext_dist_key]
                 if ext_method_key in kwargs:
@@ -1062,12 +1086,12 @@ class CrossSection:
                 ext_params = {}
                 if "ext_l" in kwargs:
                     ext_params['ext_l'] = kwargs["ext_l"]
-                if "ext_Gg" in kwargs:
-                    ext_params['ext_Gg'] = kwargs["ext_Gg"]
+                if "ext_g" in kwargs:
+                    ext_params['ext_g'] = kwargs["ext_g"]
                 if "ext_L" in kwargs:
                     ext_params['ext_L'] = kwargs["ext_L"]
                 else:
-                    ext_params['ext_L'] = spec.get('ext_L', 100000.0)  # Default
+                    ext_params['ext_L'] = spec.get('ext_L', 10.0)  # Default: 10 µm
                 if "ext_dist" in kwargs:
                     ext_params['ext_dist'] = kwargs["ext_dist"]
                 if "ext_method" in kwargs:
