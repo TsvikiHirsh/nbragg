@@ -280,9 +280,14 @@ class Data:
                 column_mapping = dict(zip(df.columns, names))
                 df = df.rename(columns=column_mapping)
             else:
-                # If no specific names, use default names 
-                df.columns = default_names[:len(df.columns)]
-            
+                # Only apply positional renaming if no columns already match expected names
+                if not any(col in default_names for col in df.columns):
+                    df.columns = default_names[:len(df.columns)]
+
+            # If 'tof' column is missing, use the DataFrame index
+            if "tof" not in df.columns:
+                df.insert(0, "tof", df.index)
+
             # Ensure we have the required columns
             required_columns = ["tof", "counts"]
             for col in required_columns:
