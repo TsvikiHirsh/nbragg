@@ -240,22 +240,23 @@ class Data:
     @classmethod
     def _read_counts(cls, input_data, names=None):
         """
-        Reads the counts data from a CSV file or a pandas DataFrame and calculates errors if not provided.
-        
+        Reads counts data from a CSV file or a pandas DataFrame.
+
         Parameters:
         -----------
         input_data : str or pandas.DataFrame
-            Either the path to the CSV file containing time-of-flight (tof) and counts data, 
-            or a pandas DataFrame with the data.
+            Path to a CSV file, or a DataFrame containing counts data.
+            Required column: 'counts'.
+            Optional columns: 'tof' (defaults to row index if absent),
+            'err' (defaults to sqrt(counts) if absent).
         names : list, optional
-            List of column names to use. If not provided, defaults to ["tof", "counts", "err"].
-            Helps handle variations in column naming (e.g., "stacks" instead of "tof").
-        
+            Column names to assign positionally when the DataFrame has no
+            recognized column names. Defaults to ["tof", "counts", "err"].
+
         Returns:
         --------
         df : pandas.DataFrame
-            A DataFrame containing columns: 'tof', 'counts', and 'err'. Errors are calculated 
-            as the square root of counts if not provided in the file.
+            DataFrame with columns 'tof', 'counts', and 'err'.
         """
         # Default column names
         default_names = ["tof", "counts", "err"]
@@ -289,10 +290,12 @@ class Data:
                 df.insert(0, "tof", df.index)
 
             # Ensure we have the required columns
-            required_columns = ["tof", "counts"]
-            for col in required_columns:
-                if col not in df.columns:
-                    raise ValueError(f"DataFrame must contain a '{col}' column")
+            if "counts" not in df.columns:
+                raise ValueError(
+                    f"DataFrame must contain a 'counts' column. "
+                    f"Got columns: {list(df.columns)}. "
+                    "Pass a DataFrame with a 'counts' column, or a CSV path."
+                )
             
             # Use filename as label if available, otherwise use a default
             df.attrs["label"] = getattr(input_data, 'attrs', {}).get('label', 'input_data')
@@ -332,15 +335,18 @@ class Data:
         Parameters:
         -----------
         signal : str or pandas.DataFrame
-            Path to the CSV file or DataFrame containing the signal data (tof, counts, err).
+            Path to a CSV file or a DataFrame containing signal counts.
+            Required column: 'counts'.
+            Optional columns: 'tof' (row index used if absent), 'err' (sqrt(counts) used if absent).
         openbeam : str or pandas.DataFrame
-            Path to the CSV file or DataFrame containing the open beam data (tof, counts, err).
+            Path to a CSV file or a DataFrame containing open-beam counts.
+            Same column requirements as `signal`.
         empty_signal : str or pandas.DataFrame, optional
-            Path to the CSV file or DataFrame containing the empty signal data for background correction.
-            Default is an empty string.
+            Signal counts for an empty region, used for background correction.
+            Default is an empty string (no correction).
         empty_openbeam : str or pandas.DataFrame, optional
-            Path to the CSV file or DataFrame containing the empty open beam data for background correction.
-            Default is an empty string.
+            Open-beam counts for an empty region, used for background correction.
+            Default is an empty string (no correction).
         tstep : float, optional
             Time step (seconds) for converting time-of-flight (tof) to energy. Default is 10.0e-6.
         L : float, optional
