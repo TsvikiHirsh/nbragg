@@ -212,69 +212,75 @@ class TestCrossSection(unittest.TestCase):
 
     def test_cross_section_with_extinction_single(self):
         """Test initialization with extinction parameters for single material."""
+        # ext_l/ext_L in µm; ext_g in arcmin.
+        # 0.01 µm → 100 Å, 8.09 arcmin → 1000 1/rad, 10 µm → 100000 Å in NCMAT.
         xs = CrossSection({
             'iron': {
                 'mat': 'Fe_sg225_Iron-gamma.ncmat',
-                'ext_l': 100.0,
-                'ext_Gg': 1000.0,
-                'ext_L': 100000.0,
+                'ext_l': 0.01,
+                'ext_g': 8.09,
+                'ext_L': 10.0,
                 'ext_method': 'Sabine_corr'
             }
         })
-        
-        self.assertEqual(xs.materials['iron']['ext_l'], 100.0)
-        self.assertEqual(xs.materials['iron']['ext_Gg'], 1000.0)
-        self.assertEqual(xs.materials['iron']['ext_L'], 100000.0)
+
+        self.assertEqual(xs.materials['iron']['ext_l'], 0.01)
+        self.assertEqual(xs.materials['iron']['ext_g'], 8.09)
+        self.assertEqual(xs.materials['iron']['ext_L'], 10.0)
         self.assertEqual(xs.materials['iron']['ext_method'], 'Sabine_corr')
-        
-        # Verify textdata contains correct @CUSTOM_CRYSEXTN line
+
+        # Verify textdata contains correct @CUSTOM_CRYSEXTN line (values in NCMAT units: Å, 1/rad, Å)
         textdata = xs.textdata['iron']
         self.assertIn('@CUSTOM_CRYSEXTN', textdata)
         self.assertIn('Sabine_corr  100.0000  1000.0000  100000.0000', textdata)
 
     def test_cross_section_with_extinction_multiphase(self):
         """Test initialization with extinction parameters for multiple materials."""
+        # Unit conversions to keep NCMAT values identical to old tests:
+        #   ext_l: Å/1e4 → µm  (100 Å = 0.01 µm,  50 Å = 0.005 µm)
+        #   ext_g: 8090/g_1/rad arcmin  (1000 1/rad = 8.09 arcmin, 150 1/rad = 8090/150 arcmin)
+        #   ext_L: Å/1e4 → µm  (100000 Å = 10 µm)
         xs = CrossSection({
             'alpha': {
                 'mat': 'Fe_sg229_Iron-alpha.ncmat',
-                'ext_l': 100.0,
-                'ext_Gg': 1000.0,
-                'ext_L': 100000.0,
+                'ext_l': 0.01,
+                'ext_g': 8.09,
+                'ext_L': 10.0,
                 'ext_dist': 'Gauss',
                 'ext_method': 'BC_pure',
                 'weight': 0.0275
             },
             'gamma': {
                 'mat': 'Fe_sg225_Iron-gamma.ncmat',
-                'ext_l': 50.0,
-                'ext_Gg': 150.0,
-                'ext_L': 100000.0,
+                'ext_l': 0.005,
+                'ext_g': 8090 / 150,
+                'ext_L': 10.0,
                 'ext_method': 'Sabine_corr',
                 'weight': 1 - 0.0275
             }
         })
-        
+
         # Verify alpha parameters
-        self.assertEqual(xs.materials['alpha']['ext_l'], 100.0)
-        self.assertEqual(xs.materials['alpha']['ext_Gg'], 1000.0)
-        self.assertEqual(xs.materials['alpha']['ext_L'], 100000.0)
+        self.assertEqual(xs.materials['alpha']['ext_l'], 0.01)
+        self.assertEqual(xs.materials['alpha']['ext_g'], 8.09)
+        self.assertEqual(xs.materials['alpha']['ext_L'], 10.0)
         self.assertEqual(xs.materials['alpha']['ext_dist'], 'Gauss')
         self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
         self.assertAlmostEqual(xs.materials['alpha']['weight'], 0.0275)
-        
+
         # Verify gamma parameters
-        self.assertEqual(xs.materials['gamma']['ext_l'], 50.0)
-        self.assertEqual(xs.materials['gamma']['ext_Gg'], 150.0)
-        self.assertEqual(xs.materials['gamma']['ext_L'], 100000.0)
+        self.assertEqual(xs.materials['gamma']['ext_l'], 0.005)
+        self.assertAlmostEqual(xs.materials['gamma']['ext_g'], 8090 / 150)
+        self.assertEqual(xs.materials['gamma']['ext_L'], 10.0)
         self.assertEqual(xs.materials['gamma']['ext_method'], 'Sabine_corr')
         self.assertAlmostEqual(xs.materials['gamma']['weight'], 1 - 0.0275)
-        
-        # Verify textdata
+
+        # Verify textdata (NCMAT units: Å, 1/rad, Å)
         self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['alpha'])
         self.assertIn('BC_pure  100.0000  1000.0000  100000.0000  Gauss', xs.textdata['alpha'])
         self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['gamma'])
         self.assertIn('Sabine_corr  50.0000  150.0000  100000.0000', xs.textdata['gamma'])
-        
+
         # Verify cross-section calculation
         wl = np.array([1.0, 2.0, 3.0])
         xs_values = xs(wl)
@@ -286,48 +292,48 @@ class TestCrossSection(unittest.TestCase):
         xs = CrossSection({
             'alpha': {
                 'mat': 'Fe_sg229_Iron-alpha.ncmat',
-                'ext_l': 100.0,
-                'ext_Gg': 1000.0,
-                'ext_L': 100000.0,
+                'ext_l': 0.01,
+                'ext_g': 8.09,
+                'ext_L': 10.0,
                 'ext_dist': 'Gauss',
                 'ext_method': 'BC_pure',
                 'weight': 0.0275
             },
             'gamma': {
                 'mat': 'Fe_sg225_Iron-gamma.ncmat',
-                'ext_l': 50.0,
-                'ext_Gg': 150.0,
-                'ext_L': 100000.0,
+                'ext_l': 0.005,
+                'ext_g': 8090 / 150,
+                'ext_L': 10.0,
                 'ext_method': 'Sabine_corr',
                 'weight': 1 - 0.0275
             }
         })
-        
-        # Update extinction parameters
-        xs.materials['alpha']['ext_l'] = 200.0
-        xs.materials['alpha']['ext_Gg'] = 300.0
-        xs.materials['alpha']['ext_L'] = 200000.0
+
+        # Update extinction parameters (µm, arcmin, µm)
+        xs.materials['alpha']['ext_l'] = 0.02         # → 200 Å
+        xs.materials['alpha']['ext_g'] = 8090 / 300   # → 300 1/rad
+        xs.materials['alpha']['ext_L'] = 20.0         # → 200000 Å
         xs.materials['alpha']['ext_dist'] = 'Lorentz'
         xs.materials['alpha']['ext_method'] = 'BC_pure'
-        xs.materials['gamma']['ext_l'] = 150.0
-        xs.materials['gamma']['ext_Gg'] = 200.0
-        xs.materials['gamma']['ext_L'] = 150000.0
+        xs.materials['gamma']['ext_l'] = 0.015        # → 150 Å
+        xs.materials['gamma']['ext_g'] = 8090 / 200   # → 200 1/rad
+        xs.materials['gamma']['ext_L'] = 15.0         # → 150000 Å
         xs.materials['gamma']['ext_method'] = 'Sabine_corr'
-        
+
         xs.update()
-        
+
         # Verify updated parameters
-        self.assertEqual(xs.materials['alpha']['ext_l'], 200.0)
-        self.assertEqual(xs.materials['alpha']['ext_Gg'], 300.0)
-        self.assertEqual(xs.materials['alpha']['ext_L'], 200000.0)
+        self.assertAlmostEqual(xs.materials['alpha']['ext_l'], 0.02)
+        self.assertAlmostEqual(xs.materials['alpha']['ext_g'], 8090 / 300)
+        self.assertAlmostEqual(xs.materials['alpha']['ext_L'], 20.0)
         self.assertEqual(xs.materials['alpha']['ext_dist'], 'Lorentz')
         self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
-        self.assertEqual(xs.materials['gamma']['ext_l'], 150.0)
-        self.assertEqual(xs.materials['gamma']['ext_Gg'], 200.0)
-        self.assertEqual(xs.materials['gamma']['ext_L'], 150000.0)
+        self.assertAlmostEqual(xs.materials['gamma']['ext_l'], 0.015)
+        self.assertAlmostEqual(xs.materials['gamma']['ext_g'], 8090 / 200)
+        self.assertAlmostEqual(xs.materials['gamma']['ext_L'], 15.0)
         self.assertEqual(xs.materials['gamma']['ext_method'], 'Sabine_corr')
-        
-        # Verify textdata
+
+        # Verify textdata (NCMAT units: Å, 1/rad, Å)
         self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['alpha'])
         self.assertIn('BC_pure  200.0000  300.0000  200000.0000  Lorentz', xs.textdata['alpha'])
         self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['gamma'])
@@ -338,44 +344,45 @@ class TestCrossSection(unittest.TestCase):
         xs = CrossSection({
             'alpha': {
                 'mat': 'Fe_sg229_Iron-alpha.ncmat',
-                'ext_l': 100.0,
-                'ext_Gg': 1000.0,
-                'ext_L': 100000.0,
+                'ext_l': 0.01,
+                'ext_g': 8.09,
+                'ext_L': 10.0,
                 'ext_dist': 'Gauss',
                 'ext_method': 'BC_pure',
                 'weight': 0.0275
             },
             'gamma': {
                 'mat': 'Fe_sg225_Iron-gamma.ncmat',
-                'ext_l': 50.0,
-                'ext_Gg': 150.0,
-                'ext_L': 100000.0,
+                'ext_l': 0.005,
+                'ext_g': 8090 / 150,
+                'ext_L': 10.0,
                 'ext_method': 'Sabine_corr',
                 'weight': 1 - 0.0275
             }
         })
-        
+
         wl = np.array([1.0, 2.0, 3.0])
-        xs(wl, ext_l1=300.0, ext_Gg1=400.0, ext_L1=150000.0, ext_dist1='Gauss', ext_method1='BC_pure',
-               ext_l2=250.0, ext_Gg2=300.0, ext_L2=200000.0, ext_method2='Sabine_corr')
-        
+        # kwargs in µm / arcmin / µm units; suffix 1/2 selects material by index
+        xs(wl, ext_l1=0.03, ext_g1=8090/400, ext_L1=15.0, ext_dist1='Gauss', ext_method1='BC_pure',
+               ext_l2=0.025, ext_g2=8090/300, ext_L2=20.0, ext_method2='Sabine_corr')
+
         # Verify updated parameters
-        self.assertEqual(xs.materials['alpha']['ext_l'], 300.0)
-        self.assertEqual(xs.materials['alpha']['ext_Gg'], 400.0)
-        self.assertEqual(xs.materials['alpha']['ext_L'], 150000.0)
+        self.assertAlmostEqual(xs.materials['alpha']['ext_l'], 0.03)
+        self.assertAlmostEqual(xs.materials['alpha']['ext_g'], 8090 / 400)
+        self.assertAlmostEqual(xs.materials['alpha']['ext_L'], 15.0)
         self.assertEqual(xs.materials['alpha']['ext_dist'], 'Gauss')
         self.assertEqual(xs.materials['alpha']['ext_method'], 'BC_pure')
-        self.assertEqual(xs.materials['gamma']['ext_l'], 250.0)
-        self.assertEqual(xs.materials['gamma']['ext_Gg'], 300.0)
-        self.assertEqual(xs.materials['gamma']['ext_L'], 200000.0)
+        self.assertAlmostEqual(xs.materials['gamma']['ext_l'], 0.025)
+        self.assertAlmostEqual(xs.materials['gamma']['ext_g'], 8090 / 300)
+        self.assertAlmostEqual(xs.materials['gamma']['ext_L'], 20.0)
         self.assertEqual(xs.materials['gamma']['ext_method'], 'Sabine_corr')
-        
-        # Verify textdata
+
+        # Verify textdata (NCMAT units: Å, 1/rad, Å)
         self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['alpha'])
         self.assertIn('BC_pure  300.0000  400.0000  150000.0000  Gauss', xs.textdata['alpha'])
         self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['gamma'])
         self.assertIn('Sabine_corr  250.0000  300.0000  200000.0000', xs.textdata['gamma'])
-        
+
         # Verify cross-section calculation
         xs_values = xs(wl)
         self.assertEqual(xs_values.shape, wl.shape)
@@ -386,14 +393,14 @@ class TestCrossSection(unittest.TestCase):
         xs = CrossSection({
             'iron': {
                 'mat': 'Fe_sg225_Iron-gamma.ncmat',
-                'ext_l': 100.0,
-                'ext_Gg': 1000.0,
-                'ext_L': 100000.0,
+                'ext_l': 0.01,
+                'ext_g': 8.09,
+                'ext_L': 10.0,
                 'ext_dist': 'invalid_dist',
                 'ext_method': 'Sabine_uncorr'
             }
         })
-        
+
         # Verify default dist
         self.assertEqual(xs.materials['iron']['ext_dist'], 'rect')
         self.assertIn('@CUSTOM_CRYSEXTN', xs.textdata['iron'])
@@ -741,13 +748,13 @@ class TestCrossSectionParameterAssignment(unittest.TestCase):
 
     def test_single_material_with_extinction_params(self):
         """Test assigning extinction parameters to a single material."""
-        xs = CrossSection(steel='Al_sg225.ncmat', ext_l=100, ext_Gg=1500, ext_L=2000)
+        xs = CrossSection(steel='Al_sg225.ncmat', ext_l=1.0, ext_g=80.9, ext_L=100.0)
 
         self.assertEqual(len(xs.materials), 1)
         self.assertIn('steel', xs.materials)
-        self.assertEqual(xs.materials['steel']['ext_l'], 100)
-        self.assertEqual(xs.materials['steel']['ext_Gg'], 1500)
-        self.assertEqual(xs.materials['steel']['ext_L'], 2000)
+        self.assertEqual(xs.materials['steel']['ext_l'], 1.0)
+        self.assertEqual(xs.materials['steel']['ext_g'], 80.9)
+        self.assertEqual(xs.materials['steel']['ext_L'], 100.0)
 
     def test_single_material_with_sans_param(self):
         """Test assigning SANS parameter to a single material."""
@@ -770,32 +777,32 @@ class TestCrossSectionParameterAssignment(unittest.TestCase):
     def test_multiple_materials_with_ordered_params(self):
         """Test parameter assignment to multiple materials based on order."""
         xs = CrossSection(
-            mat1='Al_sg225.ncmat', ext_Gg=100,
+            mat1='Al_sg225.ncmat', ext_g=80.9,
             mat2='Al_sg225.ncmat', sans=20
         )
 
         self.assertEqual(len(xs.materials), 2)
 
-        # ext_Gg should be assigned to mat1
-        self.assertEqual(xs.materials['mat1']['ext_Gg'], 100)
+        # ext_g should be assigned to mat1
+        self.assertEqual(xs.materials['mat1']['ext_g'], 80.9)
         self.assertIsNone(xs.materials['mat1']['sans'])
 
         # sans should be assigned to mat2
-        self.assertIsNone(xs.materials['mat2']['ext_Gg'])
+        self.assertIsNone(xs.materials['mat2']['ext_g'])
         self.assertEqual(xs.materials['mat2']['sans'], 20)
 
     def test_multiple_params_per_material(self):
         """Test assigning multiple parameters to materials in sequence."""
         xs = CrossSection(
-            iron='Al_sg225.ncmat', ext_l=50, ext_Gg=200,
+            iron='Al_sg225.ncmat', ext_l=0.5, ext_g=80.9,
             aluminum='Al_sg225.ncmat', theta=30, phi=60
         )
 
         self.assertEqual(len(xs.materials), 2)
 
-        # iron should have ext_l and ext_Gg
-        self.assertEqual(xs.materials['iron']['ext_l'], 50)
-        self.assertEqual(xs.materials['iron']['ext_Gg'], 200)
+        # iron should have ext_l and ext_g
+        self.assertEqual(xs.materials['iron']['ext_l'], 0.5)
+        self.assertEqual(xs.materials['iron']['ext_g'], 80.9)
         self.assertIsNone(xs.materials['iron']['theta'])
 
         # aluminum should have theta and phi
@@ -806,7 +813,7 @@ class TestCrossSectionParameterAssignment(unittest.TestCase):
     def test_three_materials_with_different_params(self):
         """Test parameter assignment across three materials."""
         xs = CrossSection(
-            mat1='Al_sg225.ncmat', ext_l=100,
+            mat1='Al_sg225.ncmat', ext_l=1.0,
             mat2='Al_sg225.ncmat', sans=30,
             mat3='Al_sg225.ncmat', theta=45
         )
@@ -814,7 +821,7 @@ class TestCrossSectionParameterAssignment(unittest.TestCase):
         self.assertEqual(len(xs.materials), 3)
 
         # Each material should have its respective parameter
-        self.assertEqual(xs.materials['mat1']['ext_l'], 100)
+        self.assertEqual(xs.materials['mat1']['ext_l'], 1.0)
         self.assertIsNone(xs.materials['mat1']['sans'])
 
         self.assertEqual(xs.materials['mat2']['sans'], 30)
@@ -854,10 +861,9 @@ class TestCrossSectionParameterAssignment(unittest.TestCase):
 
     def test_mixed_dict_and_kwarg_materials(self):
         """Test mixing materials dict with kwarg-based materials and params."""
-        # Create with materials dict
         xs = CrossSection(
             materials={'mat1': {'mat': 'Al_sg225.ncmat'}},
-            mat2='Al_sg225.ncmat', ext_l=100
+            mat2='Al_sg225.ncmat', ext_l=1.0
         )
 
         self.assertEqual(len(xs.materials), 2)
@@ -865,41 +871,41 @@ class TestCrossSectionParameterAssignment(unittest.TestCase):
         self.assertIn('mat2', xs.materials)
 
         # mat2 should have ext_l from kwargs
-        self.assertEqual(xs.materials['mat2']['ext_l'], 100)
+        self.assertEqual(xs.materials['mat2']['ext_l'], 1.0)
 
     def test_extinction_method_param(self):
         """Test assigning extinction method parameter."""
         xs = CrossSection(
             sample='Al_sg225.ncmat',
-            ext_l=100
+            ext_l=1.0
         )
 
-        self.assertEqual(xs.materials['sample']['ext_l'], 100)
+        self.assertEqual(xs.materials['sample']['ext_l'], 1.0)
         # ext_method gets set to default 'BC_pure' during processing
 
     def test_all_extinction_params(self):
         """Test assigning all main extinction parameters."""
         xs = CrossSection(
             sample='Al_sg225.ncmat',
-            ext_l=100,
-            ext_Gg=1500,
-            ext_L=2000
+            ext_l=1.0,
+            ext_g=80.9,
+            ext_L=100.0
         )
 
-        self.assertEqual(xs.materials['sample']['ext_l'], 100)
-        self.assertEqual(xs.materials['sample']['ext_Gg'], 1500)
-        self.assertEqual(xs.materials['sample']['ext_L'], 2000)
+        self.assertEqual(xs.materials['sample']['ext_l'], 1.0)
+        self.assertEqual(xs.materials['sample']['ext_g'], 80.9)
+        self.assertEqual(xs.materials['sample']['ext_L'], 100.0)
 
     def test_params_with_materials_from_dict(self):
         """Test that parameter kwargs work with materials from materials_dict."""
         xs = CrossSection(
             iron=materials_dict["Fe_sg229_Iron-alpha"],
-            ext_l=50,
-            ext_Gg=100
+            ext_l=0.5,
+            ext_g=80.9
         )
 
-        self.assertEqual(xs.materials['iron']['ext_l'], 50)
-        self.assertEqual(xs.materials['iron']['ext_Gg'], 100)
+        self.assertEqual(xs.materials['iron']['ext_l'], 0.5)
+        self.assertEqual(xs.materials['iron']['ext_g'], 80.9)
 
     def test_backward_compatibility_no_params(self):
         """Test that existing code without params still works."""

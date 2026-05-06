@@ -321,9 +321,9 @@ class Data:
         else:
             raise TypeError("input_data must be a file path (str) or a pandas DataFrame")
 
-        # Synthesise tof from row index if not present
+        # Synthesise tof from row index if not present; start from 1 so tof=0 (→ time=0) is avoided
         if "tof" not in df.columns:
-            df.insert(0, "tof", np.arange(len(df)))
+            df.insert(0, "tof", np.arange(1, len(df) + 1))
 
         # counts is mandatory
         if "counts" not in df.columns:

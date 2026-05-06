@@ -289,6 +289,129 @@ class TestSysErrRemoval:
         assert not hasattr(data, 'sys_err') or data.sys_err is None
 
 
+class TestReadCounts:
+    """Test _read_counts column resolution for various DataFrame and CSV inputs."""
+
+    N = 50
+    tof = np.arange(1, N + 1, dtype=float)  # start from 1 — tof=0 causes division by zero in time2energy
+    counts = np.full(N, 100.0)
+    err = np.sqrt(counts)
+
+    def _make_df(self, **cols):
+        return pd.DataFrame({k: v for k, v in cols.items()})
+
+    # ── named columns ────────────────────────────────────────────────────────
+
+    def test_standard_columns(self):
+        """tof + counts + err passes through unchanged."""
+        df = self._make_df(tof=self.tof, counts=self.counts, err=self.err)
+        result = Data._read_counts(df)
+        assert list(result.columns) == ["tof", "counts", "err"]
+        np.testing.assert_array_equal(result["counts"], self.counts)
+        np.testing.assert_array_equal(result["err"], self.err)
+
+    def test_counts_only_no_tof_no_err(self):
+        """Single 'counts' column: tof synthesised from 1, err = sqrt(counts)."""
+        df = self._make_df(counts=self.counts)
+        result = Data._read_counts(df)
+        assert list(result.columns) == ["tof", "counts", "err"]
+        np.testing.assert_array_equal(result["tof"], np.arange(1, self.N + 1))
+        np.testing.assert_array_almost_equal(result["err"], np.sqrt(self.counts))
+
+    def test_counts_and_tof_no_err(self):
+        """tof + counts without err: err filled with sqrt(counts)."""
+        df = self._make_df(tof=self.tof, counts=self.counts)
+        result = Data._read_counts(df)
+        np.testing.assert_array_almost_equal(result["err"], np.sqrt(self.counts))
+
+    # ── column aliases ────────────────────────────────────────────────────────
+
+    def test_alias_signal_time_sigma(self):
+        """'time', 'signal', 'sigma' are recognised aliases."""
+        df = self._make_df(time=self.tof, signal=self.counts, sigma=self.err)
+        result = Data._read_counts(df)
+        assert list(result.columns) == ["tof", "counts", "err"]
+        np.testing.assert_array_equal(result["counts"], self.counts)
+
+    def test_alias_intensity_uncertainty(self):
+        """'intensity' and 'uncertainty' are recognised aliases."""
+        df = self._make_df(tof=self.tof, intensity=self.counts, uncertainty=self.err)
+        result = Data._read_counts(df)
+        np.testing.assert_array_equal(result["counts"], self.counts)
+        np.testing.assert_array_equal(result["err"], self.err)
+
+    def test_alias_cts_std(self):
+        """'cts' and 'std' are recognised aliases."""
+        df = self._make_df(tof=self.tof, cts=self.counts, std=self.err)
+        result = Data._read_counts(df)
+        np.testing.assert_array_equal(result["counts"], self.counts)
+
+    def test_alias_channel_count_error(self):
+        """'channel', 'count', 'error' are recognised aliases."""
+        df = self._make_df(channel=self.tof, count=self.counts, error=self.err)
+        result = Data._read_counts(df)
+        np.testing.assert_array_equal(result["tof"], self.tof)
+        np.testing.assert_array_equal(result["counts"], self.counts)
+
+    # ── positional (no recognised names) ─────────────────────────────────────
+
+    def test_positional_integer_columns(self):
+        """Integer-indexed DataFrame (0, 1, 2) is treated as tof, counts, err."""
+        df = pd.DataFrame(np.column_stack([self.tof, self.counts, self.err]))
+        result = Data._read_counts(df)
+        np.testing.assert_array_equal(result["counts"], self.counts)
+
+    def test_positional_two_columns(self):
+        """Two-column positional: tof + counts, err synthesised."""
+        df = pd.DataFrame(np.column_stack([self.tof, self.counts]))
+        result = Data._read_counts(df)
+        np.testing.assert_array_almost_equal(result["err"], np.sqrt(self.counts))
+
+    # ── err defaults ─────────────────────────────────────────────────────────
+
+    def test_err_all_nan_replaced_by_sqrt_counts(self):
+        """An all-NaN err column is replaced by sqrt(counts)."""
+        df = self._make_df(tof=self.tof, counts=self.counts,
+                           err=np.full(self.N, np.nan))
+        result = Data._read_counts(df)
+        np.testing.assert_array_almost_equal(result["err"], np.sqrt(self.counts))
+
+    # ── explicit names override ───────────────────────────────────────────────
+
+    def test_explicit_names_override(self):
+        """Explicit names= argument takes precedence over alias detection."""
+        df = self._make_df(stacks=self.tof, intensity=self.counts)
+        result = Data._read_counts(df, names=["tof", "counts"])
+        assert list(result.columns) == ["tof", "counts", "err"]
+        np.testing.assert_array_equal(result["tof"], self.tof)
+
+    # ── error on missing counts ───────────────────────────────────────────────
+
+    def test_missing_counts_raises(self):
+        """A single unrecognisable column maps to 'tof' positionally, leaving counts absent."""
+        # One column not in any alias set → positional rename gives 'tof', no 'counts'
+        df = self._make_df(wavelength=self.tof)
+        with pytest.raises(ValueError, match="counts"):
+            Data._read_counts(df)
+
+    # ── integration: from_counts with aliases ─────────────────────────────────
+
+    def test_from_counts_with_signal_alias(self):
+        """from_counts accepts DataFrames using 'signal' instead of 'counts'."""
+        signal = pd.DataFrame({"signal": self.counts})
+        openbeam = pd.DataFrame({"signal": 2.0 * self.counts})
+        data = Data.from_counts(signal, openbeam, L=10, tstep=10e-6)
+        assert list(data.table.columns) == ["wavelength", "trans", "err"]
+        assert len(data.table) == self.N
+
+    def test_from_counts_counts_only_column(self):
+        """from_counts works with a single 'counts' column (reported bug)."""
+        signal = pd.DataFrame({"counts": self.counts})
+        openbeam = pd.DataFrame({"counts": 2.0 * self.counts})
+        data = Data.from_counts(signal, openbeam, L=10, tstep=10e-6)
+        assert len(data.table) == self.N
+
+
 class TestUncertaintyCalculations:
     """Test that uncertainty calculations are correct."""
 
