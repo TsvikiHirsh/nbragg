@@ -240,80 +240,106 @@ class Data:
     @classmethod
     def _read_counts(cls, input_data, names=None):
         """
-        Reads the counts data from a CSV file or a pandas DataFrame and calculates errors if not provided.
-        
-        Parameters:
-        -----------
+        Read counts data from a CSV file or DataFrame into a canonical (tof, counts, err) table.
+
+        Column resolution (in order):
+          1. If ``names`` is given, apply those names positionally.
+          2. Otherwise recognise columns by common aliases (case-insensitive):
+               tof    — tof, time, t, channel, bin, stack, stacks
+               counts — counts, count, signal, intensity, cts
+               err    — err, error, errors, std, std_dev, uncertainty, sigma
+          3. If no aliases match, assume positional order (tof, counts[, err]).
+          4. If ``tof`` is absent, synthesise it from the row index (0, 1, 2, …).
+          5. If ``err`` is absent or all-NaN, compute it as sqrt(counts).
+
+        Parameters
+        ----------
         input_data : str or pandas.DataFrame
-            Either the path to the CSV file containing time-of-flight (tof) and counts data, 
-            or a pandas DataFrame with the data.
-        names : list, optional
-            List of column names to use. If not provided, defaults to ["tof", "counts", "err"].
-            Helps handle variations in column naming (e.g., "stacks" instead of "tof").
-        
-        Returns:
-        --------
-        df : pandas.DataFrame
-            A DataFrame containing columns: 'tof', 'counts', and 'err'. Errors are calculated 
-            as the square root of counts if not provided in the file.
+            Path to a CSV file, or a DataFrame with at least a counts column.
+        names : list of str, optional
+            Explicit column names applied positionally. Overrides alias detection.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns: ``tof``, ``counts``, ``err``.
         """
-        # Default column names
-        default_names = ["tof", "counts", "err"]
-        
-        # Process input based on type
+        _TOF_ALIASES    = {"tof", "time", "t", "channel", "bin", "stack", "stacks"}
+        _COUNTS_ALIASES = {"counts", "count", "signal", "intensity", "cts"}
+        _ERR_ALIASES    = {"err", "error", "errors", "std", "std_dev", "uncertainty", "sigma"}
+
+        def _resolve_columns(df):
+            """Rename columns to canonical names using alias lookup (case-insensitive)."""
+            cols_lower = {str(c).lower(): c for c in df.columns}
+            mapping = {}
+            for aliases, canonical in [(_TOF_ALIASES, "tof"),
+                                        (_COUNTS_ALIASES, "counts"),
+                                        (_ERR_ALIASES, "err")]:
+                for alias in aliases:
+                    if alias in cols_lower and cols_lower[alias] not in mapping:
+                        mapping[cols_lower[alias]] = canonical
+                        break
+            return mapping
+
+        label = "input_data"
+
         if isinstance(input_data, str):
-            # If input is a file path, read CSV
-            df = pd.read_csv(input_data, names=names or default_names, header=None, skiprows=1)
-            # Store label from filename (without path and extension)
-            df.attrs["label"] = input_data.split("/")[-1].rstrip(".csv")
+            label = input_data.split("/")[-1].rstrip(".csv")
+            if names:
+                df = pd.read_csv(input_data, names=names, header=None, skiprows=1)
+            else:
+                # Try reading with automatic header detection first
+                df = pd.read_csv(input_data)
+                mapping = _resolve_columns(df)
+                if mapping:
+                    df = df.rename(columns=mapping)
+                else:
+                    # No recognised names — legacy format: skip header row, assign positionally
+                    ncols = len(df.columns)
+                    df = pd.read_csv(input_data, header=None, skiprows=1,
+                                     names=["tof", "counts", "err"][:ncols])
+
         elif isinstance(input_data, pd.DataFrame):
-            # If input is a DataFrame, create a copy to avoid modifying original
             df = input_data.copy()
-            
-            # Select the last 3 columns 
+            label = getattr(input_data, 'attrs', {}).get('label', 'input_data')
+
+            # Trim extra columns (keep last 3 for backwards compatibility)
             if len(df.columns) > 3:
                 df = df.iloc[:, -3:]
-            
-            # Process column names
+
             if names:
-                # Rename columns if specific names are provided
-                column_mapping = dict(zip(df.columns, names))
-                df = df.rename(columns=column_mapping)
+                df.columns = list(names)[:len(df.columns)]
             else:
-                # If no specific names, use default names 
-                df.columns = default_names[:len(df.columns)]
-            
-            # Ensure we have the required columns
-            required_columns = ["tof", "counts"]
-            for col in required_columns:
-                if col not in df.columns:
-                    raise ValueError(f"DataFrame must contain a '{col}' column")
-            
-            # Use filename as label if available, otherwise use a default
-            df.attrs["label"] = getattr(input_data, 'attrs', {}).get('label', 'input_data')
+                mapping = _resolve_columns(df)
+                if mapping:
+                    df = df.rename(columns=mapping)
+                elif not any(str(c).lower() in _TOF_ALIASES | _COUNTS_ALIASES | _ERR_ALIASES
+                             for c in df.columns):
+                    # All columns unrecognised — assume positional
+                    df.columns = ["tof", "counts", "err"][:len(df.columns)]
+
         else:
-            raise TypeError("input_data must be a string (file path) or a pandas DataFrame")
-        
-        # Ensure DataFrame has 'err' column with valid values
-        if "err" not in df.columns:
-            # Try to find alternative error column names
-            error_column_alternatives = ['error', 'std', 'std_dev', 'uncertainty']
-            for alt_col in error_column_alternatives:
-                if alt_col in df.columns:
-                    df = df.rename(columns={alt_col: 'err'})
-                    break
-            else:
-                # If no error column found, calculate as sqrt of counts
-                df["err"] = np.sqrt(df["counts"])
-        elif df["err"].isna().all():
-            # If err column exists but is all NaN (happens when reading 2-column CSV with 3 names)
-            # calculate errors as sqrt of counts
+            raise TypeError("input_data must be a file path (str) or a pandas DataFrame")
+
+        # Synthesise tof from row index if not present
+        if "tof" not in df.columns:
+            df.insert(0, "tof", np.arange(len(df)))
+
+        # counts is mandatory
+        if "counts" not in df.columns:
+            found = list(input_data.columns) if isinstance(input_data, pd.DataFrame) else []
+            raise ValueError(
+                f"Could not identify a counts column. "
+                f"Recognised aliases: {sorted(_COUNTS_ALIASES)}. "
+                f"Columns found: {found}"
+            )
+
+        # err defaults to sqrt(counts) if absent or entirely NaN
+        if "err" not in df.columns or df["err"].isna().all():
             df["err"] = np.sqrt(df["counts"])
-        
-        # Ensure consistent column order and names
-        df = df[default_names[:len(df.columns)]]
-        
-        return df
+
+        df.attrs["label"] = label
+        return df[["tof", "counts", "err"]]
 
     @classmethod
     def from_counts(cls, signal, openbeam,
