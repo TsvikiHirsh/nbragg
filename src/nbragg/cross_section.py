@@ -531,13 +531,11 @@ class CrossSection:
                         effective[key] = stored
                 effective.update({k: v for k, v in kwargs.items() if k in ('a', 'b', 'c')})
                 cell_dict.update(effective)
-                # Propagate symmetry constraints
-                if np.isclose(orig_a, orig_b, atol=1e-4) and 'a' in effective and 'b' not in effective:
+                # Unconditionally enforce crystal symmetry (same logic as _cell_info)
+                if np.isclose(orig_a, orig_b, atol=1e-4):
                     cell_dict['b'] = cell_dict['a']
-                if np.isclose(orig_a, orig_c, atol=1e-4) and 'a' in effective and 'c' not in effective:
-                    cell_dict['c'] = cell_dict['a']
-                if np.isclose(orig_b, orig_c, atol=1e-4) and 'b' in effective and 'c' not in effective:
-                    cell_dict['c'] = cell_dict['b']
+                    if np.isclose(orig_b, orig_c, atol=1e-4):
+                        cell_dict['c'] = cell_dict['a']
                 # Always set cell parameters in composer (required for SANS)
                 composer.set_cell_parameters(
                     cell_dict['a'], cell_dict['b'], cell_dict['c'],
@@ -1618,14 +1616,15 @@ class CrossSection:
 
         cell_dict.update(effective)
 
-        # Propagate symmetry constraints so a single-axis update keeps the
-        # crystal valid (e.g. cubic a=b=c, hexagonal a=b≠c).
-        if np.isclose(orig_a, orig_b, atol=1e-4) and 'a' in effective and 'b' not in effective:
+        # Unconditionally enforce crystal symmetry based on the original lattice.
+        # NCrystal's spacegroup validation requires a==b for hexagonal/trigonal and
+        # a==b==c for cubic, regardless of what values kwargs or stored state carry.
+        # This handles the case where b/c were stripped of their lmfit expr constraint
+        # (e.g. by update_params) and subsequently passed as stale fixed values.
+        if np.isclose(orig_a, orig_b, atol=1e-4):
             cell_dict['b'] = cell_dict['a']
-        if np.isclose(orig_a, orig_c, atol=1e-4) and 'a' in effective and 'c' not in effective:
-            cell_dict['c'] = cell_dict['a']
-        if np.isclose(orig_b, orig_c, atol=1e-4) and 'b' in effective and 'c' not in effective:
-            cell_dict['c'] = cell_dict['b']
+            if np.isclose(orig_b, orig_c, atol=1e-4):
+                cell_dict['c'] = cell_dict['a']  # cubic: c follows a
 
         return (
             f"  lengths {cell_dict['a']:.4f}  {cell_dict['b']:.4f}  {cell_dict['c']:.4f}  \n"
