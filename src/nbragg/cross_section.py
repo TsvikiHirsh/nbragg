@@ -307,8 +307,14 @@ class CrossSection:
         self.datatemplate = {}
         
         for material in self.materials:
-            # Save entire input text
-            self.textdata[material] = nc.createTextData(self.materials[material]["mat"]).rawData
+            # Always read the template from the original .ncmat file, not from a
+            # previously-mutated virtual .nbragg file, so the template stays clean
+            # even when the same CrossSection is reused across multiple TransmissionModels.
+            _template_src = (
+                self.materials[material].get("_original_mat")
+                or self.materials[material]["mat"]
+            )
+            self.textdata[material] = nc.createTextData(_template_src).rawData
             
             # Split input into lines
             lines = self.textdata[material].split('\n')
