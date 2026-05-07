@@ -297,7 +297,7 @@ class FittingMixin:
         """Helper method to get parameters associated with a stage definition."""
         group_map = {
             "basic": ["norm", "thickness"],
-            "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
+            "background": [p for p in self.params if re.compile(r"bg\d+").match(p) or p.startswith("b_")],
             "tof": [p for p in ["L0", "t0"] if p in self.params],
             "response": [p for p in self.params if self.response and p in self.response.params],
             "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
@@ -376,7 +376,7 @@ class FittingMixin:
         # User-friendly group name mapping
         group_map = {
             "basic": ["norm", "thickness"],
-            "background": [p for p in self.params if re.compile(r"(b|bg)\d+").match(p) or p.startswith("b_")],
+            "background": [p for p in self.params if re.compile(r"bg\d+").match(p) or p.startswith("b_")],
             "tof": [p for p in ["L0", "t0"] if p in self.params],
             "response": [p for p in self.params if self.response and p in self.response.params],
             "weights": [p for p in self.params if re.compile(r"p\d+").match(p)],
@@ -704,8 +704,7 @@ class FittingMixin:
                     **stage_kwargs
                 )
             except Exception as e:
-                if verbose:
-                    warnings.warn(f"Fitting failed in {stage_name}: {e}")
+                warnings.warn(f"Fitting failed in {stage_name}: {type(e).__name__}: {e}")
                 continue
 
             # Extract pickleable part
@@ -747,6 +746,17 @@ class FittingMixin:
 
         if not stage_results:
             raise RuntimeError("No successful fitting stages completed")
+
+        # Restore CrossSection to the fitted state. During Jacobian evaluation
+        # the CrossSection is mutated at perturbed parameter values; call it once
+        # more at the optimal parameters so model.cross_section reflects the fit.
+        try:
+            self.cross_section(
+                np.array([self.cross_section.lambda_grid[0]]),
+                **{k: v.value for k, v in fit_result.params.items()}
+            )
+        except Exception:
+            pass
 
         self.fit_result = fit_result
         self.fit_stages = stage_results
