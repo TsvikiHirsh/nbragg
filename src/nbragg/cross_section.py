@@ -515,18 +515,29 @@ class CrossSection:
             original_mat = self.materials[material].get("_original_mat", self.materials[material]["mat"])
             composer = nc.NCMATComposer(original_mat)
 
-            # Always get and set cell parameters for SANS (NCMATComposer requires cell info)
-            # Load the material to get structure info
-            mat_data = nc.load(self.materials[material]["mat"])
+            # Always get and set cell parameters for SANS (NCMATComposer requires cell info).
+            # Read from the original .ncmat so we start from a pristine, symmetric baseline.
             try:
+                mat_data = nc.load(original_mat)
                 cell_dict = mat_data.info.structure_info
-                # Apply lattice parameter updates if provided
-                has_lattice_updates = any(kwargs.get(key) for key in ['a', 'b', 'c'])
-                if has_lattice_updates:
-                    # Update with kwargs
-                    for key in ['a', 'b', 'c']:
-                        if key in kwargs and kwargs[key] is not None:
-                            cell_dict[key] = kwargs[key]
+                orig_a = cell_dict['a']
+                orig_b = cell_dict['b']
+                orig_c = cell_dict['c']
+                # Build effective lattice: stored current values, then kwargs on top
+                effective = {}
+                for key in ('a', 'b', 'c'):
+                    stored = self.materials[material].get(key)
+                    if stored is not None:
+                        effective[key] = stored
+                effective.update({k: v for k, v in kwargs.items() if k in ('a', 'b', 'c')})
+                cell_dict.update(effective)
+                # Propagate symmetry constraints
+                if np.isclose(orig_a, orig_b, atol=1e-4) and 'a' in effective and 'b' not in effective:
+                    cell_dict['b'] = cell_dict['a']
+                if np.isclose(orig_a, orig_c, atol=1e-4) and 'a' in effective and 'c' not in effective:
+                    cell_dict['c'] = cell_dict['a']
+                if np.isclose(orig_b, orig_c, atol=1e-4) and 'b' in effective and 'c' not in effective:
+                    cell_dict['c'] = cell_dict['b']
                 # Always set cell parameters in composer (required for SANS)
                 composer.set_cell_parameters(
                     cell_dict['a'], cell_dict['b'], cell_dict['c'],
@@ -630,11 +641,16 @@ class CrossSection:
         def _from_ncmat_l(l_A):   return l_A / 1e4        # Å → µm
         def _from_ncmat_g(g_inv): return 8090.0 / g_inv   # 1/rad → arcmin
         def _from_ncmat_L(L_A):   return L_A / 1e4        # Å → µm
-        mat_path = self.materials[material]["mat"]
-        mat_data = nc.load(mat_path)
+        # Load from original .ncmat so extinction detection is not confused by
+        # the mid-fit state of the virtual .nbragg file.
+        original_mat = (
+            self.materials[material].get("_original_mat")
+            or self.materials[material]["mat"]
+        )
 
         # Check if material has structure info
         try:
+            mat_data = nc.load(original_mat)
             _ = mat_data.info.structure_info
             has_structure = True
         except Exception:
@@ -1570,10 +1586,13 @@ class CrossSection:
         Retrieve crystallographic cell information if available,
         otherwise return an empty string.
         """
-        mat_path = self.materials[material]["mat"]
-
-        # Always load original NCMAT file (not the virtual nbragg)
-        mat_data = nc.load(mat_path)
+        # Always read the baseline from the original .ncmat so we start from a
+        # pristine, symmetry-correct state (the virtual .nbragg may be mid-fit).
+        original_mat = (
+            self.materials[material].get("_original_mat")
+            or self.materials[material]["mat"]
+        )
+        mat_data = nc.load(original_mat)
 
         # Try to get structure info
         try:
@@ -1582,8 +1601,31 @@ class CrossSection:
             # No structure info available (e.g., amorphous or molecular material)
             return ""
 
-        # Apply overrides from kwargs
-        cell_dict.update(**kwargs)
+        orig_a = cell_dict['a']
+        orig_b = cell_dict['b']
+        orig_c = cell_dict['c']
+
+        # Build effective lattice overrides: stored current values first, then
+        # kwargs on top.  This ensures that an extinction-only update (no a/b/c
+        # in kwargs) still writes the lattice the fitter previously settled on,
+        # rather than silently resetting it back to the original .ncmat value.
+        effective = {}
+        for key in ('a', 'b', 'c'):
+            stored = self.materials[material].get(key)
+            if stored is not None:
+                effective[key] = stored
+        effective.update({k: v for k, v in kwargs.items() if k in ('a', 'b', 'c')})
+
+        cell_dict.update(effective)
+
+        # Propagate symmetry constraints so a single-axis update keeps the
+        # crystal valid (e.g. cubic a=b=c, hexagonal a=b≠c).
+        if np.isclose(orig_a, orig_b, atol=1e-4) and 'a' in effective and 'b' not in effective:
+            cell_dict['b'] = cell_dict['a']
+        if np.isclose(orig_a, orig_c, atol=1e-4) and 'a' in effective and 'c' not in effective:
+            cell_dict['c'] = cell_dict['a']
+        if np.isclose(orig_b, orig_c, atol=1e-4) and 'b' in effective and 'c' not in effective:
+            cell_dict['c'] = cell_dict['b']
 
         return (
             f"  lengths {cell_dict['a']:.4f}  {cell_dict['b']:.4f}  {cell_dict['c']:.4f}  \n"
