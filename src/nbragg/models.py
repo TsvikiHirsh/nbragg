@@ -515,17 +515,26 @@ class TransmissionModel(ParametersMixin, FittingMixin, PlottingMixin, IOMixin, l
             If True, modify the current object. If False, return a new modified object, 
             by default True.
         """
+        def _copy_value(target_params, name, src_value):
+            # lmfit's set(value=x) clears expr on expression-constrained params.
+            # Skip those: their value is already determined by the expression and
+            # will be recomputed automatically (e.g. b1 = expr("a1")).
+            if name in target_params and target_params[name].expr is not None:
+                return
+            if name in target_params:
+                target_params[name].set(value=src_value)
+
         if inplace:
             if values_only:
                 for param in params:
-                    self.params[param].set(value=params[param].value)
+                    _copy_value(self.params, param, params[param].value)
             else:
                 self.params = params
         else:
             new_self = deepcopy(self)
             if values_only:
                 for param in params:
-                    new_self.params[param].set(value=params[param].value)
+                    _copy_value(new_self.params, param, params[param].value)
             else:
                 new_self.params = params
             return new_self  # Ensure a return statement in the non-inplace scenario.
