@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import exponnorm
 import matplotlib.pyplot as plt
-from scipy.special import erfc
+from scipy.special import erfc, erfcx
 from scipy.stats import uniform
 import lmfit
 import inspect
@@ -49,18 +49,20 @@ class Response:
         elif kind == "full_jorgensen":
             self.function = self.full_jorgensen_response
             self.params = lmfit.Parameters()
-            # Defaults below mirror the GSAS-style values that Jorgensen-profile
-            # fits converge to on typical TOF imaging instruments (see ORNL
-            # braggedgemodeling). α0/β1/σ0/σ2 default to 0 and are usually held
-            # fixed; σ1 is the dominant resolution parameter and should be
-            # refined first (see staged_preset()).
-            self.params.add(f"α0", value=0.,     min=-10000, max=10000, vary=False)
-            self.params.add(f"α1", value=494.32, min=-10000, max=10000, vary=vary)
-            self.params.add(f"β0", value=48.6,   min=-10000, max=10000, vary=vary)
-            self.params.add(f"β1", value=0.0,    min=-10000, max=10000, vary=False)
-            self.params.add(f"σ0", value=0.0,    min=0.0,    max=100e-3, vary=False)
-            self.params.add(f"σ1", value=1.0e-5, min=1e-9,   max=100e-3, vary=vary)
-            self.params.add(f"σ2", value=0.0,    min=0.0,    max=100e-3, vary=False)
+            # Units (user-facing): α, β are decay rates in 1/µs; σ is a
+            # Gaussian width in µs. tgrid is still in seconds — the response
+            # function converts internally. α0/β1/σ0/σ2 default to 0 and are
+            # usually held fixed; σ1 is the dominant resolution term and
+            # should be refined first (see staged_preset()). Defaults give a
+            # near-delta response (FWHM ~ 1 tgrid sample = 10 µs) so the
+            # convolution starts as essentially identity.
+            self.params.add(f"α0", value=0.,    min=0.,    max=1000., vary=False)
+            self.params.add(f"α1", value=0.5,   min=0.,    max=1000., vary=vary)
+            self.params.add(f"β0", value=0.5,   min=0.,    max=1000., vary=vary)
+            self.params.add(f"β1", value=0.0,   min=0.,    max=1000., vary=False)
+            self.params.add(f"σ0", value=0.0,   min=0.0,   max=1000., vary=False)
+            self.params.add(f"σ1", value=0.001, min=1e-6,  max=1000., vary=vary)
+            self.params.add(f"σ2", value=0.0,   min=0.0,   max=1000., vary=False)
 
         elif kind == "none":
             self.function = self.empty_response
@@ -227,19 +229,24 @@ class Response:
         # Placeholder: Implement if needed
         raise NotImplementedError("square_jorgensen_response not implemented.")
 
-    def full_jorgensen_response(self, wl=4.0, α0=0., α1=494.32, β0=48.6, β1=0., σ0=0., σ1=1e-5, σ2=0., **kwargs):
+    def full_jorgensen_response(self, wl=4.0, α0=0., α1=0.5, β0=0.5, β1=0., σ0=0., σ1=0.001, σ2=0., **kwargs):
         """
         Jorgensen TOF peak profile with d-spacing-dependent parameters.
 
         Implements eq. 3.40 of Jorgensen et al. (1978):
             h(Δ, σ, α, β) = αβ / (2(α+β)) · (exp(u) erfc(y) + exp(v) erfc(z))
         with
-            α = α0 + α1 / d
-            β = β0 + β1 / d^4
-            σ² = σ0² + (σ1·d)² + (σ2·d²)²
+            α = α0 + α1 / d        [1/µs]
+            β = β0 + β1 / d^4      [1/µs]
+            σ² = σ0² + (σ1·d)² + (σ2·d²)²    [µs²]
 
-        Built on self.tgrid (seconds); convolved sample-wise downstream.
-        σ1 is the dominant resolution term and should be refined first.
+        Parameter units are GSAS-style: α, β in 1/µs and σ in µs. The profile
+        is evaluated on self.tgrid (seconds) — the function converts units
+        internally so the user-facing values stay in the 0.001–1000 range.
+
+        Uses the identity exp(u)·erfc(y) = exp(−x²/(2σ²))·erfcx(y) on the y≥0
+        side to avoid exp(α²σ²/2) overflow when σ is large; the y<0 side is
+        already bounded so it uses the direct form.
 
         Returns a 1-D normalized profile defined on self.tgrid.
         """
@@ -247,32 +254,42 @@ class Response:
         d2 = d * d
         d4 = d2 * d2
 
-        α = α0 + α1 / d
-        β = β0 + β1 / d4
-        σ2_val = σ0**2 + (σ1 * d)**2 + (σ2 * d2)**2
-        σ = np.sqrt(max(σ2_val, 1e-30))
+        # Convert user-facing units (1/µs, µs) to seconds-based internal units
+        # so they match self.tgrid (seconds): 1/µs → ×1e6 to get 1/s; µs → ×1e-6 to get s.
+        α = (α0 + α1 / d) * 1e6
+        β = (β0 + β1 / d4) * 1e6
+        σ2_val = (σ0**2 + (σ1 * d)**2 + (σ2 * d2)**2) * 1e-12
+        σ2_val = max(σ2_val, 1e-30)
+        σ = np.sqrt(σ2_val)
 
         if α + β <= 0:
             raise ValueError(f"α + β must be positive (got α={α}, β={β})")
 
         x = self.tgrid
         sqrt2 = np.sqrt(2)
+        inv_2σ2 = 0.5 / σ2_val
+        rad2sigma = 1.0 / (sqrt2 * σ)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
 
-            u = (α / 2) * (α * σ2_val + 2 * x)
-            v = (β / 2) * (β * σ2_val - 2 * x)
-            y = (α * σ2_val + x) / (sqrt2 * σ)
-            z = (β * σ2_val - x) / (sqrt2 * σ)
+            y = (α * σ2_val + x) * rad2sigma
+            z = (β * σ2_val - x) * rad2sigma
+            gauss = np.exp(-x * x * inv_2σ2)
 
-            ey = erfc(y)
-            ez = erfc(z)
-            term1 = np.exp(u) * ey
-            term2 = np.exp(v) * ez
-            # exp(huge) * erfc(huge)=0 → NaN; zero those cells
-            term1[ey == 0] = 0
-            term2[ez == 0] = 0
+            # term1 = exp(u)·erfc(y); use gauss·erfcx(y) for y>=0 (stable),
+            # direct form for y<0 (where exp(u) is bounded ≤ exp(-α²σ²/2)·2)
+            term1 = np.empty_like(x)
+            m1 = y >= 0
+            term1[m1] = gauss[m1] * erfcx(y[m1])
+            u_neg = (α / 2) * (α * σ2_val + 2 * x[~m1])
+            term1[~m1] = np.exp(u_neg) * erfc(y[~m1])
+
+            term2 = np.empty_like(x)
+            m2 = z >= 0
+            term2[m2] = gauss[m2] * erfcx(z[m2])
+            v_neg = (β / 2) * (β * σ2_val - 2 * x[~m2])
+            term2[~m2] = np.exp(v_neg) * erfc(z[~m2])
 
             scale = α * β / (2 * (α + β))
             profile = scale * (term1 + term2)
