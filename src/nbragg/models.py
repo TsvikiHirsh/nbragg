@@ -189,6 +189,13 @@ class TransmissionModel(ParametersMixin, FittingMixin, PlottingMixin, IOMixin, l
         }
         for stage in possible_stages:
             if vary_flags.get(stage, False) is True:
+                # Expand "response" into its preset sub-stages (e.g. for
+                # full_jorgensen: σ1 → σ1+β0 → σ1+β0+α1)
+                if stage == "response" and self.response is not None:
+                    preset = self.response.staged_preset()
+                    if preset:
+                        self._stages.update(preset)
+                        continue
                 self._stages[stage] = stage
 
     def transmission(self, wl: np.ndarray, thickness: float = 1, norm: float = 1., **kwargs):

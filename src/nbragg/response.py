@@ -49,20 +49,42 @@ class Response:
         elif kind == "full_jorgensen":
             self.function = self.full_jorgensen_response
             self.params = lmfit.Parameters()
-            self.params.add(f"α0", value=0., min=-10000, max=10000, vary=vary)  # α0
-            self.params.add(f"α1", value=494.32, min=-10000, max=10000, vary=vary)  # α1
-            self.params.add(f"β0", value=48.6, min=-10000, max=10000, vary=vary)  # β0
-            self.params.add(f"β1", value=0.0, min=-10000, max=10000, vary=vary)  # β1
-            self.params.add(f"σ0", value=0.0, min=0.0, max=100e-3, vary=vary)    # σ0
-            self.params.add(f"σ1", value=2.5e-3, min=1e-6, max=100e-3, vary=vary) # σ1
-            self.params.add(f"σ2", value=0.0, min=0.0, max=100e-3, vary=vary)    # σ2
-            # self.params.add(f"truncation_factor", value=0.01, min=1e-6, max=1.0, vary=False)
-            # self.params.add(f"apply_asymmetry", value=False, vary=False)
+            # Defaults below mirror the GSAS-style values that Jorgensen-profile
+            # fits converge to on typical TOF imaging instruments (see ORNL
+            # braggedgemodeling). α0/β1/σ0/σ2 default to 0 and are usually held
+            # fixed; σ1 is the dominant resolution parameter and should be
+            # refined first (see staged_preset()).
+            self.params.add(f"α0", value=0.,     min=-10000, max=10000, vary=False)
+            self.params.add(f"α1", value=494.32, min=-10000, max=10000, vary=vary)
+            self.params.add(f"β0", value=48.6,   min=-10000, max=10000, vary=vary)
+            self.params.add(f"β1", value=0.0,    min=-10000, max=10000, vary=False)
+            self.params.add(f"σ0", value=0.0,    min=0.0,    max=100e-3, vary=False)
+            self.params.add(f"σ1", value=1.0e-5, min=1e-9,   max=100e-3, vary=vary)
+            self.params.add(f"σ2", value=0.0,    min=0.0,    max=100e-3, vary=False)
 
         elif kind == "none":
             self.function = self.empty_response
         else:
             raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'jorgensen', 'square', 'square_jorgensen', 'full_jorgensen', or 'none'.")
+
+    def staged_preset(self):
+        """
+        Recommended staged-fit ordering for this response kind.
+
+        Returns a dict suitable for assigning to `TransmissionModel.stages`,
+        merging with other stages as needed. For full_jorgensen the order
+        follows Jorgensen-profile fitting best practice: refine σ1 first
+        (dominant resolution term), then β0 (decay), then α1 (rise).
+        """
+        if self.kind == "full_jorgensen":
+            return {
+                "response_sig1": ["σ1"],
+                "response_beta": ["σ1", "β0"],
+                "response_alpha": ["σ1", "β0", "α1"],
+            }
+        if self.kind == "jorgensen":
+            return {"response": ["α0", "β0"]}
+        return {}
 
     def register_response(self, response_func, lmfit_params=None, **kwargs):
         """
@@ -205,120 +227,61 @@ class Response:
         # Placeholder: Implement if needed
         raise NotImplementedError("square_jorgensen_response not implemented.")
 
-    def full_jorgensen_response(self, wl=4.0, α0=3.67, α1=0.0, β0=3.06, β1=0.0, σ0=0.0, σ1=2.5e-3, σ2=0.0, truncation_factor=0.01, apply_asymmetry=False, **kwargs):
+    def full_jorgensen_response(self, wl=4.0, α0=0., α1=494.32, β0=48.6, β1=0., σ0=0., σ1=1e-5, σ2=0., **kwargs):
         """
-        Calculates the Jorgensen/GSAS TOF peak profile function with optional asymmetry correction.
-        
-        Parameters:
-        -----------
-        wl : float or array-like
-            Wavelength(s) in Angstroms.
-        α0, α1 : float
-            Alpha parameters [α0, α1] for α = α0 + α1/d.
-        β0, β1 : float
-            Beta parameters [β0, β1] for β = β0 + β1/d^4.
-        σ0, σ1, σ2 : float
-            Sigma parameters [σ0, σ1, σ2] for σ^2 = σ0^2 + (σ1*d)^2 + (σ2*d^2)^2.
-        truncation_factor : float, optional
-            Truncation range as a multiple of σ (default: 0.01).
-        apply_asymmetry : bool, optional
-            If True, applies asymmetry correction (default: False).
-        **kwargs : dict
-            Additional parameters (ignored unless needed for lmfit compatibility).
-        
-        Returns:
-        --------
-        numpy.ndarray
-            Normalized profile values with NaN values replaced by 0.
+        Jorgensen TOF peak profile with d-spacing-dependent parameters.
+
+        Implements eq. 3.40 of Jorgensen et al. (1978):
+            h(Δ, σ, α, β) = αβ / (2(α+β)) · (exp(u) erfc(y) + exp(v) erfc(z))
+        with
+            α = α0 + α1 / d
+            β = β0 + β1 / d^4
+            σ² = σ0² + (σ1·d)² + (σ2·d²)²
+
+        Built on self.tgrid (seconds); convolved sample-wise downstream.
+        σ1 is the dominant resolution term and should be refined first.
+
+        Returns a 1-D normalized profile defined on self.tgrid.
         """
-        # Prepare parameters
-        params = {
-            'α0': [α0, α1],
-            'β0': [β0, β1],
-            'σ1': [σ0, σ1, σ2]
-        }
-        
-        # Use tgrid for time-of-flight response
-        xgrid = self.tgrid
-        
-        # Convert wavelength to array
-        wl = np.atleast_1d(wl)
-        
-        # Initialize output
-        profiles = []
-        
-        for w in wl:
-            # Calculate d-spacing
-            d = w / 2.0
-            d2 = d * d
-            d4 = d2 * d2
-            
-            # Compute profile parameters
-            α = params['α0'][0] + params['α0'][1] / d
-            β = params['β0'][0] + params['β0'][1] / d4
-            σ2 = params['σ1'][0]**2 + (params['σ1'][1] * d)**2 + (params['σ1'][2] * d2)**2
-            σ = np.sqrt(max(σ2, 1e-10))  # Prevent zero or negative σ
-            
-            # Check for valid parameters
-            if α + β <= 0:
-                raise ValueError("α + β must be positive")
-            
-            # Truncation range
-            truncation = σ * truncation_factor
-            mask = np.abs(xgrid) < truncation
-            x = xgrid[mask]
-            
-            # Calculate profile
-            sqrt2 = np.sqrt(2)
-            α_2 = α / 2
-            β_2 = β / 2
-            rad2sigma = 1.0 / (σ * sqrt2)
-            α_σ2 = α * σ2
-            β_σ2 = β * σ2
-            
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                
-                u = α_2 * (α_σ2 + 2.0 * x)
-                v = β_2 * (β_σ2 - 2.0 * x)
-                y = (α_σ2 + x) * rad2sigma
-                z = (β_σ2 - x) * rad2sigma
-                
-                term1 = np.exp(u) * erfc(y)
-                term2 = np.exp(v) * erfc(z)
-                
-                # Handle numerical stability
-                term1[erfc(y) == 0] = 0
-                term2[erfc(z) == 0] = 0
-                
-                # Scaling factor
-                scale = α * β / (2 * (α + β))
-                
-                profile = scale * (term1 + term2)
-                
-                # Normalize within truncated range
-                norm = np.sum(profile)
-                if norm > 0:
-                    profile = profile / norm
-                else:
-                    profile = np.zeros_like(profile)
-                
-                # Replace NaN
-                profile = np.nan_to_num(profile, nan=0.0, posinf=0.0, neginf=0.0)
-                
-                # Extend profile to full grid
-                full_profile = np.zeros_like(xgrid)
-                full_profile[mask] = profile
-                
-                # Apply asymmetry correction if requested
-                if apply_asymmetry:
-                    full_profile = self._apply_asymmetry_correction(full_profile, xgrid, d, params['α0'], params['β0'], truncation_factor)
-                
-                profiles.append(full_profile)
-        
-        # Return single profile or array of profiles
-        profiles = np.array(profiles)
-        return profiles[0] if profiles.shape[0] == 1 else profiles
+        d = wl / 2.0
+        d2 = d * d
+        d4 = d2 * d2
+
+        α = α0 + α1 / d
+        β = β0 + β1 / d4
+        σ2_val = σ0**2 + (σ1 * d)**2 + (σ2 * d2)**2
+        σ = np.sqrt(max(σ2_val, 1e-30))
+
+        if α + β <= 0:
+            raise ValueError(f"α + β must be positive (got α={α}, β={β})")
+
+        x = self.tgrid
+        sqrt2 = np.sqrt(2)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+
+            u = (α / 2) * (α * σ2_val + 2 * x)
+            v = (β / 2) * (β * σ2_val - 2 * x)
+            y = (α * σ2_val + x) / (sqrt2 * σ)
+            z = (β * σ2_val - x) / (sqrt2 * σ)
+
+            ey = erfc(y)
+            ez = erfc(z)
+            term1 = np.exp(u) * ey
+            term2 = np.exp(v) * ez
+            # exp(huge) * erfc(huge)=0 → NaN; zero those cells
+            term1[ey == 0] = 0
+            term2[ez == 0] = 0
+
+            scale = α * β / (2 * (α + β))
+            profile = scale * (term1 + term2)
+            profile = np.nan_to_num(profile, nan=0.0, posinf=0.0, neginf=0.0)
+
+            total = profile.sum()
+            if total > 0:
+                profile = profile / total
+            return profile
 
     def _apply_asymmetry_correction(self, profile, xgrid, d, α0, β0, truncation_factor):
         """
@@ -490,16 +453,20 @@ class Response:
 
         params = params if params else self.params
         y = self.function(**params.valuesdict())
-        if self.kind == "jorgensen" or self.kind == "full_jorgensen" or self.kind == "square_jorgensen":
+        if self.kind == "jorgensen" or self.kind == "square_jorgensen":
             xlabel = kwargs.pop("xlabel", "wavelength [Angstrom]")
             df = pd.Series(y, index=self.Δλ, name="Response")
+            df.plot(ax=ax, xlabel=xlabel, **kwargs)
+        elif self.kind == "full_jorgensen":
+            xlabel = kwargs.pop("xlabel", "tof [usec]")
+            df = pd.Series(y, index=self.tgrid * 1e6, name="Response")
             df.plot(ax=ax, xlabel=xlabel, **kwargs)
         elif self.kind == "square":
             xlabel = kwargs.pop("xlabel", "tof [usec]")
             df = pd.Series(y, index=self.tgrid, name="Response")
-            df.plot(ax=ax, xlabel=xlabel, **kwargs)     
+            df.plot(ax=ax, xlabel=xlabel, **kwargs)
         else:
-            raise("response plotting is only supported for 'jorgensen','full_jorgensen', 'square', and 'jorgensen_square' kinds")
+            raise ValueError("response plotting is only supported for 'jorgensen','full_jorgensen', 'square', and 'square_jorgensen' kinds")
 
 
 class Background:
