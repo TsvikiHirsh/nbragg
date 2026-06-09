@@ -1,5 +1,5 @@
 """
-Tests for Data.from_grouped_dataframes() and Data.from_grouped_transmission().
+Tests for Data.from_grouped with dict/list-of-DataFrame inputs.
 """
 import pytest
 import pandas as pd
@@ -18,208 +18,162 @@ def _make_counts_df(n=40, seed=None):
     return pd.DataFrame({"tof": tof, "counts": counts, "err": np.sqrt(counts)})
 
 
-def _make_transmission_df(n=40, seed=None):
-    rng = np.random.default_rng(seed)
-    wl = np.linspace(0.5, 5.0, n)
-    trans = rng.uniform(0.3, 0.9, n)
-    err = trans * 0.02
-    return pd.DataFrame({"wavelength": wl, "trans": trans, "err": err})
-
-
 # ---------------------------------------------------------------------------
-# from_grouped_dataframes – int indices (1-D)
+# dict of DataFrames – int keys (1-D)
 # ---------------------------------------------------------------------------
 
-class TestFromGroupedDataframesInt:
-    def _signal_ob(self):
+class TestDictInputInt:
+    def _sig_ob(self):
         signal = {i: _make_counts_df(seed=i) for i in range(3)}
         openbeam = {i: _make_counts_df(seed=i + 100) for i in range(3)}
         return signal, openbeam
 
     def test_is_grouped(self):
-        signal, openbeam = self._signal_ob()
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        s, ob = self._sig_ob()
+        data = Data.from_grouped(s, ob)
         assert data.is_grouped
 
     def test_indices(self):
-        signal, openbeam = self._signal_ob()
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        s, ob = self._sig_ob()
+        data = Data.from_grouped(s, ob)
         assert set(data.indices) == {"0", "1", "2"}
 
     def test_groups_have_transmission_columns(self):
-        signal, openbeam = self._signal_ob()
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        s, ob = self._sig_ob()
+        data = Data.from_grouped(s, ob)
         for idx in data.indices:
             df = data.groups[idx]
-            assert set(df.columns) >= {"wavelength", "trans", "err"}
+            assert {"wavelength", "trans", "err"}.issubset(df.columns)
 
     def test_groups_signal_stored(self):
-        signal, openbeam = self._signal_ob()
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        s, ob = self._sig_ob()
+        data = Data.from_grouped(s, ob)
         for idx in data.indices:
             assert idx in data.groups_signal
             assert idx in data.groups_openbeam
 
     def test_default_table_set(self):
-        signal, openbeam = self._signal_ob()
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        s, ob = self._sig_ob()
+        data = Data.from_grouped(s, ob)
         assert data.table is not None
 
     def test_group_shape_1d(self):
-        signal, openbeam = self._signal_ob()
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        s, ob = self._sig_ob()
+        data = Data.from_grouped(s, ob)
         assert data.group_shape == (3,)
 
 
 # ---------------------------------------------------------------------------
-# from_grouped_dataframes – shared openbeam
+# dict of DataFrames – shared openbeam DataFrame
 # ---------------------------------------------------------------------------
 
-class TestFromGroupedDataframesSharedOB:
-    def test_shared_openbeam_dataframe(self):
+class TestDictInputSharedOB:
+    def test_shared_openbeam(self):
         signal = {i: _make_counts_df(seed=i) for i in range(4)}
         shared_ob = _make_counts_df(seed=999)
-        data = Data.from_grouped_dataframes(signal, shared_ob)
+        data = Data.from_grouped(signal, shared_ob)
         assert data.is_grouped
         assert len(data.indices) == 4
 
     def test_transmission_computed_for_all_groups(self):
         signal = {i: _make_counts_df(seed=i) for i in range(4)}
         shared_ob = _make_counts_df(seed=999)
-        data = Data.from_grouped_dataframes(signal, shared_ob)
+        data = Data.from_grouped(signal, shared_ob)
         for idx in data.indices:
-            df = data.groups[idx]
-            assert len(df) > 0
-            assert df["trans"].notna().all()
+            assert data.groups[idx]["trans"].notna().all()
 
 
 # ---------------------------------------------------------------------------
-# from_grouped_dataframes – 2-D tuple indices
+# dict of DataFrames – 2-D tuple keys
 # ---------------------------------------------------------------------------
 
-class TestFromGroupedDataframes2D:
+class TestDictInput2D:
     def _make_2d(self):
         coords = [(0, 0), (0, 1), (1, 0), (1, 1)]
         signal = {c: _make_counts_df(seed=i) for i, c in enumerate(coords)}
         openbeam = {c: _make_counts_df(seed=i + 50) for i, c in enumerate(coords)}
         return signal, openbeam, coords
 
-    def test_is_grouped_2d(self):
-        signal, openbeam, _ = self._make_2d()
-        data = Data.from_grouped_dataframes(signal, openbeam)
-        assert data.is_grouped
-
     def test_indices_2d_format(self):
-        signal, openbeam, coords = self._make_2d()
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        s, ob, coords = self._make_2d()
+        data = Data.from_grouped(s, ob)
         expected = {str(c).replace(" ", "") for c in coords}
         assert set(data.indices) == expected
 
     def test_group_shape_2d(self):
-        signal, openbeam, _ = self._make_2d()
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        s, ob, _ = self._make_2d()
+        data = Data.from_grouped(s, ob)
         assert data.group_shape is not None
         assert len(data.group_shape) == 2
 
 
 # ---------------------------------------------------------------------------
-# from_grouped_dataframes – string (named) indices
+# dict of DataFrames – string (named) keys
 # ---------------------------------------------------------------------------
 
-class TestFromGroupedDataframesNamed:
+class TestDictInputNamed:
     def test_named_indices(self):
         names = ["sample_a", "sample_b", "reference"]
         signal = {n: _make_counts_df(seed=i) for i, n in enumerate(names)}
         openbeam = {n: _make_counts_df(seed=i + 20) for i, n in enumerate(names)}
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        data = Data.from_grouped(signal, openbeam)
         assert set(data.indices) == set(names)
 
     def test_group_shape_named_is_none(self):
-        names = ["a", "b"]
-        signal = {n: _make_counts_df(seed=i) for i, n in enumerate(names)}
-        openbeam = {n: _make_counts_df(seed=i + 10) for i, n in enumerate(names)}
-        data = Data.from_grouped_dataframes(signal, openbeam)
+        signal = {"a": _make_counts_df(seed=0), "b": _make_counts_df(seed=1)}
+        openbeam = {"a": _make_counts_df(seed=10), "b": _make_counts_df(seed=11)}
+        data = Data.from_grouped(signal, openbeam)
         assert data.group_shape is None
 
 
 # ---------------------------------------------------------------------------
-# from_grouped_dataframes – error handling
+# dict of DataFrames – indices parameter overrides dict keys
 # ---------------------------------------------------------------------------
 
-class TestFromGroupedDataframesErrors:
-    def test_signal_not_dict_raises(self):
-        with pytest.raises(TypeError, match="dict"):
-            Data.from_grouped_dataframes([], {})
-
-    def test_openbeam_wrong_type_raises(self):
-        signal = {0: _make_counts_df()}
-        with pytest.raises(TypeError, match="dict"):
-            Data.from_grouped_dataframes(signal, "not_a_df_or_dict")
-
-    def test_empty_signal_raises(self):
-        with pytest.raises(ValueError, match="empty"):
-            Data.from_grouped_dataframes({}, {})
+class TestDictInputCustomIndices:
+    def test_custom_indices_override_keys(self):
+        signal = {0: _make_counts_df(seed=0), 1: _make_counts_df(seed=1)}
+        openbeam = {0: _make_counts_df(seed=10), 1: _make_counts_df(seed=11)}
+        data = Data.from_grouped(signal, openbeam, indices=["a", "b"])
+        assert set(data.indices) == {"a", "b"}
 
 
 # ---------------------------------------------------------------------------
-# from_grouped_transmission
+# list of DataFrames
 # ---------------------------------------------------------------------------
 
-class TestFromGroupedTransmission:
-    def _groups(self, n=3):
-        return {i: _make_transmission_df(seed=i) for i in range(n)}
-
-    def test_is_grouped(self):
-        data = Data.from_grouped_transmission(self._groups())
+class TestListInput:
+    def test_list_with_indices(self):
+        sig_list = [_make_counts_df(seed=i) for i in range(3)]
+        ob_list  = [_make_counts_df(seed=i + 10) for i in range(3)]
+        data = Data.from_grouped(sig_list, ob_list, indices=["x", "y", "z"])
         assert data.is_grouped
+        assert set(data.indices) == {"x", "y", "z"}
 
-    def test_indices(self):
-        data = Data.from_grouped_transmission(self._groups(4))
-        assert set(data.indices) == {"0", "1", "2", "3"}
+    def test_list_auto_int_indices(self):
+        sig_list = [_make_counts_df(seed=i) for i in range(3)]
+        ob_list  = [_make_counts_df(seed=i + 10) for i in range(3)]
+        data = Data.from_grouped(sig_list, ob_list)
+        assert set(data.indices) == {"0", "1", "2"}
 
-    def test_groups_have_correct_columns(self):
-        data = Data.from_grouped_transmission(self._groups())
-        for idx in data.indices:
-            df = data.groups[idx]
-            assert "wavelength" in df.columns
-            assert "trans" in df.columns
-            assert "err" in df.columns
+    def test_list_shared_openbeam(self):
+        sig_list = [_make_counts_df(seed=i) for i in range(3)]
+        shared_ob = _make_counts_df(seed=99)
+        data = Data.from_grouped(sig_list, shared_ob)
+        assert len(data.indices) == 3
 
-    def test_default_table_set(self):
-        data = Data.from_grouped_transmission(self._groups())
-        assert data.table is not None
 
-    def test_transmission_values_preserved(self):
-        groups = self._groups(2)
-        data = Data.from_grouped_transmission(groups)
-        pd.testing.assert_frame_equal(
-            data.groups["0"].reset_index(drop=True),
-            groups[0].rename(columns={groups[0].columns[0]: "wavelength"}).reset_index(drop=True),
-            check_like=True,
-        )
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
 
-    def test_2d_tuple_indices(self):
-        coords = [(0, 0), (0, 1), (1, 0)]
-        groups = {c: _make_transmission_df(seed=i) for i, c in enumerate(coords)}
-        data = Data.from_grouped_transmission(groups)
-        expected = {str(c).replace(" ", "") for c in coords}
-        assert set(data.indices) == expected
-
-    def test_named_indices(self):
-        groups = {"roi_a": _make_transmission_df(seed=0), "roi_b": _make_transmission_df(seed=1)}
-        data = Data.from_grouped_transmission(groups)
-        assert set(data.indices) == {"roi_a", "roi_b"}
-
-    def test_not_dict_raises(self):
-        with pytest.raises(TypeError, match="dict"):
-            Data.from_grouped_transmission([])
-
+class TestErrorHandling:
     def test_empty_dict_raises(self):
         with pytest.raises(ValueError, match="empty"):
-            Data.from_grouped_transmission({})
+            Data.from_grouped({}, {})
 
-    def test_dropna(self):
-        groups = {0: _make_transmission_df(seed=0)}
-        groups[0].loc[5, "trans"] = np.nan
-        data = Data.from_grouped_transmission(groups, dropna=True)
-        assert data.groups["0"]["trans"].notna().all()
+    def test_openbeam_length_mismatch_raises(self):
+        signal = {i: _make_counts_df(seed=i) for i in range(3)}
+        openbeam = {i: _make_counts_df(seed=i) for i in range(2)}  # missing key 2
+        with pytest.raises(ValueError):
+            Data.from_grouped(signal, openbeam)
