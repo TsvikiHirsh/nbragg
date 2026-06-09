@@ -450,26 +450,74 @@ class Data:
         return self_data
 
     @classmethod
-    def from_transmission(cls, input_data, index: str = "wavelength", dropna: bool = False):
+    def from_transmission(cls, input_data, index: str = "wavelength", dropna: bool = False,
+                          indices: list = None):
         """
         Creates a Data object directly from transmission data containing wavelength/energy, transmission, and error values.
 
         Parameters:
         -----------
-        input_data : str or pandas.DataFrame
-            Path to a file containing the transmission data (wavelength/energy, transmission, error) separated by whitespace,
-            or a pandas DataFrame with the transmission data.
+        input_data : str, pandas.DataFrame, dict, or list
+            Single input: path to a whitespace-separated file or a DataFrame with columns
+            (wavelength/energy, trans, err).
+            Grouped input: a **dict** mapping group indices to DataFrames, or a **list**
+            of DataFrames (use ``indices`` to assign group labels; defaults to sequential
+            integers). Returns a grouped Data object when a dict or list is passed.
         index : str, optional
             Name of the first column. If "energy", values will be converted to wavelength. Default is "wavelength".
         dropna : bool, optional
             If True, remove rows with NaN values from the data table. Default is False.
+        indices : list, optional
+            Group labels to use when *input_data* is a list.  Ignored for dict input
+            (dict keys are used) and single-item input.
 
         Returns:
         --------
         Data
-            A Data object with the transmission data loaded into a dataframe.
+            A single-group Data object when *input_data* is a str or DataFrame, or a
+            grouped Data object (``is_grouped=True``) when *input_data* is a dict or list.
         """
-        # Handle both file paths and DataFrames
+        # --- Grouped path: dict or list of DataFrames ---
+        if isinstance(input_data, (dict, list)):
+            if isinstance(input_data, dict):
+                raw_indices = list(input_data.keys())
+                dfs = list(input_data.values())
+                if indices is not None:
+                    raw_indices = list(indices)
+            else:  # list
+                dfs = list(input_data)
+                raw_indices = list(indices) if indices is not None else list(range(len(dfs)))
+
+            if len(dfs) == 0:
+                raise ValueError("input_data collection is empty")
+
+            group_shape, _, _ = cls._determine_group_shape(raw_indices)
+
+            string_indices = []
+            for idx in raw_indices:
+                if isinstance(idx, tuple):
+                    string_indices.append(str(idx).replace(" ", ""))
+                else:
+                    string_indices.append(str(idx))
+
+            self_data = cls()
+            self_data.is_grouped = True
+            self_data.indices = string_indices
+            self_data.group_shape = group_shape
+            self_data.groups = {}
+            self_data.groups_signal = {}
+            self_data.groups_openbeam = {}
+            self_data.groups_empty_signal = {}
+            self_data.groups_empty_openbeam = {}
+
+            for df, str_idx in zip(dfs, string_indices):
+                group = cls.from_transmission(df, index=index, dropna=dropna)
+                self_data.groups[str_idx] = group.table
+
+            self_data.table = self_data.groups[string_indices[0]]
+            return self_data
+
+        # --- Single-item path (original behaviour) ---
         if isinstance(input_data, str):
             df = pd.read_csv(input_data, sep=r"\s+")
             df.columns = [index, "trans", "err"]
@@ -487,7 +535,7 @@ class Data:
                             df = df.rename(columns={col: index})
                             break
         else:
-            raise TypeError("input_data must be a string (file path) or a pandas DataFrame")
+            raise TypeError("input_data must be a string (file path), a pandas DataFrame, a dict, or a list")
 
         # Convert energy to wavelength if needed
         if index == "energy":

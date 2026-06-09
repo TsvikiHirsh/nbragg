@@ -1,5 +1,5 @@
 """
-Tests for Data.from_grouped with dict/list-of-DataFrame inputs.
+Tests for Data.from_grouped and Data.from_transmission with dict/list-of-DataFrame inputs.
 """
 import pytest
 import pandas as pd
@@ -177,3 +177,73 @@ class TestErrorHandling:
         openbeam = {i: _make_counts_df(seed=i) for i in range(2)}  # missing key 2
         with pytest.raises(ValueError):
             Data.from_grouped(signal, openbeam)
+
+
+# ---------------------------------------------------------------------------
+# from_transmission – dict / list inputs
+# ---------------------------------------------------------------------------
+
+def _make_trans_df(n=40, seed=None):
+    rng = np.random.default_rng(seed)
+    wl = np.linspace(0.5, 5.0, n)
+    trans = rng.uniform(0.3, 0.9, n)
+    return pd.DataFrame({"wavelength": wl, "trans": trans, "err": trans * 0.02})
+
+
+class TestFromTransmissionGrouped:
+    def test_dict_is_grouped(self):
+        groups = {i: _make_trans_df(seed=i) for i in range(3)}
+        data = Data.from_transmission(groups)
+        assert data.is_grouped
+
+    def test_dict_indices(self):
+        groups = {i: _make_trans_df(seed=i) for i in range(3)}
+        data = Data.from_transmission(groups)
+        assert set(data.indices) == {"0", "1", "2"}
+
+    def test_dict_groups_have_columns(self):
+        groups = {i: _make_trans_df(seed=i) for i in range(3)}
+        data = Data.from_transmission(groups)
+        for idx in data.indices:
+            assert {"wavelength", "trans", "err"}.issubset(data.groups[idx].columns)
+
+    def test_dict_named_keys(self):
+        groups = {"roi_a": _make_trans_df(seed=0), "roi_b": _make_trans_df(seed=1)}
+        data = Data.from_transmission(groups)
+        assert set(data.indices) == {"roi_a", "roi_b"}
+
+    def test_dict_2d_keys(self):
+        coords = [(0, 0), (0, 1), (1, 0)]
+        groups = {c: _make_trans_df(seed=i) for i, c in enumerate(coords)}
+        data = Data.from_transmission(groups)
+        assert set(data.indices) == {str(c).replace(" ", "") for c in coords}
+
+    def test_dict_indices_param_overrides_keys(self):
+        groups = {0: _make_trans_df(seed=0), 1: _make_trans_df(seed=1)}
+        data = Data.from_transmission(groups, indices=["a", "b"])
+        assert set(data.indices) == {"a", "b"}
+
+    def test_list_is_grouped(self):
+        dfs = [_make_trans_df(seed=i) for i in range(3)]
+        data = Data.from_transmission(dfs)
+        assert data.is_grouped
+
+    def test_list_auto_int_indices(self):
+        dfs = [_make_trans_df(seed=i) for i in range(3)]
+        data = Data.from_transmission(dfs)
+        assert set(data.indices) == {"0", "1", "2"}
+
+    def test_list_with_explicit_indices(self):
+        dfs = [_make_trans_df(seed=i) for i in range(3)]
+        data = Data.from_transmission(dfs, indices=["x", "y", "z"])
+        assert set(data.indices) == {"x", "y", "z"}
+
+    def test_empty_collection_raises(self):
+        with pytest.raises(ValueError, match="empty"):
+            Data.from_transmission({})
+
+    def test_single_df_still_works(self):
+        df = _make_trans_df(seed=0)
+        data = Data.from_transmission(df)
+        assert not data.is_grouped
+        assert data.table is not None
