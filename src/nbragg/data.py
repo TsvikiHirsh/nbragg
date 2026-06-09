@@ -801,6 +801,205 @@ class Data:
         return self_data
 
     @classmethod
+    def from_grouped_dataframes(cls, signal, openbeam,
+                                empty_signal=None, empty_openbeam=None,
+                                tstep: float = 10.0e-6, L: float = 9,
+                                L0: float = 1.0, t0: float = 0.,
+                                dropna: bool = False):
+        """
+        Creates a grouped Data object directly from dicts of counts DataFrames,
+        without requiring intermediate files.
+
+        This is the in-memory equivalent of :meth:`from_grouped` and mirrors the
+        single-group :meth:`from_counts` API.
+
+        Parameters:
+        -----------
+        signal : dict
+            Mapping of group index → counts DataFrame (columns: ``tof``, ``counts``, ``err``).
+            Keys can be ints, tuples ``(x, y)``, or strings.
+        openbeam : dict or pandas.DataFrame
+            Per-group openbeam counts DataFrames in the same format as *signal*, **or** a
+            single shared DataFrame that is reused for every group.
+        empty_signal : dict or pandas.DataFrame or None, optional
+            Per-group empty-signal DataFrames (same formats as *openbeam*), used for
+            background correction.  ``None`` disables the correction.
+        empty_openbeam : dict or pandas.DataFrame or None, optional
+            Per-group empty-openbeam DataFrames.  ``None`` disables the correction.
+        tstep : float, optional
+            Time step (seconds) for ToF → energy conversion.  Default is 10.0e-6.
+        L : float, optional
+            Flight-path length (metres).  Default is 9.
+        L0 : float, optional
+            Flight-path scale factor from ``vary_tof`` optimisation.  Default is 1.0.
+        t0 : float, optional
+            Time-offset correction (in ToF units).  Default is 0.
+        dropna : bool, optional
+            Drop rows with NaN values from each group's transmission table.  Default is False.
+
+        Returns:
+        --------
+        Data
+            A grouped Data object (``is_grouped=True``) whose ``.groups`` dict maps
+            normalised string indices to transmission DataFrames.
+
+        Examples:
+        ---------
+        >>> import pandas as pd
+        >>> signal_dfs  = {0: df_sig0,  1: df_sig1}
+        >>> openbeam_dfs = {0: df_ob0, 1: df_ob1}
+        >>> data = Data.from_grouped_dataframes(signal_dfs, openbeam_dfs, tstep=1e-5, L=9)
+
+        >>> # Shared openbeam for all groups
+        >>> data = Data.from_grouped_dataframes(signal_dfs, shared_ob_df, tstep=1e-5, L=9)
+
+        >>> # 2D grid indices
+        >>> signal_dfs = {(0, 0): df00, (0, 1): df01, (1, 0): df10}
+        >>> data = Data.from_grouped_dataframes(signal_dfs, openbeam_dfs)
+        """
+        if not isinstance(signal, dict):
+            raise TypeError("signal must be a dict mapping group indices to DataFrames")
+
+        indices_raw = list(signal.keys())
+        if len(indices_raw) == 0:
+            raise ValueError("signal dict is empty")
+
+        # Normalise openbeam: allow a single shared DataFrame
+        shared_ob = isinstance(openbeam, pd.DataFrame)
+        if not shared_ob and not isinstance(openbeam, dict):
+            raise TypeError("openbeam must be a dict or a single shared DataFrame")
+
+        # Normalise empty beams similarly
+        shared_empty_sig = isinstance(empty_signal, pd.DataFrame)
+        shared_empty_ob  = isinstance(empty_openbeam, pd.DataFrame)
+
+        # Determine group shape from raw index types
+        group_shape, is_2d, is_1d = cls._determine_group_shape(indices_raw)
+
+        # Build normalised string indices in the same format used by from_grouped
+        string_indices = []
+        for idx in indices_raw:
+            if isinstance(idx, tuple):
+                string_indices.append(str(idx).replace(" ", ""))
+            else:
+                string_indices.append(str(idx))
+
+        # Create grouped Data object
+        self_data = cls()
+        self_data.is_grouped   = True
+        self_data.indices      = string_indices
+        self_data.group_shape  = group_shape
+        self_data.groups              = {}
+        self_data.groups_signal       = {}
+        self_data.groups_openbeam     = {}
+        self_data.groups_empty_signal = {}
+        self_data.groups_empty_openbeam = {}
+        self_data.L     = L
+        self_data.tstep = tstep
+
+        for raw_idx, str_idx in zip(indices_raw, string_indices):
+            sig_df = signal[raw_idx]
+
+            ob_df = openbeam if shared_ob else openbeam[raw_idx]
+
+            es_df = (empty_signal  if shared_empty_sig
+                     else (empty_signal.get(raw_idx)  if isinstance(empty_signal,  dict) else None))
+            eo_df = (empty_openbeam if shared_empty_ob
+                     else (empty_openbeam.get(raw_idx) if isinstance(empty_openbeam, dict) else None))
+
+            group_data = cls.from_counts(
+                signal=sig_df,
+                openbeam=ob_df,
+                empty_signal=es_df  if es_df  is not None else "",
+                empty_openbeam=eo_df if eo_df is not None else "",
+                tstep=tstep, L=L, L0=L0, t0=t0, dropna=dropna
+            )
+
+            self_data.groups[str_idx]          = group_data.table
+            self_data.groups_signal[str_idx]   = group_data.signal
+            self_data.groups_openbeam[str_idx] = group_data.openbeam
+            if group_data.empty_signal is not None:
+                self_data.groups_empty_signal[str_idx]   = group_data.empty_signal
+            if group_data.empty_openbeam is not None:
+                self_data.groups_empty_openbeam[str_idx] = group_data.empty_openbeam
+
+        self_data.table = self_data.groups[string_indices[0]]
+        return self_data
+
+    @classmethod
+    def from_grouped_transmission(cls, groups, index: str = "wavelength",
+                                  dropna: bool = False):
+        """
+        Creates a grouped Data object directly from a dict of transmission DataFrames,
+        without requiring intermediate files.
+
+        This is the in-memory equivalent of :meth:`from_grouped` when the transmission
+        has already been computed, and mirrors the single-group :meth:`from_transmission` API.
+
+        Parameters:
+        -----------
+        groups : dict
+            Mapping of group index → transmission DataFrame.  Each DataFrame must have
+            three columns: the x-axis column (wavelength or energy), ``trans``, and
+            ``err``.  Keys can be ints, tuples ``(x, y)``, or strings.
+        index : str, optional
+            Name of the first column.  If ``"energy"``, values are converted to
+            wavelength (Å).  Default is ``"wavelength"``.
+        dropna : bool, optional
+            Drop rows with NaN values.  Default is False.
+
+        Returns:
+        --------
+        Data
+            A grouped Data object (``is_grouped=True``) whose ``.groups`` dict maps
+            normalised string indices to transmission DataFrames.
+
+        Examples:
+        ---------
+        >>> import pandas as pd
+        >>> groups = {
+        ...     0: pd.DataFrame({"wavelength": wl, "trans": t0, "err": e0}),
+        ...     1: pd.DataFrame({"wavelength": wl, "trans": t1, "err": e1}),
+        ... }
+        >>> data = Data.from_grouped_transmission(groups)
+
+        >>> # 2D pixel grid
+        >>> groups = {(x, y): df_xy for (x, y), df_xy in pixel_data.items()}
+        >>> data = Data.from_grouped_transmission(groups)
+        """
+        if not isinstance(groups, dict):
+            raise TypeError("groups must be a dict mapping group indices to DataFrames")
+        if len(groups) == 0:
+            raise ValueError("groups dict is empty")
+
+        indices_raw = list(groups.keys())
+        group_shape, is_2d, is_1d = cls._determine_group_shape(indices_raw)
+
+        string_indices = []
+        for idx in indices_raw:
+            if isinstance(idx, tuple):
+                string_indices.append(str(idx).replace(" ", ""))
+            else:
+                string_indices.append(str(idx))
+
+        self_data = cls()
+        self_data.is_grouped   = True
+        self_data.indices      = string_indices
+        self_data.group_shape  = group_shape
+        self_data.groups              = {}
+        self_data.groups_signal       = {}
+        self_data.groups_openbeam     = {}
+        self_data.groups_empty_signal = {}
+        self_data.groups_empty_openbeam = {}
+
+        for raw_idx, str_idx in zip(indices_raw, string_indices):
+            group_data = cls.from_transmission(groups[raw_idx], index=index, dropna=dropna)
+            self_data.groups[str_idx] = group_data.table
+
+        self_data.table = self_data.groups[string_indices[0]]
+        return self_data
+
+    @classmethod
     def _extract_indices_from_filenames(cls, filenames, pattern):
         """Extract indices from filenames based on pattern."""
         import re
