@@ -249,7 +249,11 @@ class TransmissionModel(ParametersMixin, FittingMixin, PlottingMixin, IOMixin, l
         xs = self.cross_section(wl,**kwargs)
 
         if self.response != None:
-            response = self.response.function(**kwargs)
+            # Give the response access to the data's wavelength grid so
+            # wl-resolution-aware kinds (e.g. 'jorgensen_wl_indep') can
+            # build their kernel with step = data_dwl. Legacy kinds ignore
+            # these via **kwargs.
+            response = self.response.function(data_wl=wl, **kwargs)
             xs = convolve1d(xs,response,0)
 
         T = norm * np.exp(- xs * thickness * n) * (1 - bg) + k*bg

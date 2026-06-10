@@ -64,10 +64,24 @@ class Response:
             self.params.add(f"σ1", value=0.001, min=1e-6,  max=1000., vary=vary)
             self.params.add(f"σ2", value=0.0,   min=0.0,   max=1000., vary=False)
 
+        elif kind == "jorgensen_wl_indep":
+            # Like 'jorgensen' but the profile is evaluated on a Δλ grid whose
+            # step matches the data's actual wavelength step (passed in as
+            # data_dwl by TransmissionModel.transmission). Result: the
+            # physical resolution width set by α/β/σ is independent of how
+            # finely the user samples wl.
+            self.function = self.jorgensen_wl_indep_response
+            self.params = lmfit.Parameters()
+            self.params.add(f"α0", value=3.67, min=0.001, max=10000, vary=vary)
+            self.params.add(f"β0", value=3.06, min=0.001, max=10000, vary=vary)
+            self.params.add(f"σ0", value=0.0,  min=0.0,   max=10.,   vary=False)
+            self.params.add(f"σ1", value=0.0,  min=0.0,   max=10.,   vary=False)
+            self.params.add(f"σ2", value=0.0,  min=0.0,   max=10.,   vary=False)
+
         elif kind == "none":
             self.function = self.empty_response
         else:
-            raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'jorgensen', 'square', 'square_jorgensen', 'full_jorgensen', or 'none'.")
+            raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'jorgensen', 'jorgensen_wl_indep', 'square', 'square_jorgensen', 'full_jorgensen', or 'none'.")
 
     def staged_preset(self):
         """
@@ -84,7 +98,7 @@ class Response:
                 "response_beta": ["σ1", "β0"],
                 "response_alpha": ["σ1", "β0", "α1"],
             }
-        if self.kind == "jorgensen":
+        if self.kind in ("jorgensen", "jorgensen_wl_indep"):
             return {"response": ["α0", "β0"]}
         return {}
 
@@ -221,6 +235,70 @@ class Response:
             
             # Replace any NaN values with 0
             return np.nan_to_num(profile, 0)
+
+    def jorgensen_wl_indep_response(self, α0=3.67, β0=3.06, σ0=0.0, σ1=0.0, σ2=0.0,
+                                    data_dwl=None, data_wl=None, **kwargs):
+        """
+        Jorgensen peak profile evaluated on a Δλ grid whose step matches the
+        data's actual wavelength step. This makes the physical resolution
+        width (set by α, β, σ) independent of how finely the user samples wl —
+        unlike `jorgensen_response`, where convolve1d treats the kernel
+        sample-wise and the effective smearing becomes N_kernel × data_dwl.
+
+        Parameters (Å^-1 for α, β; Å for σ)
+        ----------------------------------
+        α0, β0 : float
+            Rise and decay rates at d = 1 Å (matches simple jorgensen).
+        σ0, σ1, σ2 : float
+            Gaussian width terms; σ² = σ0² + (σ1·d)² + (σ2·d²)² with d = 1.
+        data_dwl : float, optional
+            Wavelength step of the data the response will be convolved with.
+            If None, falls back to data_wl (if provided) or self.wlstep.
+        data_wl : array-like, optional
+            Data wavelength array; data_dwl is taken as the median step.
+        """
+        # Resolve the target step
+        if data_dwl is None and data_wl is not None and len(np.atleast_1d(data_wl)) > 1:
+            data_dwl = float(np.median(np.diff(np.atleast_1d(data_wl))))
+        if data_dwl is None or data_dwl <= 0:
+            data_dwl = self.wlstep
+
+        # Build a symmetric Δλ grid with exact step = data_dwl, covering
+        # several decay constants and Gaussian widths on each side.
+        d = 1.0
+        α = α0 + 0.0
+        β = β0 + 0.0
+        σ = np.sqrt(σ0**2 + (σ1 * d)**2 + (σ2 * d * d)**2)
+        decay = max(1.0 / max(α, 1e-6), 1.0 / max(β, 1e-6))
+        margin = max(15.0 * decay, 8.0 * σ, 30.0 * data_dwl)
+        # Cap the grid size to keep convolution cheap
+        n_half = min(int(np.ceil(margin / data_dwl)), 20000)
+        x = np.arange(-n_half, n_half + 1) * data_dwl
+
+        sqrt2 = np.sqrt(2)
+        σ_safe = max(σ, 1e-12)
+        σ2_val = σ_safe * σ_safe
+        scale = α * β / 2 / (α + β)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            u = α / 2 * (α * σ2_val + 2 * x)
+            v = β / 2 * (β * σ2_val - 2 * x)
+            y = (α * σ2_val + x) / (sqrt2 * σ_safe)
+            z = (β * σ2_val - x) / (sqrt2 * σ_safe)
+
+            ey = erfc(y); ez = erfc(z)
+            term1 = np.exp(u) * ey
+            term2 = np.exp(v) * ez
+            term1[ey == 0] = 0
+            term2[ez == 0] = 0
+
+            profile = scale * (term1 + term2)
+            profile = np.nan_to_num(profile, nan=0.0, posinf=0.0, neginf=0.0)
+            total = profile.sum()
+            if total > 0:
+                profile = profile / total
+            return profile
 
     def square_jorgensen_response(self, α0, β0, width, **kwargs):
         """
@@ -474,6 +552,11 @@ class Response:
             xlabel = kwargs.pop("xlabel", "wavelength [Angstrom]")
             df = pd.Series(y, index=self.Δλ, name="Response")
             df.plot(ax=ax, xlabel=xlabel, **kwargs)
+        elif self.kind == "jorgensen_wl_indep":
+            xlabel = kwargs.pop("xlabel", "Δλ [Angstrom]")
+            x = (np.arange(len(y)) - len(y) // 2) * self.wlstep
+            df = pd.Series(y, index=x, name="Response")
+            df.plot(ax=ax, xlabel=xlabel, **kwargs)
         elif self.kind == "full_jorgensen":
             xlabel = kwargs.pop("xlabel", "tof [usec]")
             df = pd.Series(y, index=self.tgrid * 1e6, name="Response")
@@ -483,7 +566,7 @@ class Response:
             df = pd.Series(y, index=self.tgrid, name="Response")
             df.plot(ax=ax, xlabel=xlabel, **kwargs)
         else:
-            raise ValueError("response plotting is only supported for 'jorgensen','full_jorgensen', 'square', and 'square_jorgensen' kinds")
+            raise ValueError("response plotting is only supported for 'jorgensen', 'jorgensen_wl_indep', 'full_jorgensen', 'square', and 'square_jorgensen' kinds")
 
 
 class Background:
