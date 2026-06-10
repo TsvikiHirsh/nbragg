@@ -250,7 +250,7 @@ class TransmissionModel(ParametersMixin, FittingMixin, PlottingMixin, IOMixin, l
 
         if self.response != None:
             # Give the response access to the data's wavelength grid so
-            # wl-resolution-aware kinds (e.g. 'jorgensen_wl_indep') can
+            # wl-resolution-aware kinds (e.g. 'jorgensen_inv') can
             # build their kernel with step = data_dwl. Legacy kinds ignore
             # these via **kwargs.
             response = self.response.function(data_wl=wl, **kwargs)

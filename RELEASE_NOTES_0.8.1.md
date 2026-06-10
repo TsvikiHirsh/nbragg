@@ -1,21 +1,21 @@
 # nbragg v0.8.1 — Wl-resolution-invariant response + in-memory grouped-data constructors
 
 This release adds two features:
-1. A new response kind `jorgensen_wl_indep` that produces a physical resolution width independent of how the user samples the wavelength grid.
+1. A new response kind `jorgensen_inv` that produces a physical resolution width independent of how the user samples the wavelength grid.
 2. In-memory pandas DataFrame inputs for `Data.from_grouped` and `Data.from_transmission`.
 
 ## Highlights
 
-### `jorgensen_wl_indep` — wavelength-resolution-invariant Jorgensen response
+### `jorgensen_inv` — wavelength-resolution-invariant Jorgensen response
 
 The existing `jorgensen` and `full_jorgensen` responses are convolved with the cross-section via `scipy.ndimage.convolve1d`, which is unit-agnostic: it applies the kernel sample-by-sample. As a result, the **physical** smearing width was `N_response_samples × data_dwl` — it scaled linearly with how finely the user sampled `wl`. Coarsen the data by 10× and the modelled "instrument resolution" widened by 10×.
 
-The new `jorgensen_wl_indep` kind evaluates the response on a Δλ grid whose step matches the actual data wavelength step (`data_dwl`). The physical kernel width is set by `α`, `β`, `σ` alone — independent of sampling.
+The new `jorgensen_inv` kind evaluates the response on a Δλ grid whose step matches the actual data wavelength step (`data_dwl`). The physical kernel width is set by `α`, `β`, `σ` alone — independent of sampling.
 
 ```python
 m = nbragg.TransmissionModel(
     xs,
-    response="jorgensen_wl_indep",
+    response="jorgensen_inv",
     vary_response=True,
 )
 m.params["α0"].set(value=23)
@@ -24,13 +24,13 @@ m.params["β0"].set(value=6)
 
 Demonstration:
 
-| samples in [3.6, 3.63] | `jorgensen` (old) | `jorgensen_wl_indep` (new) |
+| samples in [3.6, 3.63] | `jorgensen` (old) | `jorgensen_inv` (new) |
 |---|---|---|
 | max\|T_coarse − T_fine_sub\| | **0.0194** | **0.00005** (~390× better) |
 
 Test pinned in `tests/test_response.py::TestTransmissionModelInvariance`.
 
-**Backwards-compatible.** Existing `jorgensen`/`full_jorgensen`/`square`/etc. behavior is unchanged. The `data_wl`/`data_dwl` kwargs are absorbed by the legacy responses via `**kwargs`. If you were tuning `α`/`β` against the old grid-dependent behavior, the converged values won't carry over to `jorgensen_wl_indep`; expect to re-tune to your instrument's true resolution.
+**Backwards-compatible.** Existing `jorgensen`/`full_jorgensen`/`square`/etc. behavior is unchanged. The `data_wl`/`data_dwl` kwargs are absorbed by the legacy responses via `**kwargs`. If you were tuning `α`/`β` against the old grid-dependent behavior, the converged values won't carry over to `jorgensen_inv`; expect to re-tune to your instrument's true resolution.
 
 ### `Data.from_grouped` now accepts dicts and lists of DataFrames
 The classmethod that used to require glob patterns or folder paths now also accepts:

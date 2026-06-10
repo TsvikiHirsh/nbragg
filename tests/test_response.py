@@ -151,14 +151,14 @@ class TestJorgensenWlIndep:
     be set by α/β/σ and stay constant regardless of data_dwl."""
 
     def test_normalized_and_nonneg(self):
-        r = Response(kind="jorgensen_wl_indep")
+        r = Response(kind="jorgensen_inv")
         p = r.function(**r.params.valuesdict())
         assert p.sum() == pytest.approx(1.0, rel=1e-10)
         assert (p >= 0).all()
 
     def test_physical_width_independent_of_dwl(self):
         """FWHM in physical units (Å) must be constant across data_dwl values."""
-        r = Response(kind="jorgensen_wl_indep")
+        r = Response(kind="jorgensen_inv")
         widths_A = []
         for dwl in [5e-5, 1e-4, 5e-4, 1e-3, 5e-3]:
             p = r.function(α0=23.0, β0=6.0, σ0=0, σ1=0, σ2=0, data_dwl=dwl)
@@ -172,7 +172,7 @@ class TestJorgensenWlIndep:
             )
 
     def test_data_wl_array_accepted(self):
-        r = Response(kind="jorgensen_wl_indep")
+        r = Response(kind="jorgensen_inv")
         wl = np.linspace(3.5, 4.0, 200)
         p = r.function(α0=23.0, β0=6.0, data_wl=wl)
         assert p.sum() == pytest.approx(1.0, rel=1e-10)
@@ -185,17 +185,17 @@ class TestJorgensenWlIndep:
 class TestTransmissionModelInvariance:
     """The end-to-end fix: T evaluated on a coarse grid must match T evaluated
     on a fine grid then sub-sampled to the same points, when using
-    jorgensen_wl_indep. The simple jorgensen kind cannot satisfy this."""
+    jorgensen_inv. The simple jorgensen kind cannot satisfy this."""
 
     @pytest.mark.parametrize("ncmat", ["Fe_sg229_Iron-alpha_CrysExtn1.ncmat"])
-    def test_jorgensen_wl_indep_is_resolution_invariant(self, ncmat, tmp_path, monkeypatch):
+    def test_jorgensen_inv_is_resolution_invariant(self, ncmat, tmp_path, monkeypatch):
         import os
         # NCrystal looks at the working directory for .ncmat files
         monkeypatch.chdir(os.path.join(os.path.dirname(__file__)))
         import nbragg
         xs = nbragg.CrossSection(iron=ncmat)
         m = nbragg.TransmissionModel(
-            xs, response="jorgensen_wl_indep",
+            xs, response="jorgensen_inv",
             vary_basic=False, vary_weights=False, vary_lattice=False, vary_response=False,
         )
         m.params["α0"].set(value=23, vary=False)

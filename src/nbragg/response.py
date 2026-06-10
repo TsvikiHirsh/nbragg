@@ -14,11 +14,36 @@ class Response:
         """
         Initializes the Response object with specified parameters.
 
-        Parameters:
-        kind (str): The type of response function to use. Options are 'jorgensen', 'square', 'square_jorgensen', 'full_jorgensen', or 'none'.
-        vary (bool): If True, the parameters can vary during fitting. Default is False.
-        wlstep (float): Wavelength step size for Δλ grid. Default is 0.1.
-        tstep (float): Time step size for tgrid in seconds. Default is 10e-6 (10 µs).
+        Parameters
+        ----------
+        kind : str
+            The type of response function to use. Options:
+
+            - ``'jorgensen'`` — Jorgensen back-to-back exponentials with a
+              Gaussian core, built on a fixed ``Δλ`` grid with step
+              ``wlstep``. Cheap, but the *physical* convolution width depends
+              on the user's wl sampling because ``convolve1d`` is sample-wise.
+            - ``'jorgensen_inv'`` — same Jorgensen profile, but built on a
+              Δλ grid whose step equals the data's actual ``dwl``. The
+              physical width set by α/β/σ is then **invariant** under the
+              user's choice of wl resolution. Use this whenever you fit/
+              predict across different wl grids, or want α/β to describe the
+              instrument rather than the grid.
+            - ``'full_jorgensen'`` — TOF-domain Jorgensen with d-spacing
+              dependence (α₀+α₁/d, β₀+β₁/d⁴, σ²=σ₀²+(σ₁d)²+(σ₂d²)²),
+              GSAS-style µs units.
+            - ``'square'`` — boxcar in time (width in µs).
+            - ``'square_jorgensen'`` — Jorgensen convolved with a square.
+            - ``'none'`` — no response (identity).
+        vary : bool
+            If True, the parameters can vary during fitting. Default False.
+        wlstep : float
+            Wavelength step size for the ``Δλ`` grid (Å), used by
+            ``jorgensen`` and as a fallback for ``jorgensen_inv`` when
+            ``data_dwl`` is not supplied. Default 0.1.
+        tstep : float
+            Time step size for ``tgrid`` in seconds, used by ``square`` and
+            ``full_jorgensen``. Default 10e-6 (10 µs).
         """
         self.wlstep = wlstep
         self.tstep = tstep
@@ -64,13 +89,13 @@ class Response:
             self.params.add(f"σ1", value=0.001, min=1e-6,  max=1000., vary=vary)
             self.params.add(f"σ2", value=0.0,   min=0.0,   max=1000., vary=False)
 
-        elif kind == "jorgensen_wl_indep":
+        elif kind == "jorgensen_inv":
             # Like 'jorgensen' but the profile is evaluated on a Δλ grid whose
             # step matches the data's actual wavelength step (passed in as
             # data_dwl by TransmissionModel.transmission). Result: the
             # physical resolution width set by α/β/σ is independent of how
             # finely the user samples wl.
-            self.function = self.jorgensen_wl_indep_response
+            self.function = self.jorgensen_inv_response
             self.params = lmfit.Parameters()
             self.params.add(f"α0", value=3.67, min=0.001, max=10000, vary=vary)
             self.params.add(f"β0", value=3.06, min=0.001, max=10000, vary=vary)
@@ -81,7 +106,7 @@ class Response:
         elif kind == "none":
             self.function = self.empty_response
         else:
-            raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'jorgensen', 'jorgensen_wl_indep', 'square', 'square_jorgensen', 'full_jorgensen', or 'none'.")
+            raise NotImplementedError(f"Response kind '{kind}' is not supported. Use 'jorgensen', 'jorgensen_inv', 'square', 'square_jorgensen', 'full_jorgensen', or 'none'.")
 
     def staged_preset(self):
         """
@@ -98,7 +123,7 @@ class Response:
                 "response_beta": ["σ1", "β0"],
                 "response_alpha": ["σ1", "β0", "α1"],
             }
-        if self.kind in ("jorgensen", "jorgensen_wl_indep"):
+        if self.kind in ("jorgensen", "jorgensen_inv"):
             return {"response": ["α0", "β0"]}
         return {}
 
@@ -236,26 +261,61 @@ class Response:
             # Replace any NaN values with 0
             return np.nan_to_num(profile, 0)
 
-    def jorgensen_wl_indep_response(self, α0=3.67, β0=3.06, σ0=0.0, σ1=0.0, σ2=0.0,
-                                    data_dwl=None, data_wl=None, **kwargs):
+    def jorgensen_inv_response(self, α0=3.67, β0=3.06, σ0=0.0, σ1=0.0, σ2=0.0,
+                               data_dwl=None, data_wl=None, **kwargs):
         """
-        Jorgensen peak profile evaluated on a Δλ grid whose step matches the
-        data's actual wavelength step. This makes the physical resolution
-        width (set by α, β, σ) independent of how finely the user samples wl —
-        unlike `jorgensen_response`, where convolve1d treats the kernel
-        sample-wise and the effective smearing becomes N_kernel × data_dwl.
+        Jorgensen peak profile, **invariant under the user's choice of wl
+        sampling** (hence ``_inv``).
 
-        Parameters (Å^-1 for α, β; Å for σ)
+        Why this exists — the bug it fixes
         ----------------------------------
+        The simple ``jorgensen_response`` builds its kernel on the fixed
+        internal grid ``self.Δλ`` (step ``wlstep``, default 0.1 Å) and is then
+        convolved with the cross-section via ``scipy.ndimage.convolve1d``,
+        which is **unit-agnostic**: it applies the kernel sample-by-sample.
+        That means the **physical** width of the smearing is
+        ``N_kernel_samples × data_dwl`` — it scales linearly with how finely
+        the user sampled ``wl``. Two equivalent measurements at different wl
+        resolutions therefore produce different "instrument resolutions" out
+        of the model, and fitted α/β values are tied to the grid rather than
+        the instrument.
+
+        How this version fixes it
+        -------------------------
+        ``jorgensen_inv`` evaluates the Jorgensen profile on a Δλ grid built
+        with ``step = data_dwl`` — the median spacing of the user's wl array
+        (passed in from ``TransmissionModel.transmission`` as ``data_wl``).
+        Then ``N_kernel × data_dwl`` is the same physical width regardless of
+        sampling. α, β, σ now describe the *instrument*, not the grid.
+
+        Trade-offs
+        ----------
+        * **Use this when** you need α/β/σ to mean the same thing across
+          datasets sampled differently, or when you fit data at one
+          resolution and predict at another.
+        * α/β values tuned against ``jorgensen`` are **not** transferable —
+          ``jorgensen`` was effectively producing ``α·data_dwl/wlstep``-scaled
+          kernels, so to get the same convolved transmission with
+          ``jorgensen_inv`` you need to re-tune α/β to your instrument's
+          actual physical resolution.
+        * Convolution cost grows like ``1/data_dwl`` (more kernel samples for
+          finer grids); ``n_half`` is capped at 20000 to keep this cheap on
+          ultra-fine grids.
+
+        Parameters (Å⁻¹ for α, β; Å for σ — d-spacing fixed at 1 Å)
+        -----------------------------------------------------------
         α0, β0 : float
-            Rise and decay rates at d = 1 Å (matches simple jorgensen).
+            Rise and decay rates at d = 1 Å (matches simple ``jorgensen``).
         σ0, σ1, σ2 : float
-            Gaussian width terms; σ² = σ0² + (σ1·d)² + (σ2·d²)² with d = 1.
+            Gaussian width terms; ``σ² = σ0² + (σ1·d)² + (σ2·d²)²`` with d = 1.
         data_dwl : float, optional
             Wavelength step of the data the response will be convolved with.
-            If None, falls back to data_wl (if provided) or self.wlstep.
+            Supplied automatically by ``TransmissionModel.transmission``. If
+            omitted, falls back to ``data_wl`` (if provided) or
+            ``self.wlstep`` (the simple-jorgensen behavior).
         data_wl : array-like, optional
-            Data wavelength array; data_dwl is taken as the median step.
+            Data wavelength array; ``data_dwl`` is then taken as
+            ``median(diff(data_wl))``.
         """
         # Resolve the target step
         if data_dwl is None and data_wl is not None and len(np.atleast_1d(data_wl)) > 1:
@@ -552,7 +612,7 @@ class Response:
             xlabel = kwargs.pop("xlabel", "wavelength [Angstrom]")
             df = pd.Series(y, index=self.Δλ, name="Response")
             df.plot(ax=ax, xlabel=xlabel, **kwargs)
-        elif self.kind == "jorgensen_wl_indep":
+        elif self.kind == "jorgensen_inv":
             xlabel = kwargs.pop("xlabel", "Δλ [Angstrom]")
             x = (np.arange(len(y)) - len(y) // 2) * self.wlstep
             df = pd.Series(y, index=x, name="Response")
@@ -566,7 +626,7 @@ class Response:
             df = pd.Series(y, index=self.tgrid, name="Response")
             df.plot(ax=ax, xlabel=xlabel, **kwargs)
         else:
-            raise ValueError("response plotting is only supported for 'jorgensen', 'jorgensen_wl_indep', 'full_jorgensen', 'square', and 'square_jorgensen' kinds")
+            raise ValueError("response plotting is only supported for 'jorgensen', 'jorgensen_inv', 'full_jorgensen', 'square', and 'square_jorgensen' kinds")
 
 
 class Background:
