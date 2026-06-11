@@ -17,6 +17,63 @@ if TYPE_CHECKING:
     from nbragg.models import TransmissionModel
 
 
+def _snapshot_virtual_ncmat_files():
+    """
+    Return ``{virtual_filename: raw_content}`` for every file currently
+    registered in NCrystal's 'virtual' factory (via
+    ``NC.registerInMemoryFileData``).
+
+    Used to forward in-memory NCrystal data to child processes before they
+    reconstruct a TransmissionModel that may reference virtual filenames.
+    Returns an empty dict if NCrystal exposes no such files or if
+    enumeration fails (graceful fallback).
+    """
+    try:
+        import NCrystal as NC
+        snapshot = {}
+        for entry in NC.browseFiles(factory="virtual"):
+            try:
+                td = NC.createTextData(entry.fullKey)
+                snapshot[entry.name] = td.rawData
+            except Exception:
+                # Skip entries we can't read back; don't fail the whole fit
+                continue
+        return snapshot
+    except Exception:
+        return {}
+
+
+def _init_worker_virtuals(virtual_files):
+    """
+    ProcessPoolExecutor initializer that re-registers virtual NCrystal files
+    (in-memory ncmat content) in this worker process.
+
+    NCrystal's in-memory registry lives in the C++ singleton inside each
+    process — it does not survive ``fork``/``spawn``. Without this, models
+    that reference virtual filenames (either user-registered via
+    ``NC.registerInMemoryFileData`` or created by nbragg itself for
+    extinction/lattice updates) fail with NCFileNotFound in workers.
+
+    Parameters
+    ----------
+    virtual_files : dict
+        Mapping of virtual filename -> raw ncmat content.
+    """
+    if not virtual_files:
+        return
+    try:
+        import NCrystal as NC
+        for name, content in virtual_files.items():
+            try:
+                NC.registerInMemoryFileData(name, content)
+            except Exception:
+                # Don't block worker startup on a single bad entry
+                continue
+    except Exception:
+        # NCrystal not importable in worker — let the fit error speak for itself
+        pass
+
+
 def _fit_single_group_worker(args):
     """
     Worker function for parallel fitting of a single group.
@@ -561,7 +618,15 @@ class GroupedFitResult:
 
         n_workers = min(n_jobs, len(worker_args))
 
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        # Snapshot any user-registered or nbragg-created NCrystal virtual
+        # files so workers (separate processes) can resolve them.
+        virtuals = _snapshot_virtual_ncmat_files()
+
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_init_worker_virtuals,
+            initargs=(virtuals,),
+        ) as executor:
             results_list = list(tqdm(
                 executor.map(_fit_single_group_worker, worker_args),
                 total=len(worker_args),

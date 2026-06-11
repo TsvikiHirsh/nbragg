@@ -25,6 +25,8 @@ from nbragg.data import Data
 from nbragg.grouped_fit import (
     GroupedFitResult,
     _fit_single_group_worker,
+    _snapshot_virtual_ncmat_files,
+    _init_worker_virtuals,
     _reconstruct_result_from_dict,
     _add_save_method_to_result
 )
@@ -994,8 +996,16 @@ class FittingMixin:
         if progress_bar and verbose:
             print(f"Fitting {len(data.indices)} groups using multiprocessing (n_workers={n_workers})...")
 
+        # Snapshot any user-registered or nbragg-created NCrystal virtual
+        # files so workers (separate processes) can resolve them.
+        virtuals = _snapshot_virtual_ncmat_files()
+
         # Use ProcessPoolExecutor for true multiprocessing with worker reuse
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_init_worker_virtuals,
+            initargs=(virtuals,),
+        ) as executor:
             if progress_bar:
                 # Use tqdm for progress tracking
                 results = list(tqdm(
