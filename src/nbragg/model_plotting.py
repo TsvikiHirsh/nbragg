@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional, Union, List, Dict
 from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 import ipywidgets as widgets
 from IPython.display import display
 
@@ -12,6 +13,79 @@ if TYPE_CHECKING:
     from nbragg.cross_section import CrossSection
     from nbragg.response import Response, Background
     import lmfit
+
+
+_PHASE_COLORS = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+]
+
+
+def _format_hkl(hkl):
+    """Format HKL tuple as compact string, e.g. (1, 0, 0) -> '100'."""
+    return ''.join(str(h) for h in hkl)
+
+
+def _plot_dspace_lines(ax, phases_data, phases, dspace_min, dspace_label_pos, single_phase_color="0.5"):
+    """Draw Bragg-edge marker lines and compact HKL labels on *ax*.
+
+    Labels are 90-degree-rotated text centred on their line.  A background
+    box creates a gap in the dashed line so the text is always legible.
+    When labels are dense a greedy stagger algorithm assigns each label to
+    one of three vertical levels so they don't hide each other.
+    In multi-phase plots each phase gets a distinct colour.
+    """
+    multi = len(phases) > 1
+    prop = _PHASE_COLORS if multi else [single_phase_color]
+    bg = ax.get_facecolor()
+    trans = ax.get_xaxis_transform()
+    fontsize = 7
+
+    # Estimate the minimum x-separation (data units) needed so two labels
+    # at the same stagger level don't overlap.  With rotation=90 the
+    # horizontal footprint of a label equals roughly the font's cap-height.
+    try:
+        ax_width_pts = ax.get_position().width * ax.figure.get_figwidth() * 72
+        x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+        min_x_sep = max((fontsize + 6) / ax_width_pts * x_range, 1e-10)
+    except Exception:
+        min_x_sep = 0.05
+
+    N_LEVELS = 3
+    stagger = [dspace_label_pos - k * 0.13 for k in range(N_LEVELS)]
+
+    for i, phase in enumerate(phases_data):
+        color = prop[i % len(prop)]
+        try:
+            hkls = phases_data[phase].info.hklList()
+        except Exception:
+            continue
+
+        # Collect and sort by wavelength so the greedy pass is left-to-right
+        valid = []
+        for hkl in hkls:
+            hkl = hkl[:3]
+            dspace = phases_data[phase].info.dspacingFromHKL(*hkl)
+            if dspace >= dspace_min:
+                hkl_str = _format_hkl(hkl)
+                label = f"{phase} {hkl_str}" if multi else hkl_str
+                valid.append((dspace * 2, label))
+        valid.sort(key=lambda t: t[0])
+
+        last_x = [-np.inf] * N_LEVELS
+        for x, label in valid:
+            ax.axvline(x, lw=0.8, color=color, zorder=1, ls=":", alpha=0.7)
+            # Assign to the first level with enough clearance from its last label
+            level = 0
+            for k in range(N_LEVELS):
+                if x - last_x[k] >= min_x_sep:
+                    level = k
+                    break
+            last_x[level] = x
+            ax.text(x, stagger[level], label,
+                    color=color, zorder=2, fontsize=fontsize,
+                    transform=trans, rotation=90, va="top", ha="center",
+                    bbox=dict(facecolor=bg, edgecolor="none", pad=1.5))
 
 
 class PlottingMixin:
@@ -175,31 +249,15 @@ class PlottingMixin:
         else:
             legend_labels = [fit_label, "Data"]
 
-        # Set legend with chi2 value
-        ax[0].legend(legend_labels, fontsize=9, reverse=True,
+        # Set legend with chi2 value — push to bottom when dspace labels occupy the top
+        legend_loc = 'lower right' if plot_dspace else 'best'
+        ax[0].legend(legend_labels, fontsize=9, reverse=True, loc=legend_loc,
                     title=f"χ$^2$: {chi2:.2f}" if not np.isnan(chi2) else "χ$^2$: N/A")
 
         # Plot d-spacing lines if requested
         if plot_dspace:
-            for phase in self.cross_section.phases_data:
-                try:
-                    hkls = self.cross_section.phases_data[phase].info.hklList()
-                except:
-                    continue
-                for hkl in hkls:
-                    hkl = hkl[:3]
-                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
-                    if dspace >= dspace_min:
-                        trans = ax[0].get_xaxis_transform()
-                        ax[0].axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
-                        if len(self.cross_section.phases) > 1:
-                            ax[0].text(dspace*2, dspace_label_pos, f"{phase} {hkl}",
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans,
-                                    rotation=90, va="top", ha="right")
-                        else:
-                            ax[0].text(dspace*2, dspace_label_pos, f"{hkl}",
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans,
-                                    rotation=90, va="top", ha="right")
+            _plot_dspace_lines(ax[0], self.cross_section.phases_data,
+                               self.cross_section.phases, dspace_min, dspace_label_pos)
 
         plt.subplots_adjust(hspace=0.05)
         return ax
@@ -486,25 +544,8 @@ class PlottingMixin:
 
         # Plot d-spacing lines if requested
         if plot_dspace:
-            for phase in self.cross_section.phases_data:
-                try:
-                    hkls = self.cross_section.phases_data[phase].info.hklList()
-                except:
-                    continue
-                for hkl in hkls:
-                    hkl = hkl[:3]
-                    dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
-                    if dspace >= dspace_min:
-                        trans = ax.get_xaxis_transform()
-                        ax.axvline(dspace*2, lw=1, color="0.4", zorder=-1, ls=":")
-                        if len(self.cross_section.phases) > 1:
-                            ax.text(dspace*2, dspace_label_pos, f"{phase} {hkl}",
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans,
-                                    rotation=90, va="top", ha="right")
-                        else:
-                            ax.text(dspace*2, dspace_label_pos, f"{hkl}",
-                                    color="0.2", zorder=-1, fontsize=8, transform=trans,
-                                    rotation=90, va="top", ha="right")
+            _plot_dspace_lines(ax, self.cross_section.phases_data,
+                               self.cross_section.phases, dspace_min, dspace_label_pos)
 
         # Add legend
         if has_data:
@@ -840,25 +881,14 @@ class PlottingMixin:
                 else:
                     legend_labels = ["Model", "Data"] if data_values is not None else ["Model"]
 
-                # Legend
-                ax0.legend(legend_labels, fontsize=9, loc='best', title=chi2_text, title_fontsize=9)
+                # Legend — push to bottom when dspace labels occupy the top
+                legend_loc = 'lower right' if plot_dspace else 'best'
+                ax0.legend(legend_labels, fontsize=9, loc=legend_loc, title=chi2_text, title_fontsize=9)
 
                 # Plot d-spacing lines
                 if plot_dspace:
-                    for phase in self.cross_section.phases_data:
-                        try:
-                            hkls = self.cross_section.phases_data[phase].info.hklList()
-                        except:
-                            continue
-                        for hkl in hkls:
-                            hkl = hkl[:3]
-                            dspace = self.cross_section.phases_data[phase].info.dspacingFromHKL(*hkl)
-                            if dspace >= dspace_min:
-                                ax0.axvline(dspace*2, lw=0.8, color="gray", ls=":", zorder=0)
-                                trans = ax0.get_xaxis_transform()
-                                label = f"{phase} {hkl}" if len(self.cross_section.phases) > 1 else f"{hkl}"
-                                ax0.text(dspace*2, dspace_label_pos, label, color="darkgray", fontsize=8,
-                                        transform=trans, rotation=90, va="top", ha="right")
+                    _plot_dspace_lines(ax0, self.cross_section.phases_data,
+                                       self.cross_section.phases, dspace_min, dspace_label_pos)
 
                 plt.subplots_adjust(hspace=0.05)
                 plt.tight_layout()
