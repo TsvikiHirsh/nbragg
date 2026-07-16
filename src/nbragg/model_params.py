@@ -245,9 +245,17 @@ class ParametersMixin:
             phi_val = material.get('phi', 0.) if material.get('phi') is not None else 0.
             mos_val = material.get('mos', 0.) if material.get('mos') is not None else 0.
 
-            params.add(f"θ_{phase}", value=theta_val, vary=vary)
-            params.add(f"ϕ_{phase}", value=phi_val, vary=vary)
-            params.add(f"η_{phase}", value=mos_val, min=0., vary=vary)
+            # Unoriented (powder) phases have no orientation to fit: their
+            # parameters are created for completeness but never vary.
+            oriented = material.get('mos') is not None or material.get('dir1') is not None
+            phase_vary = vary and oriented
+
+            params.add(f"θ_{phase}", value=theta_val, vary=phase_vary)
+            params.add(f"ϕ_{phase}", value=phi_val, vary=phase_vary)
+            # NCrystal requires mos in (0, 90] degrees; keep the fitter inside
+            # that range (0 is only valid for phases without orientation).
+            eta_min = 1e-3 if mos_val > 0 else 0.
+            params.add(f"η_{phase}", value=mos_val, min=eta_min, max=90., vary=phase_vary)
         return params
 
     def _make_tof_params(self, vary=False, **kwargs):

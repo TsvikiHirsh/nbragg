@@ -8,8 +8,8 @@ class Data:
     A class for handling neutron transmission data, including reading counts data,
     calculating transmission, and plotting the results.
 
-    Attributes:
-    -----------
+    Attributes
+    ----------
     table : pandas.DataFrame or None
         A dataframe containing wavelength (Angstroms), transmission, and error values.
     tgrid : pandas.Series or None
@@ -39,8 +39,8 @@ class Data:
         - Directory: "path/to/folder" -> grouped Data from all .csv files
         - Glob pattern: "path/to/*.csv" -> grouped Data
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         signal : str, DataFrame, or None
             Signal data source. Can be:
             - File path (str): single CSV file
@@ -73,8 +73,8 @@ class Data:
         n_jobs : int, optional
             Number of parallel jobs. Default is -1.
 
-        Examples:
-        ---------
+        Examples
+        --------
         # Single file input
         >>> data = Data(signal="signal.csv", openbeam="openbeam.csv", L=10)
 
@@ -158,13 +158,13 @@ class Data:
         Converts tuples like (10, 20) to strings like "(10,20)" for consistent access.
         Accepts both "(10,20)" and "(10, 20)" string formats.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str
             The index to normalize
 
-        Returns:
-        --------
+        Returns
+        -------
         str
             String representation of the index (tuples without spaces)
         """
@@ -185,13 +185,13 @@ class Data:
         "5" -> 5
         "center" -> "center"
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         string_idx : str
             String representation of index
 
-        Returns:
-        --------
+        Returns
+        -------
         tuple, int, or str
             Original index form
         """
@@ -209,13 +209,13 @@ class Data:
         """
         Detect whether input is a single file, directory, or glob pattern.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         path : str
             The input path to analyze
 
-        Returns:
-        --------
+        Returns
+        -------
         str
             "file", "directory", or "glob"
         """
@@ -350,8 +350,8 @@ class Data:
         Creates a Data object from signal and open beam counts data, calculates transmission,
         and converts tof to wavelength using energy-wavelength conversion.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         signal : str or pandas.DataFrame
             Path to the CSV file or DataFrame containing the signal data (tof, counts, err).
         openbeam : str or pandas.DataFrame
@@ -374,8 +374,8 @@ class Data:
         dropna : bool, optional
             If True, remove rows with NaN values from the data table. Default is False.
 
-        Returns:
-        --------
+        Returns
+        -------
         Data
             A Data object containing transmission and wavelength data.
         """
@@ -455,8 +455,8 @@ class Data:
         """
         Creates a Data object directly from transmission data containing wavelength/energy, transmission, and error values.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         input_data : str, pandas.DataFrame, dict, or list
             Single input: path to a whitespace-separated file or a DataFrame with columns
             (wavelength/energy, trans, err).
@@ -471,8 +471,8 @@ class Data:
             Group labels to use when *input_data* is a list.  Ignored for dict input
             (dict keys are used) and single-item input.
 
-        Returns:
-        --------
+        Returns
+        -------
         Data
             A single-group Data object when *input_data* is a str or DataFrame, or a
             grouped Data object (``is_grouped=True``) when *input_data* is a dict or list.
@@ -563,8 +563,8 @@ class Data:
 
         Supports 1D arrays, 2D grids, and named indices for spatially-resolved analysis.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         signal : str, list, or dict
             File-based input: glob pattern (e.g. ``"archive/pixel_*.csv"``) or folder path.
             In-memory input: a **dict** mapping group indices to counts DataFrames
@@ -608,13 +608,13 @@ class Data:
             - Named groups: ``name``   (e.g. ``"name.str.contains('roi')"``).
             When ``indices`` is provided by the user the same column names apply.
 
-        Returns:
-        --------
+        Returns
+        -------
         Data
             A Data object with grouped data stored in self.groups.
 
-        Examples:
-        ---------
+        Examples
+        --------
         # File-based: 2D grid from filenames like "pixel_x10_y20.csv"
         >>> data = Data.from_grouped("folder/pixel_*.csv", "folder_ob/pixel_*.csv")
 
@@ -1043,18 +1043,18 @@ class Data:
 
         For grouped data, adds corresponding groups together to create a new grouped Data object.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         other : Data
             Another Data object to add to this one.
 
-        Returns:
-        --------
+        Returns
+        -------
         Data
             A new Data object with combined counts and recalculated transmission.
 
-        Raises:
-        -------
+        Raises
+        ------
         ValueError
             If L or tstep parameters differ between the two Data objects.
             If grouped data don't have matching indices.
@@ -1197,18 +1197,18 @@ class Data:
         """
         In-place addition of another Data object to this one.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         other : Data
             Another Data object to add to this one.
 
-        Returns:
-        --------
+        Returns
+        -------
         Data
             This Data object with updated values.
 
-        Raises:
-        -------
+        Raises
+        ------
         ValueError
             If L or tstep parameters differ between the two Data objects.
         TypeError
@@ -1242,8 +1242,8 @@ class Data:
         Counts are combined (summed) and transmission is recalculated with proper
         uncertainty propagation.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         signal : str or None
             Glob pattern or directory for new signal files.
             If None, only openbeam is added (existing signal is reused).
@@ -1265,19 +1265,19 @@ class Data:
         n_jobs : int, optional
             Number of parallel jobs. Default is -1.
 
-        Returns:
-        --------
+        Returns
+        -------
         self : Data
             Returns self for method chaining.
 
-        Raises:
-        -------
+        Raises
+        ------
         ValueError
             If data is not grouped, if groups_signal/groups_openbeam are not available,
             or if number of files doesn't match number of groups.
 
-        Examples:
-        ---------
+        Examples
+        --------
         # Add only new signal counts (keeps existing openbeam)
         >>> data.add_groups(signal="run2/grid_*.csv")
 
@@ -1520,8 +1520,8 @@ class Data:
         For grouped data: adds the same counts to ALL groups (broadcasting).
         For non-grouped data: adds counts to the single group.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         signal : str, DataFrame, or None
             Single signal file/DataFrame to add. Broadcast to all groups if grouped.
         openbeam : str, DataFrame, or None
@@ -1537,18 +1537,18 @@ class Data:
         dropna : bool, optional
             If True, remove NaN rows. Default is False.
 
-        Returns:
-        --------
+        Returns
+        -------
         self : Data
             Returns self for method chaining.
 
-        Raises:
-        -------
+        Raises
+        ------
         ValueError
             If neither signal nor openbeam is provided, or if counts are not available.
 
-        Examples:
-        ---------
+        Examples
+        --------
         # For grouped data: broadcast single file to all groups
         >>> data.add_counts(signal="extra_run.csv")
         >>> data.add_counts(signal="run.csv", openbeam="ob.csv")
@@ -1733,14 +1733,14 @@ class Data:
         """
         Remove rows with NaN values from the data table.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         inplace : bool, optional
             If True, modify the Data object in place and return self.
             If False, return a new Data object with NaN values removed. Default is False.
 
-        Returns:
-        --------
+        Returns
+        -------
         Data or None
             Returns a new Data object if inplace=False, or None if inplace=True.
         """
@@ -1762,17 +1762,20 @@ class Data:
         """
         Plots the transmission data with error bars.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str, optional
             For grouped data, specify which group to plot:
+
             - int: 1D array index
             - tuple: (x, y) for 2D grid
             - str: named index
+
             If None and data is grouped, plots first group.
             If None and data is not grouped, plots the main table.
         **kwargs : dict, optional
             Additional plotting parameters:
+
             - xlim : tuple, optional
               Limits for the x-axis (default: (0.5, 10)).
             - ylim : tuple, optional
@@ -1786,8 +1789,8 @@ class Data:
             - logx : bool, optional
               Whether to plot the x-axis on a logarithmic scale (default: False).
 
-        Returns:
-        --------
+        Returns
+        -------
         matplotlib.Axes
             The axes of the plot containing the transmission data.
         """
@@ -1834,14 +1837,15 @@ class Data:
         """
         Plot transmission map averaged over wavelength range for grouped data.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         wlmin : float, optional
             Minimum wavelength for averaging (default: 1.0 Å).
         wlmax : float, optional
             Maximum wavelength for averaging (default: 5.0 Å).
         **kwargs : dict, optional
             Additional plotting parameters:
+
             - cmap : str, optional
               Colormap for 2D maps (default: 'viridis').
             - title : str, optional
@@ -1851,18 +1855,18 @@ class Data:
             - figsize : tuple, optional
               Figure size (width, height) in inches.
 
-        Returns:
-        --------
+        Returns
+        -------
         matplotlib.Axes
             The axes of the plot.
 
-        Raises:
-        -------
+        Raises
+        ------
         ValueError
             If called on non-grouped data.
 
-        Examples:
-        ---------
+        Examples
+        --------
         >>> # For 2D grid data
         >>> data = Data.from_grouped("pixel_x*_y*.csv", "ob_x*_y*.csv", L=10, tstep=10e-6)
         >>> data.plot_map(wlmin=2.0, wlmax=4.0)

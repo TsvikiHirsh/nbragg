@@ -1045,21 +1045,26 @@ class CrossSection:
                 spec['temp'] = kwargs[temp_key]
                 updated = True
 
+            # Orientation parameters only apply to oriented phases; never
+            # push mos/theta/phi onto unoriented (powder) phases, where
+            # e.g. mos=0 would be rejected by NCrystal.
+            is_oriented = spec.get('mos') is not None or spec.get('dir1') is not None
+
             # Update mosaic spread (accept both η1 and η_phasename)
             new_mos = kwargs.get(mos_key, kwargs.get(mos_key_named))
-            if new_mos is not None and new_mos != spec['mos']:
+            if is_oriented and new_mos is not None and new_mos != spec['mos']:
                 spec['mos'] = new_mos
                 updated = True
 
             # Update theta (accept both θ1 and θ_phasename)
             new_theta = kwargs.get(theta_key, kwargs.get(theta_key_named))
-            if new_theta is not None and new_theta != spec['theta']:
+            if is_oriented and new_theta is not None and new_theta != spec['theta']:
                 spec['theta'] = new_theta
                 updated = True
 
             # Update phi (accept both ϕ1 and ϕ_phasename)
             new_phi = kwargs.get(phi_key, kwargs.get(phi_key_named))
-            if new_phi is not None and new_phi != spec['phi']:
+            if is_oriented and new_phi is not None and new_phi != spec['phi']:
                 spec['phi'] = new_phi
                 updated = True
             
@@ -1231,7 +1236,7 @@ class CrossSection:
         Notes
         -----
         - The order of phases in the plot and legend is preserved according to the
-        order of the columns in ``self.table`` (excluding the "total" column).
+          order of the columns in ``self.table`` (excluding the "total" column).
         - The "total" curve is always plotted last, with a distinct style and label.
 
         Examples

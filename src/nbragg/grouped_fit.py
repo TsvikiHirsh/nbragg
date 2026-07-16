@@ -286,13 +286,13 @@ def _add_save_method_to_result(result):
         This method provides the same output as the automatic display
         when the result object is shown in a Jupyter cell.
 
-        Returns:
-        --------
+        Returns
+        -------
         str
             HTML string containing the formatted fit results from lmfit.
 
-        Examples:
-        ---------
+        Examples
+        --------
         >>> result = model.fit(data)
         >>> html_report = result.fit_report()
         >>> # Display in Jupyter:
@@ -369,8 +369,8 @@ class GroupedFitResult:
     Stores multiple ModelResult objects indexed by their group identifiers
     (integers, tuples, or strings depending on the data structure).
 
-    Attributes:
-    -----------
+    Attributes
+    ----------
     results : dict
         Dictionary mapping group indices to lmfit.ModelResult objects.
     indices : list
@@ -378,8 +378,8 @@ class GroupedFitResult:
     group_shape : tuple or None
         Shape of the grouped data ((ny, nx) for 2D, (n,) for 1D, None for named).
 
-    Examples:
-    ---------
+    Examples
+    --------
     >>> # Access individual results
     >>> grouped_result = model.fit(grouped_data)
     >>> result_0_0 = grouped_result[(0, 0)]
@@ -396,8 +396,8 @@ class GroupedFitResult:
         """
         Initialize an empty GroupedFitResult.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         group_shape : tuple or None
             Shape of the grouped data.
         """
@@ -436,8 +436,8 @@ class GroupedFitResult:
         """
         Add a fit result for a specific group.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str
             The group index.
         result : lmfit.ModelResult
@@ -709,8 +709,8 @@ class GroupedFitResult:
         """
         Plot a specific group's fit result.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str
             The group index to plot.
             - For 2D grids: can use tuple (0, 0) or string "(0,0)" or "(0, 0)"
@@ -719,8 +719,8 @@ class GroupedFitResult:
         **kwargs
             Additional plotting parameters passed to result.plot().
 
-        Returns:
-        --------
+        Returns
+        -------
         matplotlib.Axes
             The plot axes.
         """
@@ -772,10 +772,11 @@ class GroupedFitResult:
         """
         Plot spatial map of a fitted parameter value, error, or fit statistic.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         param_name : str
             Name of the parameter to visualize. Can be:
+
             - Parameter name: "thickness", "norm", etc.
             - Parameter error: "thickness_err", "norm_err", etc.
             - Fit statistic: "redchi", "chisqr", "aic", "bic"
@@ -784,13 +785,16 @@ class GroupedFitResult:
             Can reference any parameter name, parameter_err, or statistic.
         kind : str, optional
             Plot type. If None (default), auto-detected based on group_shape:
+
             - 2D data: 'pcolormesh'
             - 1D data: 'line'
             - Named groups: 'bar'
+
             For 1D/named data, can also specify: 'line', 'bar', or 'errorbar'.
             Ignored for 2D data (always uses pcolormesh).
         **kwargs : dict, optional
             Additional plotting parameters:
+
             - ax : matplotlib.Axes, optional
               Existing axes to plot into. If None, a new figure is created.
             - cmap : str, optional
@@ -812,13 +816,13 @@ class GroupedFitResult:
             - figsize : tuple, optional
               Figure size (width, height) in inches. Ignored when ax is provided.
 
-        Returns:
-        --------
+        Returns
+        -------
         matplotlib.Axes
             The plot axes.
 
-        Examples:
-        ---------
+        Examples
+        --------
         >>> # Plot parameter value
         >>> grouped_result.plot_parameter_map("thickness")
         >>>
@@ -1087,8 +1091,8 @@ class GroupedFitResult:
 
         Returns a pandas DataFrame with fit statistics and parameter values/errors for each group.
 
-        Returns:
-        --------
+        Returns
+        -------
         pandas.DataFrame
             Summary table with columns: index, success, redchi, parameters, and parameter errors.
         """
@@ -1126,21 +1130,21 @@ class GroupedFitResult:
         """
         Get the stages summary table for a specific group.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str
             The group index to get stages summary for.
             - For 2D grids: can use tuple (0, 0) or string "(0, 0)"
             - For 1D arrays: can use int 5 or string "5"
             - For named groups: use string "groupname"
 
-        Returns:
-        --------
+        Returns
+        -------
         pandas.DataFrame or None
             The stages summary table for the specified group, or None if not available.
 
-        Examples:
-        ---------
+        Examples
+        --------
         >>> result.stages_summary(index="empty2")
         >>> result.stages_summary(index=(0, 0))
         """
@@ -1162,8 +1166,8 @@ class GroupedFitResult:
         """
         Plot the progression of a parameter across fitting stages for a specific group.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str
             The group index to plot.
         param_name : str
@@ -1173,8 +1177,8 @@ class GroupedFitResult:
         **kwargs
             Additional keyword arguments for plotting.
 
-        Returns:
-        --------
+        Returns
+        -------
         matplotlib.axes.Axes
             The axes containing the plot.
         """
@@ -1217,8 +1221,8 @@ class GroupedFitResult:
         """
         Plot the progression of reduced chi-squared across fitting stages for a specific group.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str
             The group index to plot.
         ax : matplotlib.axes.Axes, optional
@@ -1226,8 +1230,8 @@ class GroupedFitResult:
         **kwargs
             Additional keyword arguments for plotting.
 
-        Returns:
-        --------
+        Returns
+        -------
         matplotlib.axes.Axes
             The axes containing the plot.
         """
@@ -1264,8 +1268,8 @@ class GroupedFitResult:
         """
         Plot the total cross-section for a specific group.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str
             The group index to plot.
             - For 2D grids: can use tuple (0, 0) or string "(0, 0)"
@@ -1275,13 +1279,13 @@ class GroupedFitResult:
             Additional plotting parameters passed to result.plot_total_xs().
             See ModelResult.plot_total_xs() for available options.
 
-        Returns:
-        --------
+        Returns
+        -------
         matplotlib.Axes or tuple of matplotlib.Axes
             The plot axes (or tuple of axes if plot_residuals=True).
 
-        Examples:
-        ---------
+        Examples
+        --------
         >>> result.plot_total_xs(index="empty1")
         >>> result.plot_total_xs(index=(0, 0), plot_bg=True, plot_dspace=True)
         >>> result.plot_total_xs(index=5, split_phases=True)
@@ -1351,22 +1355,24 @@ class GroupedFitResult:
 
         return html
 
-    def summary(self):
+    def summary_html(self):
         """
         Display the HTML summary table for all grouped fit results.
 
         In Jupyter notebooks, automatically displays the HTML table.
         Outside Jupyter, returns the HTML string.
 
-        Returns:
-        --------
+        See :meth:`summary` for a pandas DataFrame version of this table.
+
+        Returns
+        -------
         str or IPython.display.HTML
             HTML string (outside Jupyter) or displayed HTML (in Jupyter).
 
-        Examples:
-        ---------
+        Examples
+        --------
         >>> result = model.fit(grouped_data)
-        >>> result.summary()  # Auto-displays in Jupyter
+        >>> result.summary_html()  # Auto-displays in Jupyter
         """
         html = self._repr_html_()
 
@@ -1391,21 +1397,21 @@ class GroupedFitResult:
         In Jupyter notebooks, automatically displays the HTML report.
         Outside Jupyter, returns the HTML string.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         index : int, tuple, or str
             The group index to get the fit report for.
             - For 2D grids: can use tuple (0, 0) or string "(0, 0)"
             - For 1D arrays: can use int 5 or string "5"
             - For named groups: use string "groupname"
 
-        Returns:
-        --------
+        Returns
+        -------
         str or IPython.display.HTML or None
             HTML string (outside Jupyter), displayed HTML (in Jupyter), or None.
 
-        Examples:
-        ---------
+        Examples
+        --------
         >>> result = model.fit(grouped_data)
         >>> result.fit_report(index=(0, 0))  # Auto-displays in Jupyter
         """
@@ -1473,8 +1479,8 @@ class GroupedFitResult:
         """
         Save grouped fit results to a single JSON file.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         filename : str
             Path to the output JSON file.
         compact : bool, optional
@@ -1583,8 +1589,8 @@ class GroupedFitResult:
         """
         Load grouped fit results from a JSON file.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         filename : str
             Path to the saved JSON file.
         model_filename : str, optional
@@ -1592,8 +1598,8 @@ class GroupedFitResult:
         model : TransmissionModel, optional
             Existing model to use instead of loading from file.
 
-        Returns:
-        --------
+        Returns
+        -------
         GroupedFitResult
             Loaded grouped fit results.
         """

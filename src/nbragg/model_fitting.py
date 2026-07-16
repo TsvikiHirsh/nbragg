@@ -245,6 +245,11 @@ class FittingMixin:
         # Prepare input data
         if isinstance(data, pandas.DataFrame):
             data = self._clean_fit_data(data.query(f"{wlmin} < wavelength < {wlmax}"))
+            if len(data) == 0:
+                raise ValueError(
+                    f"No data points in the fit wavelength range ({wlmin}, {wlmax}) Å. "
+                    "Adjust wlmin/wlmax to overlap the wavelength range of your data."
+                )
             weights = kwargs.get("weights", 1. / data["err"].values)
             fit_result = super().fit(
                 data["trans"].values,
@@ -257,6 +262,11 @@ class FittingMixin:
 
         elif isinstance(data, Data):
             data = self._clean_fit_data(data.table.query(f"{wlmin} < wavelength < {wlmax}"))
+            if len(data) == 0:
+                raise ValueError(
+                    f"No data points in the fit wavelength range ({wlmin}, {wlmax}) Å. "
+                    "Adjust wlmin/wlmax to overlap the wavelength range of your data."
+                )
             weights = kwargs.get("weights", 1. / data["err"].values)
             fit_result = super().fit(
                 data["trans"].values,
@@ -796,8 +806,8 @@ class FittingMixin:
         """
         Fit model to grouped data in parallel.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         data : Data
             Grouped data object with is_grouped=True.
         params : lmfit.Parameters, optional
@@ -823,8 +833,8 @@ class FittingMixin:
         **kwargs
             Additional arguments passed to fit.
 
-        Returns:
-        --------
+        Returns
+        -------
         GroupedFitResult
             Container with fit results for each group.
         """

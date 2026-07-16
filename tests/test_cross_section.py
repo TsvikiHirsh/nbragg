@@ -4,6 +4,9 @@ from nbragg import CrossSection
 from nbragg.utils import materials as materials_dict
 import os
 
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+SIMPLE_COMPONENTS_CSV = os.path.join(TESTS_DIR, "simple_components.csv")
+
 class TestCrossSection(unittest.TestCase):
     def test_cross_section_init_with_materials_dict(self):
         """Test initialization with dictionary of materials."""
@@ -409,10 +412,10 @@ class TestCrossSection(unittest.TestCase):
 class TestMTEXToNCrystalConversion(unittest.TestCase):
     def setUp(self):
         # Path to test CSV file
-        self.csv_file = "simple_components.csv"
+        self.csv_file = SIMPLE_COMPONENTS_CSV
         self.base_material = materials_dict["Fe_sg225_Iron-gamma.ncmat"]
 
-    @unittest.skipIf(not os.path.exists("simple_components.csv"), "simple_components.csv not found")
+    @unittest.skipIf(not os.path.exists(SIMPLE_COMPONENTS_CSV), "simple_components.csv not found")
     def test_first_phase_orientation(self):
         """Test orientation of the first phase from MTEX data."""
         cs = CrossSection().from_mtex(self.csv_file, self.base_material, short_name="γ")
@@ -433,7 +436,7 @@ class TestMTEXToNCrystalConversion(unittest.TestCase):
         self.assertEqual(first_phase['mos'], 10.0)
         self.assertAlmostEqual(first_phase['weight'], 1/7, places=7)
 
-    @unittest.skipIf(not os.path.exists("simple_components.csv"), "simple_components.csv not found")
+    @unittest.skipIf(not os.path.exists(SIMPLE_COMPONENTS_CSV), "simple_components.csv not found")
     def test_phases_object_creation(self):
         """Test phases object creation from MTEX data."""
         cs = CrossSection().from_mtex(self.csv_file, self.base_material, short_name="γ")

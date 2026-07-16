@@ -17,14 +17,16 @@ class TestGroupedResultSaveLoad:
         from nbragg import Data
         import numpy as np
 
-        # Create simple 2x2 grid with realistic channel values and more data points
+        # Create simple 2x2 grid with realistic channel values and more data points.
+        # With L=10 m and tstep=10 us, channels 300-1200 map to ~1.2-4.7 Angstrom,
+        # which lies inside the default fit wavelength range.
+        rng = np.random.default_rng(42)
         for i in range(2):
             for j in range(2):
                 # Generate realistic transmission data
-                channels = np.arange(100, 200)
-                # Simple decreasing transmission pattern
-                signal_counts = 1000 - channels * 2 + np.random.randint(-10, 10, len(channels))
-                signal_counts = np.maximum(signal_counts, 500)  # Minimum 500 counts
+                channels = np.arange(300, 1200, 10)
+                # Roughly constant transmission around 0.7 with some noise
+                signal_counts = 700 + rng.integers(-10, 10, len(channels))
 
                 # Signal
                 signal_file = tmp_path / f"signal_x{i}_y{j}.csv"
@@ -34,7 +36,7 @@ class TestGroupedResultSaveLoad:
                 signal_file.write_text(signal_data)
 
                 # Openbeam - mostly flat with some noise
-                ob_counts = 1000 + np.random.randint(-5, 5, len(channels))
+                ob_counts = 1000 + rng.integers(-5, 5, len(channels))
                 ob_file = tmp_path / f"ob_x{i}_y{j}.csv"
                 ob_data = "channel,counts\n"
                 for ch, cnt in zip(channels, ob_counts):

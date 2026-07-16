@@ -195,8 +195,8 @@ class Response:
         """
         Calculates the Jorgensen peak profile function with Greek Unicode parameters.
         
-        Parameters:
-        -----------
+        Parameters
+        ----------
         α0 : float or list/tuple
             Alpha parameter [α0₁, α0₂] or single value α0₁ (α0₂ defaults to 0)
         β0 : float or list/tuple
@@ -204,8 +204,8 @@ class Response:
         σ1 : list/tuple, optional
             Sigma parameters [σ₁, σ₂, σ₃], defaults to [0, 0, 0]
         
-        Returns:
-        --------
+        Returns
+        -------
         numpy.ndarray
             Normalized profile values with NaN values replaced by 0
         """
@@ -442,8 +442,8 @@ class Response:
         """
         Applies asymmetry correction to the profile, mimicking GSAS computeAsymmetry.
         
-        Parameters:
-        -----------
+        Parameters
+        ----------
         profile : array-like
             Input profile to correct.
         xgrid : array-like
@@ -457,8 +457,8 @@ class Response:
         truncation_factor : float
             Truncation factor for asymmetry convolution.
         
-        Returns:
-        --------
+        Returns
+        -------
         numpy.ndarray
             Asymmetry-corrected profile.
         """
@@ -513,8 +513,8 @@ class Response:
         """
         Calculates the Jorgensen peak profile function with an additional square width parameter.
         
-        Parameters:
-        -----------
+        Parameters
+        ----------
         α0 : float or list/tuple
             Alpha parameter [α0, α0] or single value α0 (α0 defaults to 0)
         β0 : float or list/tuple
@@ -524,8 +524,8 @@ class Response:
         width : float, optional
             Square width to broaden the response [usec]
         
-        Returns:
-        --------
+        Returns
+        -------
         numpy.ndarray
             Normalized profile values with NaN values replaced by 0
         """
@@ -599,9 +599,12 @@ class Response:
         """
         Plots the response function.
 
-        Parameters:
-        params (dict): Parameters for the response function.
-        **kwargs: Additional arguments for plot customization.
+        Parameters
+        ----------
+        params : dict, optional
+            Parameters for the response function.
+        **kwargs
+            Additional arguments for plot customization.
         """
         ax = kwargs.pop("ax", plt.gca())
         

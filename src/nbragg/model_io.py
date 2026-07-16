@@ -417,13 +417,13 @@ def _add_save_method_to_result(result):
         This method provides the same output as the automatic display
         when the result object is shown in a Jupyter cell.
 
-        Returns:
-        --------
+        Returns
+        -------
         str
             HTML string containing the formatted fit results from lmfit.
 
-        Examples:
-        ---------
+        Examples
+        --------
         >>> result = model.fit(data)
         >>> html_report = result.fit_report()
         >>> # Display in Jupyter:

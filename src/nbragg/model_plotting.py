@@ -6,8 +6,6 @@ from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.transforms as mtransforms
-import ipywidgets as widgets
-from IPython.display import display
 
 if TYPE_CHECKING:
     from nbragg.cross_section import CrossSection
@@ -708,6 +706,15 @@ class PlottingMixin:
         Designed for models before fitting. Displays a warning if fit results exist.
         Provides real-time parameter exploration with sliders, float fields, and reset functionality.
         """
+        try:
+            import ipywidgets as widgets
+            from IPython.display import display
+        except ImportError as err:
+            raise ImportError(
+                "interactive_plot requires ipywidgets and IPython. "
+                "Install them with: pip install ipywidgets"
+            ) from err
+
         # Check for fit results
         if hasattr(self, "fit_result") and self.fit_result is not None:
             print("Warning: interactive_plot is for models before fitting. Use plot() instead.")

@@ -122,25 +122,41 @@ def get_ncmat_storage_dir():
         return data_dir
 
 def save_cache(materials_dict):
-    """Save materials dictionary to cache file."""
+    """Save materials dictionary to cache file.
+
+    The cache is written to a temporary file first and then atomically
+    renamed into place, so concurrent processes never observe a
+    partially-written cache.
+    """
     try:
         cache_path = get_cache_path()
-        with open(cache_path, 'wb') as f:
+        tmp_path = cache_path.with_suffix(f'.tmp-{os.getpid()}')
+        with open(tmp_path, 'wb') as f:
             pickle.dump(materials_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp_path, cache_path)
         return True
     except Exception as e:
         warnings.warn(f"Could not save materials cache: {e}")
         return False
 
 def load_cache():
-    """Load materials dictionary from cache file."""
+    """Load materials dictionary from cache file.
+
+    A corrupt or unreadable cache is deleted and silently ignored (it is
+    only an optimization and will be regenerated on the next save).
+    """
+    cache_path = None
     try:
         cache_path = get_cache_path()
         if cache_path.exists():
             with open(cache_path, 'rb') as f:
                 return pickle.load(f)
-    except Exception as e:
-        warnings.warn(f"Could not load materials cache: {e}")
+    except Exception:
+        if cache_path is not None:
+            try:
+                cache_path.unlink()
+            except OSError:
+                pass
     return None
 
 def save_user_materials(user_materials_dict):
@@ -215,15 +231,15 @@ def save_ncmat_content(filename, content):
     """
     Save NCMAT file content to persistent storage.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     filename : str
         Name of the NCMAT file
     content : str
         Content of the NCMAT file
     
-    Returns:
-    --------
+    Returns
+    -------
     bool : True if successful, False otherwise
     """
     try:
@@ -240,13 +256,13 @@ def get_material_url(material_name):
     """
     Generate a URL to the NCrystal material documentation if available.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     material_name : str
         Name of the material file (with or without .ncmat extension)
     
-    Returns:
-    --------
+    Returns
+    -------
     str or None : URL to the material documentation, or None if not available
     """
     if not material_name.endswith('.ncmat'):
@@ -416,8 +432,8 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
        # or with custom names:
        register_material(custom=xs.materials['phase1'])
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     filename : str or Path, optional
         Path to an .ncmat file to register. If provided, other sources are ignored.
     cif_source : str, optional
@@ -432,8 +448,8 @@ def register_material(filename=None, cif_source=None, save_persistent=True, stor
         - A material specification dict with 'mat' key
         - A nested dict of material specifications (from CrossSection.materials)
     
-    Returns:
-    --------
+    Returns
+    -------
     dict : The materials that were registered
     """
     updated_materials = {}
@@ -632,8 +648,8 @@ def _try_store_material_content(material_dict):
     """
     Try to store the NCMAT content for a material if accessible.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     material_dict : dict
         Material dictionary to update with stored content info
     """
@@ -656,13 +672,13 @@ def _process_material_dict(material_info):
     """
     Process a material info dictionary into the standard format.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     material_info : dict
         Material specification dictionary
     
-    Returns:
-    --------
+    Returns
+    -------
     dict : Processed material dictionary with all required keys
     """
     # Set defaults for missing keys
@@ -699,15 +715,15 @@ def get_material_info(material_key, show_url=False):
     """
     Get information about a material in a formatted way.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     material_key : str
         Key of the material in the materials dictionary
     show_url : bool, optional
         Whether to display clickable URL (default False)
     
-    Returns:
-    --------
+    Returns
+    -------
     str : Formatted material information
     """
     _ensure_initialized()
@@ -750,15 +766,15 @@ def list_materials(filter_str=None, custom_only=False):
     """
     List all available materials with optional filtering.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     filter_str : str, optional
         Filter materials by name/formula (case-insensitive)
     custom_only : bool, optional
         Only show user-registered materials (default False)
     
-    Returns:
-    --------
+    Returns
+    -------
     list : List of material keys matching the criteria
     """
     _ensure_initialized()
@@ -847,13 +863,13 @@ class MaterialSpec(dict):
         """
         Multiply material by a weight factor.
         
-        Parameters:
-        -----------
+        Parameters
+        ----------
         weight : float
             Weight factor to apply to the material
         
-        Returns:
-        --------
+        Returns
+        -------
         MaterialSpec : New MaterialSpec with updated weight
         """
         if not isinstance(weight, (int, float)):
@@ -868,13 +884,13 @@ class MaterialSpec(dict):
         """
         Right multiplication (weight * material).
         
-        Parameters:
-        -----------
+        Parameters
+        ----------
         weight : float
             Weight factor to apply to the material
         
-        Returns:
-        --------
+        Returns
+        -------
         MaterialSpec : New MaterialSpec with updated weight
         """
         return self.__mul__(weight)
