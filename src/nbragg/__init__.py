@@ -1,5 +1,5 @@
 """
-nbragg: Simple yet powerful package for neutron resonance fitting
+nbragg: Simple yet powerful package for neutron Bragg edge fitting
 """
 
 from __future__ import annotations

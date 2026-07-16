@@ -39,7 +39,7 @@ pytest
 Use pytest-cov to generate coverage reports:
 
 ```bash
-pytest --cov=nres
+pytest --cov=nbragg
 ```
 
 # Pre-commit

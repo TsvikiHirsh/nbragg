@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nbragg"
-version = "0.8.2"
+version = "1.0.0"
 authors = [
   { name = "Tsviki Y. Hirsh", email = "tsviki.hirsh@gmail.com" },
 ]
-description = "Simple yet powerful package for neutron resonance fitting"
+description = "Simple yet powerful package for neutron Bragg edge fitting"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 classifiers = [
-"Development Status :: 3 - Alpha",
+"Development Status :: 5 - Production/Stable",
 "Intended Audience :: Science/Research",
 "License :: OSI Approved :: MIT License",
 "Operating System :: OS Independent",
@@ -32,15 +32,22 @@ dependencies = [
 "lmfit",
 "setuptools",
 "ncrystal",
+"spglib",
 "tqdm",
 "joblib"
 ]
 
 [project.optional-dependencies]
+interactive = [
+"ipywidgets",
+"ipython",
+]
 dev = [
 "pytest >=6",
 "pytest-cov >=3",
 "pre-commit",
+"ipywidgets",
+"ipython",
 ]
 
 [project.urls]
@@ -74,7 +81,7 @@ exclude_lines = [
 
 [tool.mypy]
 files = ["src", "tests"]
-python_version = "3.8"
+python_version = "3.9"
 show_error_codes = true
 warn_unreachable = true
 disallow_untyped_defs = false

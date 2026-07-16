@@ -21,7 +21,7 @@ jobs:
       - name: Install nbragg with extras
         run: |
           pip install --upgrade pip
-          pip install .
+          pip install ".[dev]"
           pip install git+https://github.com/XuShuqi7/ncplugin-CrysExtn
       - name: Check plugin availability
         run: |
@@ -30,3 +30,6 @@ jobs:
           echo "Available plugins:"
           nctool --plugins | tee plugins.txt
           grep -q "CrysExtn" plugins.txt
+      - name: Run test suite
+        run: |
+          python -m pytest tests/ -q

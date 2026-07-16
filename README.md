@@ -3,29 +3,36 @@
 <img src="https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/docs/source/_static/nbragg_logo.png" alt="nbragg logo" width="200"/>
 </p>
 
+[![CI](https://github.com/TsvikiHirsh/nbragg/actions/workflows/test.yml/badge.svg)](https://github.com/TsvikiHirsh/nbragg/actions/workflows/test.yml)
 [![Documentation Status](https://readthedocs.org/projects/nbragg/badge/?version=latest)](https://nbragg.readthedocs.io/en/latest/?badge=latest)
 [![PyPI version][pypi-version]][pypi-link]
+[![Python versions](https://img.shields.io/pypi/pyversions/nbragg.svg)](https://pypi.org/project/nbragg/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 nbragg is a package designed for fitting neutron Bragg edge data using [NCrystal](https://github.com/mctools/ncrystal) cross-sections. This tool provides a straightforward way to analyze neutron transmission through polycrystalline materials, leveraging Bragg edges to extract information on material structure and composition.
 
 ## Features
 
 - **Flexible Cross-Section Calculations**: Interfaces with NCrystal to fetch cross-sections for crystalline materials.
+- **Multi-Phase and Oriented Materials**: Combine phases with simple arithmetic (`xs = 0.5*alpha + 0.5*gamma`), and model textured or single-crystal samples with full orientation control.
 - **Grouped/Gridded Data Fitting**: Analyze spatially-resolved or multi-sample data with support for 1D arrays, 2D grids, and named groups. Includes parallel fitting with automatic result visualization via parameter maps.
+- **Rietveld-Type Analysis**: Iterative, staged refinement of Bragg edge data, accumulating parameters across stages for robust fitting.
+- **MTEX Integration**: Import phase weights and orientation distributions exported from [MTEX](https://mtex-toolbox.github.io/) for texture analysis.
 - **SANS Modeling**: Built-in support for Small Angle Neutron Scattering (SANS) using hard-sphere models for samples with nanoscale features.
 - **Extinction Effects**: Support for primary and secondary extinction modeling for large crystallites and thick samples.
-- **Built-In Tools for Response and Background Functions**: Includes predefined models for instrument response (e.g., Jorgensen, square) and background components (polynomial functions).
-- **LMFit Integration**: Allows flexible, nonlinear fitting of experimental data using the powerful lmfit library.
-- **Rietveld-type analysis**: Enables iterative, parametric refinement of Bragg edge data using the Rietveld method, accumulating parameters across stages for robust fitting.
-- **Pythonic API**: Simple-to-use, yet flexible enough for custom modeling.
-- **Plotting Utilities**: Provides ready-to-use plotting functions for easy visualization of results.
-- **Bragg Edge Analysis**: Perform Bragg edge fitting to extract information such as d-spacing, strain, and texture.
+- **Built-In Response and Background Functions**: Includes predefined models for instrument response (e.g., Jorgensen, square) and background components (polynomial functions).
+- **LMFit Integration**: Flexible, nonlinear fitting of experimental data using the powerful lmfit library.
+- **Save and Load**: JSON-based persistence of models and fit results for reproducible analysis sessions.
+- **Pythonic API**: Simple to use, yet flexible enough for custom modeling.
+- **Plotting Utilities**: Ready-to-use plotting functions for easy visualization of data, cross-sections, and fit results.
 
 ## Installation
 
+nbragg requires Python 3.9 or later.
+
 ### Basic Installation
 
-To install the base package:
+To install the base package from PyPI:
 
 ```bash
 pip install nbragg
@@ -43,6 +50,14 @@ pip install git+https://github.com/XuShuqi7/ncplugin-CrysExtn
 The [ncrystal-plugin-crysextn](https://github.com/XuShuqi7/ncplugin-CrysExtn) plugin provides extinction corrections for crystallographic calculations.
 
 **Note:** The extinction plugin is only required if you plan to use extinction effects. For standard Bragg edge fitting without extinction corrections, the base installation is sufficient.
+
+### Interactive Widgets (optional)
+
+For the interactive parameter-exploration plot in Jupyter (`model.interactive_plot()`):
+
+```bash
+pip install "nbragg[interactive]"
+```
 
 ## Usage
 
@@ -62,7 +77,21 @@ result.plot() # plot results
 
 ## Tutorials and Documentation
 
-For more detailed examples and advanced usage, including custom stage definitions and Rietveld fitting, please refer to our [documentation page](https://nbragg.readthedocs.io) and check out the updated [Jupyter notebook tutorial](https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/nbragg_tutorial.ipynb).
+Full documentation is available at [nbragg.readthedocs.io](https://nbragg.readthedocs.io).
+
+Three Jupyter notebook tutorials cover the main workflows:
+
+1. [Getting started with nbragg](https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/nbragg_tutorial.ipynb) — data loading, cross-sections, model definition, fitting, oriented materials, and MTEX integration.
+2. [Rietveld-type refinement](https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/Rietveld_in_nbragg_tutorial.ipynb) — staged, parametric refinement of Bragg edge data.
+3. [Grouped/gridded data fitting](https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/grouped_fits_tutorial.ipynb) — spatially-resolved and multi-sample analysis with parallel fitting.
+
+## Citing nbragg
+
+If you use nbragg in your research, please cite it. Citation metadata is provided in [CITATION.cff](CITATION.cff), and GitHub's "Cite this repository" button generates BibTeX/APA entries automatically.
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, and use the [issue tracker](https://github.com/TsvikiHirsh/nbragg/issues) to report bugs or request features.
 
 ## License
 
