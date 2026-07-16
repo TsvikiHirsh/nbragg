@@ -7,9 +7,15 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'nbragg'
-copyright = '2025, Tsviki Y. Hirsh'
+copyright = '2026, Tsviki Y. Hirsh'
 author = 'Tsviki Y. Hirsh'
-release = '0.5'  # Updated to match current version
+
+try:
+    from importlib.metadata import version as _pkg_version
+    release = _pkg_version('nbragg')
+except Exception:
+    release = '1.0.0'
+version = '.'.join(release.split('.')[:2])
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

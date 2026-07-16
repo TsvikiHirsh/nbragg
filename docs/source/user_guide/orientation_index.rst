@@ -77,7 +77,7 @@ We provide three complementary resources:
    * - :doc:`orientation_quick_reference`
      - Quick lookup during analysis
      - Intermediate to Advanced
-   * - :doc:`../examples/orientation_examples`
+   * - :doc:`../examples/parameter_assignment`
      - Working Python code
      - All Levels
 
@@ -91,7 +91,7 @@ Getting Started
    Jump directly to the :doc:`orientation_quick_reference` for equations and code snippets.
 
 **Learning by doing?**
-   Download and run :doc:`../examples/orientation_examples` to see practical implementations.
+   Work through :doc:`../examples/parameter_assignment` to see practical implementations.
 
 Common Use Cases
 ----------------
@@ -160,9 +160,9 @@ Next Steps
 ----------
 
 1. **Read the theory**: :doc:`crystal_orientation_guide`
-2. **Try the examples**: :doc:`../examples/orientation_examples`
+2. **Try the examples**: :doc:`../examples/parameter_assignment`
 3. **Keep the reference handy**: :doc:`orientation_quick_reference`
-4. **Apply to your data**: See :doc:`../tutorials/bragg_dip_fitting`
+4. **Apply to your data**: See the `nbragg tutorial notebook <https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/nbragg_tutorial.ipynb>`_
 
 Additional Resources
 --------------------

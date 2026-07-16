@@ -142,6 +142,8 @@ Bragg Condition
   * Position independent of orientation
   * Edges are orientation-averaged
 
+.. _troubleshooting-checklist:
+
 Troubleshooting Checklist
 --------------------------
 
@@ -257,9 +259,9 @@ Related Resources
 -----------------
 
 * **Full Documentation**: :doc:`crystal_orientation_guide`
-* **Examples**: :doc:`orientation_examples`
-* **API Reference**: :doc:`api_reference`
-* **Tutorial**: :doc:`nbragg_tutorial`
+* **Examples**: :doc:`/examples/parameter_assignment`
+* **API Reference**: :doc:`/api/index`
+* **Tutorial**: `nbragg tutorial notebook <https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/nbragg_tutorial.ipynb>`_
 
 Citation
 --------

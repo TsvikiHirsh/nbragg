@@ -85,4 +85,4 @@ See Also
 
 - :doc:`basic_usage` - Fundamentals
 - :doc:`model_parameters` - Parameter control
-- :doc:`/api/models` - API reference
+- :doc:`/api/index` - API reference

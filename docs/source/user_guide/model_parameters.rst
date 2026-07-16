@@ -366,4 +366,4 @@ See Also
 - :doc:`basic_usage` - Getting started
 - :doc:`advanced_fitting` - Complex fitting strategies
 - :doc:`orientation_index` - Orientation parameter details
-- :doc:`/api/models` - Complete API reference
+- :doc:`/api/index` - Complete API reference

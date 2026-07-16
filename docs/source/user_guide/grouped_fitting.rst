@@ -1,6 +1,6 @@
-==================
+====================
 Grouped Data Fitting
-==================
+====================
 
 Overview
 --------
@@ -216,8 +216,10 @@ This returns a pandas DataFrame with columns:
 
 In Jupyter notebooks, display a formatted HTML report::
 
-    from IPython.display import HTML, display
-    display(HTML(result.fit_report()))
+    result.summary_html()  # auto-displays in Jupyter
+
+An HTML fit report for a single group is available via
+``result.fit_report(index=(0, 0))``.
 
 Plotting Individual Results
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

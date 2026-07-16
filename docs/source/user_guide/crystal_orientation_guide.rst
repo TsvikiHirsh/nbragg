@@ -14,6 +14,8 @@ nBragg uses a fixed right-handed orthogonal laboratory coordinate system (:math:
 Defining Crystal Orientation
 -----------------------------
 
+.. _basic-concept:
+
 Basic Concept
 ~~~~~~~~~~~~~
 
@@ -206,6 +208,6 @@ Further Reading
 See Also
 --------
 
-* :doc:`nbragg_tutorial` - Basic tutorial for nBragg
-* :doc:`api_reference` - Complete API documentation
-* :doc:`examples` - Working examples with different crystal systems
+* `nbragg tutorial notebook <https://github.com/TsvikiHirsh/nbragg/blob/master/notebooks/nbragg_tutorial.ipynb>`_ - Basic tutorial for nbragg
+* :doc:`/api/index` - Complete API documentation
+* :doc:`/examples/parameter_assignment` - Working examples with different crystal systems

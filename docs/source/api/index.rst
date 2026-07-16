@@ -1,6 +1,6 @@
-===========
+=============
 API Reference
-===========
+=============
 
 Data Handling
 -------------
@@ -26,10 +26,18 @@ Transmission Model
    :undoc-members:
    :show-inheritance:
 
-Utilities
----------
+Grouped Fitting
+---------------
 
-.. automodule:: nbragg.utils
+.. automodule:: nbragg.grouped_fit
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Saving and Loading
+------------------
+
+.. automodule:: nbragg.model_io
    :members:
    :undoc-members:
    :show-inheritance:
@@ -38,6 +46,14 @@ Response Functions
 ------------------
 
 .. automodule:: nbragg.response
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Utilities
+---------
+
+.. automodule:: nbragg.utils
    :members:
    :undoc-members:
    :show-inheritance:

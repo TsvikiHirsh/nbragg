@@ -2,16 +2,16 @@
 Installation
 ============
 
-There are several ways to install nbragg:
+nbragg requires Python 3.9 or later.
 
-.. From PyPI
-.. ---------
+From PyPI
+---------
 
-.. You can install the latest stable version directly from PyPI:
+Install the latest stable version directly from PyPI:
 
-.. .. code-block:: bash
+.. code-block:: bash
 
-..     pip install nbragg
+    pip install nbragg
 
 From Source
 -----------
@@ -27,20 +27,32 @@ To install from the source repository:
 Dependencies
 ------------
 
-nbragg requires the following dependencies:
+nbragg requires the following packages, which are installed automatically by pip:
 
-- Python 3.8+
-- NCrystal
-- lmFit
-- numPy
-- matplotlib
-
-These dependencies will be automatically installed when you use pip.
+- NCrystal (cross-section calculations)
+- lmfit (nonlinear fitting)
+- numpy, scipy, pandas (numerics and data handling)
+- matplotlib (plotting)
+- spglib (crystal structure handling for SANS materials)
+- joblib, tqdm (parallel fitting and progress bars)
 
 Optional Dependencies
 ---------------------
 
-For full functionality, you may also want to install:
+**Extinction effects** require the CrysExtn NCrystal plugin:
 
-- jupyter (for running notebooks)
-.. - Plotting libraries (seaborn, plotly)
+.. code-block:: bash
+
+    pip install git+https://github.com/XuShuqi7/ncplugin-CrysExtn
+
+**Interactive widgets** (``model.interactive_plot()`` in Jupyter):
+
+.. code-block:: bash
+
+    pip install "nbragg[interactive]"
+
+**Development tools** (running tests, pre-commit hooks):
+
+.. code-block:: bash
+
+    pip install "nbragg[dev]"

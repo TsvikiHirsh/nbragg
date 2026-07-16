@@ -39,17 +39,13 @@ Getting Started
    :caption: User Guide:
 
    user_guide/index
-   user_guide/basic_usage
-   user_guide/model_parameters
-   user_guide/orientation_index
-   user_guide/mtex_integration
-   user_guide/advanced_fitting
 
 .. toctree::
    :maxdepth: 2
    :caption: Examples & Reference:
 
    examples/iron_powder
+   examples/parameter_assignment
    api/index
    license
 
@@ -69,4 +65,6 @@ Indices and Tables
 Citing nbragg
 -------------
 
-If you use nbragg in your research, please cite our package and provide a link to the GitHub repository.
+If you use nbragg in your research, please cite it. Citation metadata is
+provided in the repository's ``CITATION.cff`` file, and GitHub's
+"Cite this repository" button generates BibTeX/APA entries automatically.

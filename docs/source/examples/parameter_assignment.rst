@@ -279,7 +279,7 @@ This will print detailed output showing how parameters are assigned to different
 See Also
 --------
 
-* :doc:`../user_guide/cross_section` - Complete CrossSection documentation
-* :doc:`../user_guide/extinction` - Extinction modeling details
-* :doc:`orientation_examples` - Orientation parameter examples
-* :doc:`../api/cross_section` - CrossSection API reference
+* :doc:`../user_guide/basic_usage` - CrossSection fundamentals
+* :doc:`../user_guide/model_parameters` - Parameter control details
+* :doc:`../user_guide/orientation_index` - Orientation parameter examples
+* :doc:`../api/index` - Complete API reference
