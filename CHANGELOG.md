@@ -34,6 +34,14 @@ First stable release. 🎉
 - `ipywidgets`/`IPython` are no longer imported at package import time —
   they are only needed for `interactive_plot()` and are now an optional
   extra: `pip install "nbragg[interactive]"`.
+- Added `jinja2` as a dependency. The default Rietveld staged-fit summary
+  builds a pandas `Styler` (`DataFrame.style`), which requires jinja2; a clean
+  install without it made every `method="rietveld"` fit fail. (This was the
+  root cause of the 1.0 CI failure.)
+- Fixed a hard interpreter abort (`SIGABRT`) during parallel grouped data
+  loading with recent NCrystal (4.4.x): the cyclic garbage collector could
+  finalize an NCrystal object inside a joblib worker thread. `Data.from_grouped()`
+  now disables cyclic GC for the duration of the threaded load.
 
 ### Changed
 
@@ -41,6 +49,7 @@ First stable release. 🎉
   composer for SANS material construction).
 - Package description corrected to "neutron Bragg edge fitting".
 - Development status classifier promoted to Production/Stable.
+- Removed leftover scaffolding (`.copier-answers.yml`) from the repository.
 
 ### Documentation
 
@@ -52,7 +61,28 @@ First stable release. 🎉
   grouped fitting) are verified to execute end-to-end against this release,
   and a notebooks index (`notebooks/README.md`) describes the recommended
   reading order.
-- Added `CITATION.cff` with citation metadata.
+- Tutorials refreshed: the getting-started notebook's extinction section now
+  shows a with/without-extinction cross-section comparison on iron (with valid
+  Becker–Coppens parameters); the grouped-fitting notebook reconstructs an
+  image — the word "nbragg" — from a 1296-pixel thickness map; and the Rietveld
+  notebook is reframed around Rietveld being the default method, demonstrating a
+  staged reduced-χ² drop (≈82 → 15) via progressive instrument-response
+  refinement.
+- The README now leads with a runnable quick example (code + fit-results
+  figure) before the feature list; interactive-plot references were removed from
+  the README and docs.
+- Added `CITATION.cff` and, with it, the accompanying paper (submitted to the
+  *Journal of Applied Crystallography*) as the preferred citation.
+
+### Testing
+
+- Added `tests/test_release.py`, a fast self-contained release smoke test
+  (version, public API, single/grouped end-to-end fits, save/load round-trip,
+  optional extinction plugin).
+- The suite is now deterministic: a shared `tests/conftest.py` seeds NumPy's
+  global RNG before each test, removing occasional flaky failures from unseeded
+  synthetic data. The full suite passes against both the development NCrystal
+  and the latest release (4.4.x).
 
 ### CI
 
