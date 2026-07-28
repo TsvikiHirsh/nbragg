@@ -11,6 +11,22 @@
 
 nbragg is a package designed for fitting neutron Bragg edge data using [NCrystal](https://github.com/mctools/ncrystal) cross-sections. This tool provides a straightforward way to analyze neutron transmission through polycrystalline materials, leveraging Bragg edges to extract information on material structure and composition.
 
+## Quick Example
+
+Fit a measured iron-powder transmission spectrum in a few lines:
+
+```python
+import nbragg
+
+data = nbragg.Data.from_transmission("iron_powder.csv") # read data
+xs = nbragg.CrossSection(iron="Fe_sg229_Iron-alpha.ncmat") # define sample
+model = nbragg.TransmissionModel(xs, vary_background=True, vary_response=True) # define model
+result = model.fit(data) # perform fit
+result.plot() # plot results
+```
+
+![Fit Results](https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/notebooks/fit_results.png)
+
 ## Features
 
 - **Flexible Cross-Section Calculations**: Interfaces with NCrystal to fetch cross-sections for crystalline materials.
@@ -50,22 +66,6 @@ pip install git+https://github.com/XuShuqi7/ncplugin-CrysExtn
 The [ncrystal-plugin-crysextn](https://github.com/XuShuqi7/ncplugin-CrysExtn) plugin provides extinction corrections for crystallographic calculations.
 
 **Note:** The extinction plugin is only required if you plan to use extinction effects. For standard Bragg edge fitting without extinction corrections, the base installation is sufficient.
-
-## Usage
-
-Here's a quick example to get started:
-
-```python
-import nbragg
-
-data = nbragg.Data.from_transmission("iron_powder.csv") # read data
-xs = nbragg.CrossSection(iron="Fe_sg229_Iron-alpha.ncmat") # define sample
-model = nbragg.TransmissionModel(xs, vary_background=True, vary_response=True) # define model
-result = model.fit(data) # perform fit
-result.plot() # plot results
-```
-
-![Fit Results](https://raw.githubusercontent.com/TsvikiHirsh/nbragg/refs/heads/master/notebooks/fit_results.png)
 
 ## Tutorials and Documentation
 
