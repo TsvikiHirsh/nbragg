@@ -65,6 +65,13 @@ Indices and Tables
 Citing nbragg
 -------------
 
-If you use nbragg in your research, please cite it. Citation metadata is
-provided in the repository's ``CITATION.cff`` file, and GitHub's
-"Cite this repository" button generates BibTeX/APA entries automatically.
+If you use nbragg in your research, please cite the accompanying paper:
+
+    T. Y. Hirsh, A. F. T. Leong, A. M. Long, D. D. DiJulio, S. Xu, G. Muhrer,
+    T. H. Kittelmann, J. I. Marquez Damian, D. J. Savage and S. C. Vogel,
+    *nbragg: A Versatile Python Tool for Bragg-Edge Transmission Analysis Using
+    NCrystal*, Journal of Applied Crystallography (submitted, 2026).
+
+Citation metadata is also provided in the repository's ``CITATION.cff`` file,
+and GitHub's "Cite this repository" button generates BibTeX/APA entries
+automatically.

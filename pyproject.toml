@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "nbragg"
 version = "1.0.0"
 authors = [
-  { name = "Tsviki Y. Hirsh", email = "tsviki.hirsh@gmail.com" },
+  { name = "Tsviki Y. Hirsh", email = "tsviki@soreq.gov.il" },
 ]
 description = "Simple yet powerful package for neutron Bragg edge fitting"
 readme = "README.md"
@@ -34,7 +34,8 @@ dependencies = [
 "ncrystal",
 "spglib",
 "tqdm",
-"joblib"
+"joblib",
+"jinja2"
 ]
 
 [project.optional-dependencies]

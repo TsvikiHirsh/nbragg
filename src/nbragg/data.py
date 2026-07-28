@@ -901,12 +901,23 @@ class Data:
                     pbar.update(1)
                 return result
 
-            # Load groups in parallel using threading backend
-            # (threading is appropriate for I/O-bound file loading and avoids serialization issues)
-            results = Parallel(n_jobs=n_jobs, prefer='threads')(
-                delayed(load_with_progress)(i, idx)
-                for i, idx in enumerate(extracted_indices)
-            )
+            # Load groups in parallel using a threading backend (I/O-bound file
+            # loading; avoids serialization issues). Disable the cyclic garbage
+            # collector for the duration: with some NCrystal builds, finalizing a
+            # leftover NCrystal object from a joblib worker thread during a cyclic
+            # collection aborts the interpreter. Deferring cyclic collection to the
+            # main thread (after the parallel region) avoids the crash.
+            import gc
+            _gc_was_enabled = gc.isenabled()
+            gc.disable()
+            try:
+                results = Parallel(n_jobs=n_jobs, prefer='threads')(
+                    delayed(load_with_progress)(i, idx)
+                    for i, idx in enumerate(extracted_indices)
+                )
+            finally:
+                if _gc_was_enabled:
+                    gc.enable()
 
             if pbar is not None:
                 pbar.close()

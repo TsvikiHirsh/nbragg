@@ -45,12 +45,6 @@ Optional Dependencies
 
     pip install git+https://github.com/XuShuqi7/ncplugin-CrysExtn
 
-**Interactive widgets** (``model.interactive_plot()`` in Jupyter):
-
-.. code-block:: bash
-
-    pip install "nbragg[interactive]"
-
 **Development tools** (running tests, pre-commit hooks):
 
 .. code-block:: bash

@@ -51,14 +51,6 @@ The [ncrystal-plugin-crysextn](https://github.com/XuShuqi7/ncplugin-CrysExtn) pl
 
 **Note:** The extinction plugin is only required if you plan to use extinction effects. For standard Bragg edge fitting without extinction corrections, the base installation is sufficient.
 
-### Interactive Widgets (optional)
-
-For the interactive parameter-exploration plot in Jupyter (`model.interactive_plot()`):
-
-```bash
-pip install "nbragg[interactive]"
-```
-
 ## Usage
 
 Here's a quick example to get started:
@@ -87,7 +79,29 @@ Three Jupyter notebook tutorials cover the main workflows:
 
 ## Citing nbragg
 
-If you use nbragg in your research, please cite it. Citation metadata is provided in [CITATION.cff](CITATION.cff), and GitHub's "Cite this repository" button generates BibTeX/APA entries automatically.
+If you use nbragg in your research, please cite the accompanying paper:
+
+> T. Y. Hirsh, A. F. T. Leong, A. M. Long, D. D. DiJulio, S. Xu, G. Muhrer,
+> T. H. Kittelmann, J. I. Marquez Damian, D. J. Savage and S. C. Vogel,
+> *nbragg: A Versatile Python Tool for Bragg-Edge Transmission Analysis Using NCrystal*,
+> Journal of Applied Crystallography (submitted, 2026).
+
+BibTeX:
+
+```bibtex
+@article{nbragg2026,
+  title   = {nbragg: A Versatile Python Tool for Bragg-Edge Transmission Analysis Using NCrystal},
+  author  = {Hirsh, Tsviki Y. and Leong, Andrew F. T. and Long, Alexander M. and
+             DiJulio, Douglas D. and Xu, Shuqi and Muhrer, G{\"u}nter and
+             Kittelmann, Thomas H. and Marquez Damian, Jos{\'e} I. and
+             Savage, Daniel J. and Vogel, Sven C.},
+  journal = {Journal of Applied Crystallography},
+  year    = {2026},
+  note    = {Submitted}
+}
+```
+
+Citation metadata is also provided in [CITATION.cff](CITATION.cff), and GitHub's "Cite this repository" button generates BibTeX/APA entries automatically.
 
 ## Contributing
 

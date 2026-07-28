@@ -357,18 +357,6 @@ Weight Balancing
 
 **Solution:** Check that MTEX volumes are reasonable. Typically should sum to < 1.
 
-Integration Checklist
-======================
-
-Before using MTEX data in production:
-
-1. ✅ Verify CSV format matches requirements
-2. ✅ Test import: ``xs = CrossSection.from_mtex(...)``
-3. ✅ Check phase weights sum to 1
-4. ✅ Verify orientation parameters in model
-5. ✅ Compare with MTEX pole figures
-6. ✅ Test fit convergence
-7. ✅ Validate results physically
 
 See Also
 ========

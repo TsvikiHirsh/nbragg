@@ -1,11 +1,11 @@
 cff-version: 1.2.0
-message: "If you use nbragg in your research, please cite it as below."
+message: "If you use nbragg in your research, please cite the accompanying paper (see preferred-citation)."
 title: "nbragg: neutron Bragg edge fitting with NCrystal cross-sections"
 type: software
 authors:
   - family-names: "Hirsh"
     given-names: "Tsviki Y."
-    email: "tsviki.hirsh@gmail.com"
+    email: "tsviki@soreq.gov.il"
 version: 1.0.0
 date-released: 2026-07-16
 license: MIT
@@ -19,3 +19,31 @@ keywords:
   - Rietveld
   - texture
   - crystallography
+preferred-citation:
+  type: article
+  title: "nbragg: A Versatile Python Tool for Bragg-Edge Transmission Analysis Using NCrystal"
+  year: 2026
+  journal: "Journal of Applied Crystallography"
+  notes: "Submitted."
+  authors:
+    - family-names: "Hirsh"
+      given-names: "Tsviki Y."
+      email: "tsviki@soreq.gov.il"
+    - family-names: "Leong"
+      given-names: "Andrew F. T."
+    - family-names: "Long"
+      given-names: "Alexander M."
+    - family-names: "DiJulio"
+      given-names: "Douglas D."
+    - family-names: "Xu"
+      given-names: "Shuqi"
+    - family-names: "Muhrer"
+      given-names: "Günter"
+    - family-names: "Kittelmann"
+      given-names: "Thomas H."
+    - family-names: "Marquez Damian"
+      given-names: "José I."
+    - family-names: "Savage"
+      given-names: "Daniel J."
+    - family-names: "Vogel"
+      given-names: "Sven C."
